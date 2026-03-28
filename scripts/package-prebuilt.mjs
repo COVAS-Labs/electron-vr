@@ -104,11 +104,13 @@ await writeFile(join(packageDir, "README.md"), `${packageReadme}\n`, "utf8");
 const npmExecutable = process.env.npm_execpath
   ? process.execPath
   : process.platform === "win32"
-    ? "npm.cmd"
+    ? process.env.ComSpec ?? "cmd.exe"
     : "npm";
 const npmArgs = process.env.npm_execpath
   ? [process.env.npm_execpath, "pack", packageDir, "--pack-destination", artifactDir]
-  : ["pack", packageDir, "--pack-destination", artifactDir];
+  : process.platform === "win32"
+    ? ["/d", "/s", "/c", `npm pack "${packageDir}" --pack-destination "${artifactDir}"`]
+    : ["pack", packageDir, "--pack-destination", artifactDir];
 const packResult = spawnSync(
   npmExecutable,
   npmArgs,
@@ -117,6 +119,10 @@ const packResult = spawnSync(
     stdio: "inherit"
   }
 );
+
+if (packResult.error) {
+  console.error(packResult.error);
+}
 
 if (packResult.status !== 0) {
   process.exit(packResult.status ?? 1);
