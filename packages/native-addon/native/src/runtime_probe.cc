@@ -1,14 +1,13 @@
 #include "runtime_probe.h"
 
-#include <vector>
-
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
 #if defined(_WIN32)
 #include <windows.h>
 #else
 #include <dlfcn.h>
 #endif
-
-#include "openvr.h"
 
 namespace vrbridge {
 
@@ -66,12 +65,138 @@ std::string DetectPlatform() {
 #endif
 }
 
+std::string ReadTextFile(const std::string& path) {
+  std::ifstream stream(path);
+  if (!stream.is_open()) {
+    return std::string();
+  }
+
+  std::ostringstream buffer;
+  buffer << stream.rdbuf();
+  return buffer.str();
+}
+
+std::string UnescapeJsonString(const std::string& value) {
+  std::string result;
+  result.reserve(value.size());
+
+  for (size_t index = 0; index < value.size(); ++index) {
+    const char character = value[index];
+    if (character != '\\' || index + 1 >= value.size()) {
+      result.push_back(character);
+      continue;
+    }
+
+    const char escaped = value[++index];
+    switch (escaped) {
+      case '\\':
+      case '/':
+      case '"':
+        result.push_back(escaped);
+        break;
+      case 'b':
+        result.push_back('\b');
+        break;
+      case 'f':
+        result.push_back('\f');
+        break;
+      case 'n':
+        result.push_back('\n');
+        break;
+      case 'r':
+        result.push_back('\r');
+        break;
+      case 't':
+        result.push_back('\t');
+        break;
+      default:
+        result.push_back(escaped);
+        break;
+    }
+  }
+
+  return result;
+}
+
+std::string ExtractFirstRuntimePath(const std::string& json_text) {
+  const std::string runtime_key = "\"runtime\"";
+  const size_t runtime_key_index = json_text.find(runtime_key);
+  if (runtime_key_index == std::string::npos) {
+    return std::string();
+  }
+
+  const size_t array_start = json_text.find('[', runtime_key_index + runtime_key.size());
+  if (array_start == std::string::npos) {
+    return std::string();
+  }
+
+  const size_t string_start = json_text.find('"', array_start + 1);
+  if (string_start == std::string::npos) {
+    return std::string();
+  }
+
+  std::string raw_value;
+  bool escaping = false;
+  for (size_t index = string_start + 1; index < json_text.size(); ++index) {
+    const char character = json_text[index];
+    if (!escaping && character == '"') {
+      return UnescapeJsonString(raw_value);
+    }
+
+    raw_value.push_back(character);
+    escaping = !escaping && character == '\\';
+    if (character != '\\') {
+      escaping = false;
+    }
+  }
+
+  return std::string();
+}
+
+std::string GetOpenVRPathsFilePath() {
+#if defined(_WIN32)
+  const char* local_app_data = std::getenv("LOCALAPPDATA");
+  if (local_app_data == nullptr || local_app_data[0] == '\0') {
+    return std::string();
+  }
+
+  return std::string(local_app_data) + "\\openvr\\openvrpaths.vrpath";
+#elif defined(__linux__)
+  const char* home = std::getenv("HOME");
+  if (home == nullptr || home[0] == '\0') {
+    return std::string();
+  }
+
+  return std::string(home) + "/.config/openvr/openvrpaths.vrpath";
+#elif defined(__APPLE__)
+  const char* home = std::getenv("HOME");
+  if (home == nullptr || home[0] == '\0') {
+    return std::string();
+  }
+
+  return std::string(home) + "/Library/Application Support/OpenVR/openvrpaths.vrpath";
+#else
+  return std::string();
+#endif
+}
+
 std::string DetectOpenVRRuntimePath(bool* installed) {
   if (installed != nullptr) {
     *installed = false;
   }
 
-  if (!vr::VR_IsRuntimeInstalled()) {
+  const std::string registry_path = GetOpenVRPathsFilePath();
+  if (registry_path.empty()) {
+    return std::string();
+  }
+
+  const std::string registry_contents = ReadTextFile(registry_path);
+  if (registry_contents.empty()) {
+    return std::string();
+  }
+
+  const std::string runtime_path = ExtractFirstRuntimePath(registry_contents);
+  if (runtime_path.empty()) {
     return std::string();
   }
 
@@ -79,17 +204,7 @@ std::string DetectOpenVRRuntimePath(bool* installed) {
     *installed = true;
   }
 
-  uint32_t required_size = 0;
-  if (!vr::VR_GetRuntimePath(nullptr, 0, &required_size) || required_size == 0) {
-    return std::string();
-  }
-
-  std::vector<char> buffer(required_size, '\0');
-  if (!vr::VR_GetRuntimePath(buffer.data(), required_size, &required_size)) {
-    return std::string();
-  }
-
-  return std::string(buffer.data());
+  return runtime_path;
 }
 
 }  // namespace
@@ -97,7 +212,7 @@ std::string DetectOpenVRRuntimePath(bool* installed) {
 RuntimeInfo ProbeRuntime() {
   RuntimeInfo info;
   info.platform = DetectPlatform();
-  info.probe_mode = "native";
+  info.probe_mode = "filesystem";
 
 #if defined(_WIN32)
   info.openxr_available = LibraryExists("openxr_loader.dll");

@@ -41,8 +41,13 @@
         [
           "OS==\"linux\"",
           {
+            "ldflags": [
+              "-Wl,-z,origin",
+              "-Wl,-rpath,\\$$ORIGIN"
+            ],
             "libraries": [
-              "<(openvr_sdk_dir)/lib/linux64/libopenvr_api.so",
+              "-L<(openvr_sdk_dir)/lib/linux64",
+              "-lopenvr_api",
               "-lX11",
               "-lEGL",
               "-lGLESv2",

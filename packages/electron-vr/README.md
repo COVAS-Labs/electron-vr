@@ -66,4 +66,4 @@ You can also reposition the overlay later with `overlay.setPlacement(...)`, togg
 
 `sizeMeters` must be greater than zero, and placement values should be finite numbers.
 
-`getRuntimeInfo()` also includes `openvrRuntimeInstalled` and `openvrRuntimePath` for basic runtime diagnostics.
+`getRuntimeInfo()` also includes `openvrRuntimeInstalled` and `openvrRuntimePath` based on the OpenVR paths file, so runtime diagnostics do not need to initialize OpenVR just to check availability.

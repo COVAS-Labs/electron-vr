@@ -229,6 +229,25 @@ function loadVrBridgeAddon(): VrBridgeAddon {
   }
 }
 
+function sanitizeRuntimeInfo(runtimeInfo: RuntimeInfo): RuntimeInfo {
+  if (runtimeInfo.platform !== "win32") {
+    return runtimeInfo;
+  }
+
+  if (runtimeInfo.probeMode === "filesystem") {
+    return runtimeInfo;
+  }
+
+  return {
+    ...runtimeInfo,
+    openvrAvailable: false,
+    openvrRuntimeInstalled: false,
+    openvrRuntimePath: "",
+    selectedBackend: runtimeInfo.selectedBackend === "openvr" ? "mock" : runtimeInfo.selectedBackend,
+    probeMode: `${runtimeInfo.probeMode}-sanitized`
+  };
+}
+
 function isSharedTexturePayload(value: unknown): value is SharedTexturePayload {
   if (!value || typeof value !== "object") {
     return false;
@@ -290,7 +309,7 @@ export class VrBridge {
   }
 
   getRuntimeInfo(): RuntimeInfo {
-    return this.addon.getRuntimeInfo();
+    return sanitizeRuntimeInfo(this.addon.getRuntimeInfo());
   }
 
   getSelectedBackend(): BackendKind {

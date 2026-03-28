@@ -2,9 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 #include <string>
 
 #include "openvr.h"
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 #if defined(__linux__)
 #include <drm/drm_fourcc.h>
@@ -31,6 +36,124 @@ void SetError(std::string* error_message, std::string message) {
     *error_message = std::move(message);
   }
 }
+
+#if defined(_WIN32)
+std::string StructuredExceptionCodeToString(unsigned int code) {
+  std::ostringstream stream;
+  stream << "0x" << std::hex << code;
+  return stream.str();
+}
+
+bool SafeVRInit(vr::IVRSystem** system, vr::EVRInitError* init_error, std::string* error_message) {
+  __try {
+    *system = vr::VR_Init(init_error, vr::VRApplication_Overlay);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    if (system != nullptr) {
+      *system = nullptr;
+    }
+    if (init_error != nullptr) {
+      *init_error = vr::VRInitError_Init_Internal;
+    }
+    SetError(
+      error_message,
+      "OpenVR initialization triggered a structured exception on Windows (" +
+        StructuredExceptionCodeToString(GetExceptionCode()) + ")."
+    );
+    return false;
+  }
+}
+
+bool SafeAcquireOverlay(vr::IVROverlay** overlay, std::string* error_message) {
+  __try {
+    *overlay = vr::VROverlay();
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    if (overlay != nullptr) {
+      *overlay = nullptr;
+    }
+    SetError(
+      error_message,
+      "OpenVR overlay interface acquisition triggered a structured exception on Windows (" +
+        StructuredExceptionCodeToString(GetExceptionCode()) + ")."
+    );
+    return false;
+  }
+}
+
+bool SafeCreateOverlay(
+  vr::IVROverlay* overlay,
+  const std::string& overlay_key,
+  const std::string& overlay_name,
+  vr::VROverlayHandle_t* overlay_handle,
+  std::string* error_message,
+  vr::EVROverlayError* overlay_error) {
+  __try {
+    *overlay_error = overlay->CreateOverlay(overlay_key.c_str(), overlay_name.c_str(), overlay_handle);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    if (overlay_handle != nullptr) {
+      *overlay_handle = vr::k_ulOverlayHandleInvalid;
+    }
+    if (overlay_error != nullptr) {
+      *overlay_error = vr::VROverlayError_UnknownOverlay;
+    }
+    SetError(
+      error_message,
+      "OpenVR overlay creation triggered a structured exception on Windows (" +
+        StructuredExceptionCodeToString(GetExceptionCode()) + ")."
+    );
+    return false;
+  }
+}
+
+bool SafeSetPremultipliedFlag(vr::IVROverlay* overlay, vr::VROverlayHandle_t overlay_handle, std::string* error_message, vr::EVROverlayError* overlay_error) {
+  __try {
+    *overlay_error = overlay->SetOverlayFlag(overlay_handle, vr::VROverlayFlags_IsPremultiplied, true);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    if (overlay_error != nullptr) {
+      *overlay_error = vr::VROverlayError_UnknownOverlay;
+    }
+    SetError(
+      error_message,
+      "OpenVR overlay configuration triggered a structured exception on Windows (" +
+        StructuredExceptionCodeToString(GetExceptionCode()) + ")."
+    );
+    return false;
+  }
+}
+#else
+bool SafeVRInit(vr::IVRSystem** system, vr::EVRInitError* init_error, std::string* error_message) {
+  (void)error_message;
+  *system = vr::VR_Init(init_error, vr::VRApplication_Overlay);
+  return true;
+}
+
+bool SafeAcquireOverlay(vr::IVROverlay** overlay, std::string* error_message) {
+  (void)error_message;
+  *overlay = vr::VROverlay();
+  return true;
+}
+
+bool SafeCreateOverlay(
+  vr::IVROverlay* overlay,
+  const std::string& overlay_key,
+  const std::string& overlay_name,
+  vr::VROverlayHandle_t* overlay_handle,
+  std::string* error_message,
+  vr::EVROverlayError* overlay_error) {
+  (void)error_message;
+  *overlay_error = overlay->CreateOverlay(overlay_key.c_str(), overlay_name.c_str(), overlay_handle);
+  return true;
+}
+
+bool SafeSetPremultipliedFlag(vr::IVROverlay* overlay, vr::VROverlayHandle_t overlay_handle, std::string* error_message, vr::EVROverlayError* overlay_error) {
+  (void)error_message;
+  *overlay_error = overlay->SetOverlayFlag(overlay_handle, vr::VROverlayFlags_IsPremultiplied, true);
+  return true;
+}
+#endif
 
 std::string OverlayErrorToString(vr::IVROverlay* overlay, vr::EVROverlayError error) {
   if (overlay == nullptr) {
@@ -197,14 +320,22 @@ bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* erro
   ShutdownOpenVRBackend();
 
   vr::EVRInitError init_error = vr::VRInitError_None;
-  g_state.system = vr::VR_Init(&init_error, vr::VRApplication_Overlay);
+  if (!SafeVRInit(&g_state.system, &init_error, error_message)) {
+    ResetState();
+    return false;
+  }
+
   if (init_error != vr::VRInitError_None || g_state.system == nullptr) {
     SetError(error_message, std::string("Failed to initialize OpenVR: ") + vr::VR_GetVRInitErrorAsEnglishDescription(init_error));
     ResetState();
     return false;
   }
 
-  g_state.overlay = vr::VROverlay();
+  if (!SafeAcquireOverlay(&g_state.overlay, error_message)) {
+    ShutdownOpenVRBackend();
+    return false;
+  }
+
   if (g_state.overlay == nullptr) {
     SetError(error_message, "Failed to acquire OpenVR overlay interface.");
     ShutdownOpenVRBackend();
@@ -216,10 +347,12 @@ bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* erro
 #endif
 
   const std::string overlay_key = "electron_vr." + options.name;
-  const vr::EVROverlayError create_error = g_state.overlay->CreateOverlay(
-    overlay_key.c_str(),
-    options.name.c_str(),
-    &g_state.overlay_handle);
+  vr::EVROverlayError create_error = vr::VROverlayError_None;
+  if (!SafeCreateOverlay(g_state.overlay, overlay_key, options.name, &g_state.overlay_handle, error_message, &create_error)) {
+    ShutdownOpenVRBackend();
+    return false;
+  }
+
   if (!CheckOverlayError(create_error, "Failed to create OpenVR overlay", error_message)) {
     ShutdownOpenVRBackend();
     return false;
@@ -227,10 +360,9 @@ bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* erro
 
   g_state.initialized = true;
 
-  if (!CheckOverlayError(
-        g_state.overlay->SetOverlayFlag(g_state.overlay_handle, vr::VROverlayFlags_IsPremultiplied, true),
-        "Failed to configure OpenVR overlay alpha mode",
-        error_message)) {
+  vr::EVROverlayError flag_error = vr::VROverlayError_None;
+  if (!SafeSetPremultipliedFlag(g_state.overlay, g_state.overlay_handle, error_message, &flag_error) ||
+      !CheckOverlayError(flag_error, "Failed to configure OpenVR overlay alpha mode", error_message)) {
     ShutdownOpenVRBackend();
     return false;
   }

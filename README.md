@@ -87,7 +87,7 @@ overlay.setVisible(true);
 
 `sizeMeters` must be greater than zero, and placement vectors/quaternions must use finite numeric values.
 
-`getRuntimeInfo()` now also reports whether an OpenVR runtime is installed and, when available, its runtime path.
+`getRuntimeInfo()` now reports whether an OpenVR runtime is installed by reading the OpenVR paths file, avoiding runtime-loader probing during simple availability checks.
 
 ### Reuse an existing BrowserWindow
 
