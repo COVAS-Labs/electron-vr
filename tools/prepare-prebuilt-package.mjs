@@ -1,6 +1,8 @@
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { copyOpenVRRuntimeLibrary, getOpenVRRuntimeLibraryName } from "./openvr-runtime.mjs";
 
 function parseArgs(argv) {
   const parsed = {};
@@ -34,6 +36,13 @@ const packageDir = join(artifactRoot, `prebuilt-${platform}-${arch}`, "package")
 await rm(packageDir, { force: true, recursive: true });
 await mkdir(packageDir, { recursive: true });
 await copyFile(addonSourcePath, join(packageDir, "vr_bridge.node"));
+const runtimeLibrary = await copyOpenVRRuntimeLibrary({
+  destinationDirectory: packageDir,
+  platform,
+  arch
+});
+
+const runtimeLibraryName = getOpenVRRuntimeLibraryName(platform);
 
 const metadata = {
   packageName,
@@ -41,10 +50,24 @@ const metadata = {
   runtime: "electron",
   platform,
   arch,
-  backends: ["openxr", "openvr", "mock"]
+  backends: ["openxr", "openvr", "mock"],
+  bundledRuntimeLibraries: [runtimeLibraryName]
 };
 
-await writeFile(join(packageDir, "index.js"), "module.exports = require('./vr_bridge.node');\n", "utf8");
+await writeFile(
+  join(packageDir, "index.js"),
+  `const path = require("node:path");
+const packageDir = __dirname;
+if (process.platform === "win32") {
+  process.env.PATH = process.env.PATH ? packageDir + ";" + process.env.PATH : packageDir;
+} else if (process.platform === "linux") {
+  const currentLdLibraryPath = process.env.LD_LIBRARY_PATH || "";
+  process.env.LD_LIBRARY_PATH = currentLdLibraryPath ? packageDir + ":" + currentLdLibraryPath : packageDir;
+}
+module.exports = require(path.join(packageDir, "vr_bridge.node"));
+`,
+  "utf8"
+);
 await writeFile(join(packageDir, "metadata.json"), `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
 await writeFile(
   join(packageDir, "README.md"),
@@ -61,7 +84,7 @@ await writeFile(
     main: "index.js",
     os: [platform],
     cpu: [arch],
-    files: ["index.js", "metadata.json", "README.md", "vr_bridge.node"],
+    files: ["index.js", "metadata.json", "README.md", "vr_bridge.node", runtimeLibraryName],
     publishConfig: {
       registry: "https://npm.pkg.github.com"
     }
@@ -69,4 +92,4 @@ await writeFile(
   "utf8"
 );
 
-console.log(`Prepared ${packageName} in ${packageDir}`);
+console.log(`Prepared ${packageName} in ${packageDir} with ${runtimeLibrary.fileName}`);

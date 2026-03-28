@@ -59,6 +59,8 @@ app.on("before-quit", () => {
 
 The package currently prefers `OpenVR` and falls back to the native mock backend when no real VR runtime is available.
 
+The packaged Windows and Linux builds bundle the OpenVR runtime library they need, so consumers do not need to set `OPENVR_SDK_DIR` just to load the addon.
+
 ### Position the overlay in VR space
 
 ```ts

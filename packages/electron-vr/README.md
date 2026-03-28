@@ -2,6 +2,8 @@
 
 Electron-facing VR overlay bridge package for OpenVR with native mock preview fallback.
 
+Published Windows and Linux packages bundle the OpenVR runtime library they need, so consumers do not need to configure `OPENVR_SDK_DIR` for normal usage.
+
 ## Install
 
 This package is published on GitHub Packages.

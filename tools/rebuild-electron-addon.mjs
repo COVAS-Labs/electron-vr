@@ -1,5 +1,8 @@
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
+
+import { copyOpenVRRuntimeLibrary } from "./openvr-runtime.mjs";
 
 const require = createRequire(import.meta.url);
 const nodeGypEntrypoint = require.resolve("node-gyp/bin/node-gyp.js");
@@ -24,3 +27,7 @@ const result = spawnSync(
 if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
+
+await copyOpenVRRuntimeLibrary({
+  destinationDirectory: resolve(process.cwd(), "build", "Release")
+});

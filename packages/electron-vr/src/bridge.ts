@@ -132,9 +132,51 @@ function resolvePrebuiltPackageName(): string | null {
   return packagesForPlatform[process.arch as keyof typeof packagesForPlatform] ?? null;
 }
 
-function ensureOpenVRLibraryPath(): void {
-  if (process.platform !== "win32") {
+function prependLibrarySearchPath(directory: string): void {
+  if (!existsSync(directory)) {
     return;
+  }
+
+  if (process.platform === "win32") {
+    const currentPath = process.env.PATH ?? "";
+    const pathEntries = currentPath.split(";").filter(Boolean);
+    if (!pathEntries.includes(directory)) {
+      process.env.PATH = currentPath ? `${directory};${currentPath}` : directory;
+    }
+    return;
+  }
+
+  if (process.platform === "linux") {
+    const currentLdLibraryPath = process.env.LD_LIBRARY_PATH ?? "";
+    const pathEntries = currentLdLibraryPath.split(":").filter(Boolean);
+    if (!pathEntries.includes(directory)) {
+      process.env.LD_LIBRARY_PATH = currentLdLibraryPath ? `${directory}:${currentLdLibraryPath}` : directory;
+    }
+    return;
+  }
+}
+
+function ensureOpenVRLibraryPath(currentDir: string): void {
+  const localAddonDir = resolve(currentDir, "..", "..", "native-addon", "build", "Release");
+  prependLibrarySearchPath(localAddonDir);
+
+  const prebuiltPackageName = resolvePrebuiltPackageName();
+  if (prebuiltPackageName) {
+    const require = createRequire(import.meta.url);
+    try {
+      const prebuiltEntry = require.resolve(prebuiltPackageName);
+      prependLibrarySearchPath(dirname(prebuiltEntry));
+    } catch {
+      // Ignore and fall back to application resolution or SDK lookup.
+    }
+
+    try {
+      const applicationRequire = createRequire(resolve(process.cwd(), "package.json"));
+      const prebuiltEntry = applicationRequire.resolve(prebuiltPackageName);
+      prependLibrarySearchPath(dirname(prebuiltEntry));
+    } catch {
+      // Ignore and fall back to SDK lookup.
+    }
   }
 
   const sdkDir = process.env.OPENVR_SDK_DIR;
@@ -142,18 +184,11 @@ function ensureOpenVRLibraryPath(): void {
     return;
   }
 
-  const dllDir = resolve(sdkDir, "bin", "win64");
-  if (!existsSync(dllDir)) {
-    return;
+  if (process.platform === "win32") {
+    prependLibrarySearchPath(resolve(sdkDir, "bin", "win64"));
+  } else if (process.platform === "linux") {
+    prependLibrarySearchPath(resolve(sdkDir, "lib", "linux64"));
   }
-
-  const currentPath = process.env.PATH ?? "";
-  const pathEntries = currentPath.split(";").filter(Boolean);
-  if (pathEntries.includes(dllDir)) {
-    return;
-  }
-
-  process.env.PATH = currentPath ? `${dllDir};${currentPath}` : dllDir;
 }
 
 function loadVrBridgeAddon(): VrBridgeAddon {
@@ -161,12 +196,11 @@ function loadVrBridgeAddon(): VrBridgeAddon {
     return cachedAddon;
   }
 
-  ensureOpenVRLibraryPath();
-
   const require = createRequire(import.meta.url);
   const applicationRequire = createRequire(resolve(process.cwd(), "package.json"));
   const currentDir = dirname(fileURLToPath(import.meta.url));
   const localAddonPath = resolve(currentDir, "..", "..", "native-addon", "build", "Release", "vr_bridge.node");
+  ensureOpenVRLibraryPath(currentDir);
 
   try {
     cachedAddon = require(localAddonPath) as VrBridgeAddon;
