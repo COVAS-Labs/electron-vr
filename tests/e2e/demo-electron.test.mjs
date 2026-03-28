@@ -87,7 +87,7 @@ test("renders the native mock preview fallback", { skip: process.platform !== "l
     assert.match(combinedOutput, /OpenVR runtime installed:/);
     assert.match(combinedOutput, /Overlay initialized with backend: mock/);
     assert.match(combinedOutput, /using software bitmap upload for mock preview/);
-    assert.match(combinedOutput, /Overlay world placement update: true/);
+    assert.match(combinedOutput, /Overlay head placement update: true/);
     assert.match(combinedOutput, /Overlay size update: true/);
     assert.match(combinedOutput, /Overlay visibility update: true/);
   } finally {
