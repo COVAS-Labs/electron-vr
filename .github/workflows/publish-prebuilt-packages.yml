@@ -3,6 +3,8 @@ name: Publish Packages
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
@@ -16,6 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       package_version: ${{ steps.compute.outputs.package_version }}
+      publish_dist_tag: ${{ steps.compute.outputs.publish_dist_tag }}
+      create_github_release: ${{ steps.compute.outputs.create_github_release }}
+      release_tag: ${{ steps.compute.outputs.release_tag }}
 
     steps:
       - uses: actions/checkout@v5
@@ -30,10 +35,23 @@ jobs:
           base_version=$(node -p "require('./packages/electron-vr/package.json').version")
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             package_version="${GITHUB_REF_NAME#v}"
+            if [[ ! "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Tag releases must use stable semver tags like v1.2.3" >&2
+              exit 1
+            fi
+            publish_dist_tag="latest"
+            create_github_release="true"
+            release_tag="${GITHUB_REF_NAME}"
           else
-            package_version="${base_version}-ci.${GITHUB_RUN_NUMBER}"
+            package_version="${base_version}-ci.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+            publish_dist_tag="ci"
+            create_github_release="false"
+            release_tag=""
           fi
           echo "package_version=${package_version}" >> "$GITHUB_OUTPUT"
+          echo "publish_dist_tag=${publish_dist_tag}" >> "$GITHUB_OUTPUT"
+          echo "create_github_release=${create_github_release}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
 
   publish-prebuilt:
     name: Publish Prebuilt (${{ matrix.platform_id }})
@@ -81,7 +99,7 @@ jobs:
         run: node ./tools/prepare-prebuilt-package.mjs --owner-scope=covas-labs --package-version=${{ needs.version.outputs.package_version }}
 
       - name: Publish prebuilt package
-        run: npm publish artifacts/publish/prebuilt-${{ matrix.platform_id }}/package
+        run: npm publish --tag ${{ needs.version.outputs.publish_dist_tag }} artifacts/publish/prebuilt-${{ matrix.platform_id }}/package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -116,7 +134,7 @@ jobs:
         run: node ./tools/prepare-public-package.mjs --owner-scope=covas-labs --package-version=${{ needs.version.outputs.package_version }}
 
       - name: Publish public package
-        run: npm publish artifacts/publish/public/package
+        run: npm publish --tag ${{ needs.version.outputs.publish_dist_tag }} artifacts/publish/public/package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -288,3 +306,35 @@ jobs:
         run: npm run smoke
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  create-release:
+    name: Create GitHub Release
+    if: needs.version.outputs.create_github_release == 'true'
+    needs:
+      - version
+      - publish-public
+      - smoke-consumer
+      - smoke-consumer-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.release_tag }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "$RELEASE_TAG" \
+              --notes "Stable release for $RELEASE_TAG."
+          else
+            gh release create "$RELEASE_TAG" \
+              --verify-tag \
+              --title "$RELEASE_TAG" \
+              --notes "Stable release for $RELEASE_TAG."
+          fi
