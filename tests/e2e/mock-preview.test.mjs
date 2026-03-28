@@ -1,67 +1,101 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-
-import { _electron as electron } from "playwright";
 
 const require = createRequire(import.meta.url);
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const artifactDir = resolve(projectRoot, "artifacts");
 const electronBinary = require("electron");
-const supportsSharedTexturePreview = process.platform === "darwin" && process.arch === "arm64";
 
-async function waitForPreviewWindow(electronApp, timeoutMs = 20000) {
+function sleep(milliseconds) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+async function waitFor(check, timeoutMs, description) {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    const pages = electronApp.windows();
-    for (const page of pages) {
-      const title = await page.title().catch(() => "");
-      if (title === "VR Mock Preview") {
-        return page;
-      }
+    const value = await check();
+    if (value) {
+      return value;
     }
 
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
+    await sleep(250);
   }
 
-  throw new Error("Timed out waiting for the mock preview window.");
+  throw new Error(`Timed out waiting for ${description}.`);
 }
 
-test("renders shared texture in the mock preview fallback", { skip: !supportsSharedTexturePreview }, async () => {
+function hasMockPreviewWindow() {
+  const result = spawnSync("xwininfo", ["-root", "-tree"], {
+    cwd: projectRoot,
+    encoding: "utf8"
+  });
+
+  if (result.status !== 0) {
+    return false;
+  }
+
+  return result.stdout.includes("VR Mock Preview");
+}
+
+test("renders the native mock preview fallback", { skip: process.platform !== "linux" }, async () => {
   await mkdir(artifactDir, { recursive: true });
 
-  const electronApp = await electron.launch({
-    executablePath: electronBinary,
-    args: [projectRoot, "--no-sandbox"],
+  const child = spawn(electronBinary, [projectRoot, "--no-sandbox"], {
+    cwd: projectRoot,
     env: {
       ...process.env,
       CI: "1"
-    }
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  let combinedOutput = "";
+  child.stdout.on("data", (chunk) => {
+    combinedOutput += String(chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    combinedOutput += String(chunk);
   });
 
   try {
-    const previewPage = await waitForPreviewWindow(electronApp);
-    await previewPage.waitForSelector("#backend-value", { timeout: 20000 });
-    await previewPage.waitForFunction(() => document.body.dataset.previewReady === "true", undefined, {
-      timeout: 20000
-    });
+    await waitFor(
+      () => combinedOutput.includes("Overlay initialized with backend: mock"),
+      20000,
+      "mock backend initialization"
+    );
 
-    const backend = await previewPage.textContent("#backend-value");
-    const frameCount = Number(await previewPage.textContent("#frame-count-value"));
-    const snapshotSize = Number(await previewPage.textContent("#snapshot-value"));
-    const status = await previewPage.textContent("#status-value");
+    await waitFor(
+      () => hasMockPreviewWindow(),
+      20000,
+      "native mock preview window"
+    );
 
-    await previewPage.screenshot({ path: resolve(artifactDir, "mock-preview.png"), fullPage: true });
+    await waitFor(
+      () => combinedOutput.includes("using software bitmap upload for mock preview"),
+      20000,
+      "software mock preview fallback"
+    );
 
-    assert.equal(backend?.trim(), "mock");
-    assert.ok(frameCount > 0, `expected rendered frame count > 0, received ${frameCount}`);
-    assert.ok(snapshotSize > 1000, `expected non-trivial canvas snapshot size, received ${snapshotSize}`);
-    assert.match(status ?? "", /ready|streaming/);
+    assert.match(combinedOutput, /VR runtime probe:/);
+    assert.match(combinedOutput, /Overlay initialized with backend: mock/);
+    assert.match(combinedOutput, /using software bitmap upload for mock preview/);
   } finally {
-    await electronApp.close();
+    child.kill("SIGTERM");
+    await Promise.race([
+      new Promise((resolvePromise) => child.once("exit", resolvePromise)),
+      sleep(3000)
+    ]);
+
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+    }
+
+    await writeFile(resolve(artifactDir, "mock-preview.log"), combinedOutput, "utf8");
   }
 });

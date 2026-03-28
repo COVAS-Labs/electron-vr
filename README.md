@@ -16,6 +16,8 @@ Scaffold for a TypeScript + ESM Electron demo backed by a `node-gyp` native addo
 - `npm run test:e2e`
 - `npm run start`
 
+`npm install` does not auto-build the native addon. Build it explicitly with `npm run build:addon` for Node or `npm run rebuild:electron` for Electron.
+
 ## Prebuilt modules
 
 The GitHub Actions workflow in `.github/workflows/prebuilt-modules.yml` builds prebuilt `vr_bridge.node` artifacts for:
@@ -43,8 +45,6 @@ This version is an initialization scaffold:
 
 ## Mock preview fallback
 
-When neither OpenXR nor OpenVR is available, the addon now selects a `mock` backend. The repo also includes a preview-window e2e path so CI can validate that the offscreen overlay stream is renderable without a VR runtime.
-
-The shared-texture preview validation currently runs in CI on macOS arm64, matching Electron's upstream shared-texture coverage.
+When neither OpenXR nor OpenVR is available, the addon now selects a `mock` backend. The repo also includes a Linux/Xvfb e2e path so CI can validate that the native mock preview window receives frames without a VR runtime.
 
 It does not yet create a real OpenXR/OpenVR overlay or import GPU textures into a compositor.

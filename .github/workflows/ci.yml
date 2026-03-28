@@ -1,5 +1,8 @@
 name: CI
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches:
@@ -26,6 +29,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev
+
       - run: npm ci
 
       - run: npm run build
@@ -34,7 +43,7 @@ jobs:
 
   e2e:
     name: E2E Mock Preview
-    runs-on: macos-14
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +53,11 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Install Linux runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb x11-utils libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2
+
       - run: npm ci
 
       - run: npm run build
@@ -51,7 +65,7 @@ jobs:
       - run: npm run rebuild:electron
 
       - name: Run Electron e2e test
-        run: npm run test:e2e
+        run: xvfb-run -a npm run test:e2e
 
       - name: Upload e2e artifacts
         if: always()
