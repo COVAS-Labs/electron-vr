@@ -31,6 +31,18 @@ async function waitFor(check, timeoutMs, description) {
   throw new Error(`Timed out waiting for ${description}.`);
 }
 
+function buildProcessDebugMessage(description, combinedOutput, exitCode, signalCode, spawnError) {
+  const trimmedOutput = combinedOutput.trim();
+  return [
+    `Timed out waiting for ${description}.`,
+    `exitCode=${exitCode === null ? "null" : String(exitCode)}`,
+    `signalCode=${signalCode === null ? "null" : String(signalCode)}`,
+    spawnError ? `spawnError=${spawnError.message}` : null,
+    "Captured output:",
+    trimmedOutput.length > 0 ? trimmedOutput : "<no output captured>"
+  ].filter(Boolean).join("\n\n");
+}
+
 test("boots the demo app and exercises overlay API paths", async () => {
   await mkdir(artifactDir, { recursive: true });
 
@@ -49,20 +61,34 @@ test("boots the demo app and exercises overlay API paths", async () => {
   });
 
   let combinedOutput = "";
+  let exitCode = null;
+  let signalCode = null;
+  let spawnError = null;
   child.stdout.on("data", (chunk) => {
     combinedOutput += String(chunk);
   });
   child.stderr.on("data", (chunk) => {
     combinedOutput += String(chunk);
   });
+  child.on("exit", (code, signal) => {
+    exitCode = code;
+    signalCode = signal;
+  });
+  child.on("error", (error) => {
+    spawnError = error;
+  });
 
   try {
-    await waitFor(() => combinedOutput.includes("VR runtime probe:"), 20000, "runtime probe logging");
-    await waitFor(() => combinedOutput.includes("OpenVR runtime installed:"), 20000, "OpenVR install logging");
-    await waitFor(() => combinedOutput.includes("Overlay initialized with backend:"), 20000, "overlay initialization");
-    await waitFor(() => combinedOutput.includes("Overlay world placement update: true"), 20000, "placement update logging");
-    await waitFor(() => combinedOutput.includes("Overlay size update: true"), 20000, "size update logging");
-    await waitFor(() => combinedOutput.includes("Overlay visibility update: true"), 20000, "visibility update logging");
+    try {
+      await waitFor(() => combinedOutput.includes("VR runtime probe:"), 20000, "runtime probe logging");
+      await waitFor(() => combinedOutput.includes("OpenVR runtime installed:"), 20000, "OpenVR install logging");
+      await waitFor(() => combinedOutput.includes("Overlay initialized with backend:"), 20000, "overlay initialization");
+      await waitFor(() => combinedOutput.includes("Overlay world placement update: true"), 20000, "placement update logging");
+      await waitFor(() => combinedOutput.includes("Overlay size update: true"), 20000, "size update logging");
+      await waitFor(() => combinedOutput.includes("Overlay visibility update: true"), 20000, "visibility update logging");
+    } catch {
+      throw new Error(buildProcessDebugMessage("demo smoke logging", combinedOutput, exitCode, signalCode, spawnError));
+    }
 
     assert.match(combinedOutput, /VR runtime probe:/);
     assert.match(combinedOutput, /OpenVR runtime installed:/);

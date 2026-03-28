@@ -30,13 +30,25 @@ async function waitFor(check, timeoutMs, description) {
   throw new Error(`Timed out waiting for ${description}.`);
 }
 
+function buildProcessDebugMessage(description, combinedOutput, exitCode, signalCode, spawnError) {
+  const trimmedOutput = combinedOutput.trim();
+  return [
+    `Timed out waiting for ${description}.`,
+    `exitCode=${exitCode === null ? "null" : String(exitCode)}`,
+    `signalCode=${signalCode === null ? "null" : String(signalCode)}`,
+    spawnError ? `spawnError=${spawnError.message}` : null,
+    "Captured output:",
+    trimmedOutput.length > 0 ? trimmedOutput : "<no output captured>"
+  ].filter(Boolean).join("\n\n");
+}
+
 test("runtime probe exposes OpenVR runtime installation details", async () => {
   await mkdir(artifactDir, { recursive: true });
 
-  const scriptPath = resolve(artifactDir, "runtime-info-smoke.mjs");
+  const scriptPath = resolve(projectRoot, "tests", "fixtures", "runtime-info-smoke.mjs");
   await writeFile(scriptPath, `
     import { app } from "electron";
-    import { createVrBridge } from "../packages/electron-vr/dist/index.js";
+    import { createVrBridge } from "../../packages/electron-vr/dist/index.js";
 
     app.whenReady().then(() => {
       console.log("Runtime info:", createVrBridge().getRuntimeInfo());
@@ -59,15 +71,29 @@ test("runtime probe exposes OpenVR runtime installation details", async () => {
   });
 
   let combinedOutput = "";
+  let exitCode = null;
+  let signalCode = null;
+  let spawnError = null;
   child.stdout.on("data", (chunk) => {
     combinedOutput += String(chunk);
   });
   child.stderr.on("data", (chunk) => {
     combinedOutput += String(chunk);
   });
+  child.on("exit", (code, signal) => {
+    exitCode = code;
+    signalCode = signal;
+  });
+  child.on("error", (error) => {
+    spawnError = error;
+  });
 
   try {
-    await waitFor(() => combinedOutput.includes("Runtime info:"), 20000, "runtime info logging");
+    try {
+      await waitFor(() => combinedOutput.includes("Runtime info:"), 20000, "runtime info logging");
+    } catch {
+      throw new Error(buildProcessDebugMessage("runtime info logging", combinedOutput, exitCode, signalCode, spawnError));
+    }
 
     assert.match(combinedOutput, /Runtime info:/);
     assert.match(combinedOutput, /openvrAvailable/i);
