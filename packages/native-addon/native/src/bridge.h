@@ -56,6 +56,11 @@ struct LinuxTextureInfo {
   std::vector<LinuxPlaneInfo> planes;
 };
 
+struct SharedTextureSubmission {
+  uint64_t windows_handle = 0;
+  LinuxTextureInfo linux_texture;
+};
+
 struct SoftwareFrameInfo {
   uint32_t width = 0;
   uint32_t height = 0;
@@ -66,10 +71,8 @@ class BridgeState {
  public:
   RuntimeInfo GetRuntimeInfo() const;
   bool Initialize(const InitializeOptions& options);
-  bool SubmitSharedTextureWindows(uint64_t shared_handle);
-  bool SubmitSharedTextureLinux(const LinuxTextureInfo& texture_info);
-  bool SubmitSoftwareFrameWindows(const SoftwareFrameInfo& frame_info);
-  bool SubmitSoftwareFrameLinux(const SoftwareFrameInfo& frame_info);
+  bool SubmitSharedTexture(const SharedTextureSubmission& texture_submission);
+  bool SubmitSoftwareFrame(const SoftwareFrameInfo& frame_info);
   bool SetOverlayPlacement(const OverlayPlacement& placement);
   bool SetOverlayVisible(bool visible);
   bool SetOverlaySizeMeters(float size_meters);

@@ -60,6 +60,7 @@ OverlayPlacement ReadOverlayPlacement(const Napi::Value& value) {
   return placement;
 }
 
+#if defined(_WIN32)
 uint64_t ReadWindowsHandle(const Napi::Value& value) {
   if (value.IsBigInt()) {
     bool lossless = false;
@@ -87,7 +88,9 @@ uint64_t ReadWindowsHandle(const Napi::Value& value) {
 
   return result;
 }
+#endif
 
+#if defined(__linux__)
 LinuxPlaneInfo ReadLinuxPlaneInfo(const Napi::Value& value) {
   if (!value.IsObject()) {
     throw Napi::TypeError::New(value.Env(), "Linux texture plane must be an object.");
@@ -178,6 +181,19 @@ LinuxTextureInfo ReadLinuxTextureInfo(const Napi::Value& value) {
 
   return texture_info;
 }
+#endif
+
+SharedTextureSubmission ReadSharedTextureSubmission(const Napi::Value& value) {
+  SharedTextureSubmission submission;
+#if defined(_WIN32)
+  submission.windows_handle = ReadWindowsHandle(value);
+#elif defined(__linux__)
+  submission.linux_texture = ReadLinuxTextureInfo(value);
+#else
+  throw Napi::Error::New(value.Env(), "submitSharedTexture is not supported on this platform.");
+#endif
+  return submission;
+}
 
 SoftwareFrameInfo ReadSoftwareFrameInfo(const Napi::Value& value, const char* method_name) {
   if (!value.IsObject()) {
@@ -256,13 +272,7 @@ Napi::Value SubmitSharedTextureWrapped(const Napi::CallbackInfo& info) {
     throw Napi::TypeError::New(info.Env(), "submitSharedTexture expects one argument.");
   }
 
-  #if defined(_WIN32)
-  return Napi::Boolean::New(info.Env(), GetBridgeState().SubmitSharedTextureWindows(ReadWindowsHandle(info[0])));
-  #elif defined(__linux__)
-  return Napi::Boolean::New(info.Env(), GetBridgeState().SubmitSharedTextureLinux(ReadLinuxTextureInfo(info[0])));
-  #else
-  throw Napi::Error::New(info.Env(), "submitSharedTexture is not supported on this platform.");
-  #endif
+  return Napi::Boolean::New(info.Env(), GetBridgeState().SubmitSharedTexture(ReadSharedTextureSubmission(info[0])));
 }
 
 Napi::Value SubmitSoftwareFrameWrapped(const Napi::CallbackInfo& info) {
@@ -271,19 +281,7 @@ Napi::Value SubmitSoftwareFrameWrapped(const Napi::CallbackInfo& info) {
   }
 
   const SoftwareFrameInfo frame_info = ReadSoftwareFrameInfo(info[0], "submitSoftwareFrame");
-  #if defined(_WIN32)
-  return Napi::Boolean::New(
-    info.Env(),
-    GetBridgeState().SubmitSoftwareFrameWindows(frame_info)
-  );
-  #elif defined(__linux__)
-  return Napi::Boolean::New(
-    info.Env(),
-    GetBridgeState().SubmitSoftwareFrameLinux(frame_info)
-  );
-  #else
-  throw Napi::Error::New(info.Env(), "submitSoftwareFrame is not supported on this platform.");
-  #endif
+  return Napi::Boolean::New(info.Env(), GetBridgeState().SubmitSoftwareFrame(frame_info));
 }
 
 Napi::Value ShutdownVRWrapped(const Napi::CallbackInfo& info) {

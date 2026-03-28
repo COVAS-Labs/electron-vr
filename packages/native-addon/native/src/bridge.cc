@@ -8,6 +8,74 @@
 
 namespace vrbridge {
 
+namespace {
+
+bool ValidateSharedTextureSubmission(const SharedTextureSubmission& texture_submission, std::string* error_message) {
+#if defined(_WIN32)
+  if (texture_submission.windows_handle == 0) {
+    if (error_message != nullptr) {
+      *error_message = "Windows shared texture handle must be non-zero.";
+    }
+    return false;
+  }
+  return true;
+#elif defined(__linux__)
+  if (texture_submission.linux_texture.planes.empty() || texture_submission.linux_texture.planes.front().fd < 0) {
+    if (error_message != nullptr) {
+      *error_message = "Linux shared texture submission requires a non-negative DMA-BUF file descriptor.";
+    }
+    return false;
+  }
+  return true;
+#else
+  if (error_message != nullptr) {
+    *error_message = "Shared texture submission is not supported on this platform.";
+  }
+  return false;
+#endif
+}
+
+bool SubmitOpenXRSharedTexture(const SharedTextureSubmission& texture_submission, std::string* error_message) {
+#if defined(_WIN32)
+  return SubmitOpenXRFrameWindows(texture_submission.windows_handle, error_message);
+#elif defined(__linux__)
+  return SubmitOpenXRFrameLinux(texture_submission.linux_texture, error_message);
+#else
+  if (error_message != nullptr) {
+    *error_message = "OpenXR shared texture submission is not supported on this platform.";
+  }
+  return false;
+#endif
+}
+
+bool SubmitOpenVRSharedTexture(const SharedTextureSubmission& texture_submission, std::string* error_message) {
+#if defined(_WIN32)
+  return SubmitOpenVRFrameWindows(texture_submission.windows_handle, error_message);
+#elif defined(__linux__)
+  return SubmitOpenVRFrameLinux(texture_submission.linux_texture, error_message);
+#else
+  if (error_message != nullptr) {
+    *error_message = "OpenVR shared texture submission is not supported on this platform.";
+  }
+  return false;
+#endif
+}
+
+bool SubmitMockSharedTexture(const SharedTextureSubmission& texture_submission, std::string* error_message) {
+#if defined(_WIN32)
+  return SubmitMockFrameWindows(texture_submission.windows_handle, error_message);
+#elif defined(__linux__)
+  return SubmitMockFrameLinux(texture_submission.linux_texture, error_message);
+#else
+  if (error_message != nullptr) {
+    *error_message = "Mock shared texture submission is not supported on this platform.";
+  }
+  return false;
+#endif
+}
+
+}  // namespace
+
 BridgeState& GetBridgeState() {
   static BridgeState bridge_state;
   return bridge_state;
@@ -63,31 +131,30 @@ bool BridgeState::Initialize(const InitializeOptions& options) {
   return initialized_;
 }
 
-bool BridgeState::SubmitSharedTextureWindows(uint64_t shared_handle) {
+bool BridgeState::SubmitSharedTexture(const SharedTextureSubmission& texture_submission) {
   if (!initialized_) {
     SetLastError("Bridge is not initialized.");
     return false;
   }
 
-  if (shared_handle == 0) {
-    SetLastError("Shared texture handle must be non-zero.");
+  if (!ValidateSharedTextureSubmission(texture_submission, &last_error_)) {
     return false;
   }
 
   bool success = false;
   switch (runtime_info_.selected_backend) {
     case BackendKind::kOpenXR:
-      success = SubmitOpenXRFrameWindows(shared_handle, &last_error_);
+      success = SubmitOpenXRSharedTexture(texture_submission, &last_error_);
       break;
     case BackendKind::kOpenVR:
-      success = SubmitOpenVRFrameWindows(shared_handle, &last_error_);
+      success = SubmitOpenVRSharedTexture(texture_submission, &last_error_);
       break;
     case BackendKind::kMock:
-      success = SubmitMockFrameWindows(shared_handle, &last_error_);
+      success = SubmitMockSharedTexture(texture_submission, &last_error_);
       break;
     case BackendKind::kNone:
     default:
-      SetLastError("No backend selected for Windows shared-texture submission.");
+      SetLastError("No backend selected for shared-texture submission.");
       return false;
   }
 
@@ -98,49 +165,14 @@ bool BridgeState::SubmitSharedTextureWindows(uint64_t shared_handle) {
   return success;
 }
 
-bool BridgeState::SubmitSharedTextureLinux(const LinuxTextureInfo& texture_info) {
-  if (!initialized_) {
-    SetLastError("Bridge is not initialized.");
-    return false;
-  }
-
-  if (texture_info.planes.empty() || texture_info.planes.front().fd < 0) {
-    SetLastError("Linux texture info must include a non-negative DMA-BUF file descriptor.");
-    return false;
-  }
-
-  bool success = false;
-  switch (runtime_info_.selected_backend) {
-    case BackendKind::kOpenXR:
-      success = SubmitOpenXRFrameLinux(texture_info, &last_error_);
-      break;
-    case BackendKind::kOpenVR:
-      success = SubmitOpenVRFrameLinux(texture_info, &last_error_);
-      break;
-    case BackendKind::kMock:
-      success = SubmitMockFrameLinux(texture_info, &last_error_);
-      break;
-    case BackendKind::kNone:
-    default:
-      SetLastError("No backend selected for Linux shared-texture submission.");
-      return false;
-  }
-
-  if (success) {
-    ++frame_count_;
-  }
-
-  return success;
-}
-
-bool BridgeState::SubmitSoftwareFrameWindows(const SoftwareFrameInfo& frame_info) {
+bool BridgeState::SubmitSoftwareFrame(const SoftwareFrameInfo& frame_info) {
   if (!initialized_) {
     SetLastError("Bridge is not initialized.");
     return false;
   }
 
   if (frame_info.width == 0 || frame_info.height == 0 || frame_info.rgba_pixels.empty()) {
-    SetLastError("Windows software frame must include width, height, and RGBA pixel data.");
+    SetLastError("Software frame submission requires width, height, and RGBA pixel data.");
     return false;
   }
 
@@ -155,40 +187,7 @@ bool BridgeState::SubmitSoftwareFrameWindows(const SoftwareFrameInfo& frame_info
     case BackendKind::kOpenXR:
     case BackendKind::kNone:
     default:
-      SetLastError("Windows software frame submission is only available for the mock and OpenVR backends.");
-      return false;
-  }
-
-  if (success) {
-    ++frame_count_;
-  }
-
-  return success;
-}
-
-bool BridgeState::SubmitSoftwareFrameLinux(const SoftwareFrameInfo& frame_info) {
-  if (!initialized_) {
-    SetLastError("Bridge is not initialized.");
-    return false;
-  }
-
-  if (frame_info.width == 0 || frame_info.height == 0 || frame_info.rgba_pixels.empty()) {
-    SetLastError("Linux software frame must include width, height, and RGBA pixel data.");
-    return false;
-  }
-
-  bool success = false;
-  switch (runtime_info_.selected_backend) {
-    case BackendKind::kMock:
-      success = SubmitMockSoftwareFrame(frame_info, &last_error_);
-      break;
-    case BackendKind::kOpenVR:
-      success = SubmitOpenVRSoftwareFrame(frame_info, &last_error_);
-      break;
-    case BackendKind::kOpenXR:
-    case BackendKind::kNone:
-    default:
-      SetLastError("Linux software frame submission is only available for the mock and OpenVR backends.");
+      SetLastError("Software frame submission is only available for the mock and OpenVR backends.");
       return false;
   }
 
