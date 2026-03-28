@@ -1,0 +1,61 @@
+name: Prebuilt Modules
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  prebuild:
+    name: ${{ matrix.runtime }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            runtime: node
+          - os: ubuntu-latest
+            runtime: electron
+          - os: windows-latest
+            runtime: node
+          - os: windows-latest
+            runtime: electron
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build Node addon prebuilt
+        if: matrix.runtime == 'node'
+        run: npm run build:addon
+
+      - name: Build Electron addon prebuilt
+        if: matrix.runtime == 'electron'
+        run: npm run rebuild:electron
+
+      - name: Package prebuilt artifact
+        run: node ./scripts/package-prebuilt.mjs --runtime=${{ matrix.runtime }}
+
+      - name: Upload prebuilt artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-${{ matrix.runtime }}-${{ runner.os }}-${{ runner.arch }}
+          path: artifacts/prebuilds/*
+          if-no-files-found: error

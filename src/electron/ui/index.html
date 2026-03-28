@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Electron VR Overlay Demo</title>
+    <link rel="stylesheet" href="./index.css">
+  </head>
+  <body>
+    <div class="backdrop"></div>
+    <main class="hud-shell">
+      <section class="hero-panel">
+        <p class="eyebrow">VR Overlay Bridge</p>
+        <h1>Shared-texture Electron panel for OpenXR or OpenVR.</h1>
+        <p class="lede">
+          This demo window renders offscreen, keeps alpha intact, and forwards each frame into the native addon scaffold.
+        </p>
+      </section>
+
+      <section class="metrics-grid">
+        <article class="metric-card accent-cyan">
+          <span class="metric-label">Session</span>
+          <strong id="session-status">Awaiting compositor</strong>
+          <p>Zero-copy handoff path staged for native import.</p>
+        </article>
+        <article class="metric-card accent-amber">
+          <span class="metric-label">Platform</span>
+          <strong id="platform-value">Detecting</strong>
+          <p>Electron preload injects runtime versions for quick inspection.</p>
+        </article>
+        <article class="metric-card accent-lime">
+          <span class="metric-label">Refresh</span>
+          <strong id="clock-value">--:--:--</strong>
+          <p>Lightweight UI motion helps verify steady paint delivery.</p>
+        </article>
+      </section>
+
+      <section class="signal-panel">
+        <div class="signal-copy">
+          <p class="eyebrow">Render Pulse</p>
+          <h2>Animated bars keep the overlay visibly alive in-headset.</h2>
+        </div>
+        <div class="signal-bars" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="./index.js"></script>
+  </body>
+</html>

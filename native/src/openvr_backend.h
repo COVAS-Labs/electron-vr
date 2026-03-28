@@ -1,0 +1,15 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+
+#include "bridge.h"
+
+namespace vrbridge {
+
+bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* error_message);
+bool SubmitOpenVRFrameWindows(uint64_t shared_handle, std::string* error_message);
+bool SubmitOpenVRFrameLinux(const LinuxTextureInfo& texture_info, std::string* error_message);
+void ShutdownOpenVRBackend();
+
+}  // namespace vrbridge
