@@ -36,7 +36,7 @@ test("runtime probe exposes OpenVR runtime installation details", async () => {
   const scriptPath = resolve(artifactDir, "runtime-info-smoke.mjs");
   await writeFile(scriptPath, `
     import { app } from "electron";
-    import { createVrBridge } from "../packages/electron-vr/dist/bridge.js";
+    import { createVrBridge } from "../packages/electron-vr/dist/index.js";
 
     app.whenReady().then(() => {
       console.log("Runtime info:", createVrBridge().getRuntimeInfo());

@@ -126,6 +126,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb x11-utils libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2
 
+      - name: Set OpenVR SDK path
+        shell: bash
+        run: |
+          echo "OPENVR_SDK_DIR=${GITHUB_WORKSPACE}/.openvr-sdk" >> "$GITHUB_ENV"
+
+      - name: Fetch OpenVR SDK
+        shell: bash
+        run: |
+          git clone --depth=1 https://github.com/ValveSoftware/openvr.git "$OPENVR_SDK_DIR"
+
       - run: npm ci
       - run: npm run build
       - run: npm run rebuild:electron
