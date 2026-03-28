@@ -2,7 +2,142 @@
 
 Electron VR overlay workspace built around one public package: `@covas-labs/electron-vr`.
 
-## Layout
+## Installation
+
+This package is currently published to GitHub Packages, not the public npm registry.
+
+Add GitHub Packages auth for the `@covas-labs` scope in your app:
+
+```ini
+@covas-labs:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
+```
+
+Then install the public package in your Electron app:
+
+```bash
+npm install @covas-labs/electron-vr
+```
+
+Also keep `electron` in your app dependencies or devDependencies.
+
+## Usage
+
+### Create and open a dedicated VR overlay window
+
+```ts
+import { app } from "electron";
+import { VROverlay } from "@covas-labs/electron-vr";
+
+let overlay: VROverlay | null = null;
+
+app.on("ready", async () => {
+  overlay = new VROverlay({
+    name: "Status_HUD",
+    width: 1280,
+    height: 720,
+    url: "file:///absolute/path/to/overlay.html"
+  });
+
+  console.log("Runtime probe:", overlay.getRuntimeInfo());
+
+  const success = await overlay.init();
+  if (!success) {
+    console.error("Overlay init failed");
+    app.quit();
+    return;
+  }
+
+  console.log("Selected backend:", overlay.getSelectedBackend());
+});
+
+app.on("before-quit", () => {
+  overlay?.destroy();
+  overlay = null;
+});
+```
+
+The package currently prefers `OpenVR` and falls back to the native mock backend when no real VR runtime is available.
+
+### Position the overlay in VR space
+
+```ts
+const overlay = new VROverlay({
+  name: "Status_HUD",
+  url: "file:///absolute/path/to/overlay.html",
+  sizeMeters: 0.9,
+  placement: {
+    mode: "head",
+    position: { x: 0, y: 0, z: -1.2 },
+    rotation: { x: 0, y: 0, z: 0, w: 1 }
+  }
+});
+
+overlay.setPlacement({
+  mode: "world",
+  position: { x: 0, y: 1.4, z: -2 },
+  rotation: { x: 0, y: 0, z: 0, w: 1 }
+});
+
+overlay.setSizeMeters(1.2);
+overlay.setVisible(true);
+```
+
+`sizeMeters` must be greater than zero, and placement vectors/quaternions must use finite numeric values.
+
+`getRuntimeInfo()` now also reports whether an OpenVR runtime is installed and, when available, its runtime path.
+
+### Reuse an existing BrowserWindow
+
+```ts
+import { app, BrowserWindow } from "electron";
+import { VROverlay } from "@covas-labs/electron-vr";
+
+let overlay: VROverlay | null = null;
+
+app.on("ready", async () => {
+  const runtimeInfo = VROverlay.getRuntimeInfo();
+  if (!VROverlay.isAvailable(runtimeInfo)) {
+    return;
+  }
+
+  const window = new BrowserWindow({
+    width: 1280,
+    height: 720,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    webPreferences: {
+      offscreen: {
+        useSharedTexture: true
+      },
+      preload: "/absolute/path/to/preload.js",
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false
+    }
+  });
+
+  await window.loadURL("file:///absolute/path/to/overlay.html");
+
+  overlay = await VROverlay.openWindow(window, {
+    name: "Status_HUD",
+    frameRate: 60
+  });
+
+  if (!overlay) {
+    console.error("Failed to move existing window into VR");
+    window.close();
+  }
+});
+```
+
+Use this path when you want to check VR availability first, create a compatible offscreen `BrowserWindow` yourself, fully control its options, and only then attach that window to the VR bridge.
+
+## Development
+
+### Layout
 
 - `packages/native-addon`: native `node-gyp` addon source and build config
 - `packages/electron-vr`: public Electron package and runtime loader
@@ -10,7 +145,7 @@ Electron VR overlay workspace built around one public package: `@covas-labs/elec
 - `tests/e2e`: repository-owned end-to-end tests
 - `tools`: workspace build and publish helpers
 
-## Local workflow
+### Local workflow
 
 - `npm install`
 - `npm run build`
@@ -18,7 +153,7 @@ Electron VR overlay workspace built around one public package: `@covas-labs/elec
 - `npm run start`
 - `npm run test:e2e`
 
-## Package model
+### Package model
 
 Consumers install only `@covas-labs/electron-vr`.
 
@@ -26,7 +161,7 @@ Platform-specific prebuilt binaries are published as internal implementation pac
 
 The public package is the only consumer-facing install target. Apps should not import platform-specific package names directly.
 
-## Publishing
+### Publishing
 
 `.github/workflows/publish-prebuilt-packages.yml` publishes:
 

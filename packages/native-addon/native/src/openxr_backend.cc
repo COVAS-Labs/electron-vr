@@ -69,6 +69,51 @@ bool SubmitOpenXRFrameLinux(const LinuxTextureInfo& texture_info, std::string* e
   return true;
 }
 
+bool SetOpenXRPlacement(const OverlayPlacement& placement, std::string* error_message) {
+  (void)placement;
+  if (!g_initialized) {
+    if (error_message != nullptr) {
+      *error_message = "OpenXR backend is not initialized.";
+    }
+    return false;
+  }
+
+  if (error_message != nullptr) {
+    *error_message = "OpenXR overlay placement is not implemented yet.";
+  }
+  return false;
+}
+
+bool SetOpenXRVisible(bool visible, std::string* error_message) {
+  (void)visible;
+  if (!g_initialized) {
+    if (error_message != nullptr) {
+      *error_message = "OpenXR backend is not initialized.";
+    }
+    return false;
+  }
+
+  if (error_message != nullptr) {
+    *error_message = "OpenXR overlay visibility control is not implemented yet.";
+  }
+  return false;
+}
+
+bool SetOpenXRSizeMeters(float size_meters, std::string* error_message) {
+  (void)size_meters;
+  if (!g_initialized) {
+    if (error_message != nullptr) {
+      *error_message = "OpenXR backend is not initialized.";
+    }
+    return false;
+  }
+
+  if (error_message != nullptr) {
+    *error_message = "OpenXR overlay sizing is not implemented yet.";
+  }
+  return false;
+}
+
 void ShutdownOpenXRBackend() {
   g_initialized = false;
 }

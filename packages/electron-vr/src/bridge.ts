@@ -7,17 +7,43 @@ export type BackendKind = "none" | "openxr" | "openvr" | "mock";
 
 export interface RuntimeInfo {
   platform: string;
-  probeMode: "stub";
+  probeMode: string;
   openxrAvailable: boolean;
   openxrOverlayExtensionAvailable: boolean;
   openvrAvailable: boolean;
+  openvrRuntimeInstalled: boolean;
+  openvrRuntimePath: string;
   selectedBackend: BackendKind;
+}
+
+export interface Vec3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface Quat {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+}
+
+export type PlacementMode = "head" | "world";
+
+export interface OverlayPlacement {
+  mode: PlacementMode;
+  position: Vec3;
+  rotation: Quat;
 }
 
 export interface InitializeVROptions {
   name: string;
   width: number;
   height: number;
+  sizeMeters: number;
+  visible: boolean;
+  placement: OverlayPlacement;
 }
 
 export interface LinuxTexturePlane {
@@ -77,6 +103,9 @@ interface VrBridgeAddon {
   submitFrameWindows(handle: Buffer | bigint): boolean;
   submitFrameLinux(textureInfo: LinuxTextureInfo | number): boolean;
   submitSoftwareFrame(frameInfo: SoftwareFrameInfo): boolean;
+  setOverlayPlacement(placement: OverlayPlacement): boolean;
+  setOverlayVisible(visible: boolean): boolean;
+  setOverlaySizeMeters(sizeMeters: number): boolean;
   shutdownVR(): void;
   isInitialized(): boolean;
   getLastError(): string | null;
@@ -209,6 +238,18 @@ export class VrBridge {
 
   initialize(options: InitializeVROptions): boolean {
     return this.addon.initializeVR(options);
+  }
+
+  setOverlayPlacement(placement: OverlayPlacement): boolean {
+    return this.addon.setOverlayPlacement(placement);
+  }
+
+  setOverlayVisible(visible: boolean): boolean {
+    return this.addon.setOverlayVisible(visible);
+  }
+
+  setOverlaySizeMeters(sizeMeters: number): boolean {
+    return this.addon.setOverlaySizeMeters(sizeMeters);
   }
 
   shutdown(): void {

@@ -8,10 +8,37 @@
 
 namespace vrbridge {
 
+enum class OverlayPlacementMode {
+  kHead = 0,
+  kWorld
+};
+
+struct Vector3 {
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+};
+
+struct Quaternion {
+  float x = 0.0f;
+  float y = 0.0f;
+  float z = 0.0f;
+  float w = 1.0f;
+};
+
+struct OverlayPlacement {
+  OverlayPlacementMode mode = OverlayPlacementMode::kHead;
+  Vector3 position;
+  Quaternion rotation;
+};
+
 struct InitializeOptions {
   std::string name;
   uint32_t width = 0;
   uint32_t height = 0;
+  float size_meters = 1.0f;
+  bool visible = true;
+  OverlayPlacement placement;
 };
 
 struct LinuxPlaneInfo {
@@ -42,6 +69,9 @@ class BridgeState {
   bool SubmitFrameWindows(uint64_t shared_handle);
   bool SubmitFrameLinux(const LinuxTextureInfo& texture_info);
   bool SubmitSoftwareFrame(const SoftwareFrameInfo& frame_info);
+  bool SetOverlayPlacement(const OverlayPlacement& placement);
+  bool SetOverlayVisible(bool visible);
+  bool SetOverlaySizeMeters(float size_meters);
   void Shutdown();
   bool IsInitialized() const;
   std::string GetLastError() const;

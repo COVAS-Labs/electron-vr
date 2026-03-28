@@ -1,10 +1,14 @@
 #include "runtime_probe.h"
 
+#include <vector>
+
 #if defined(_WIN32)
 #include <windows.h>
 #else
 #include <dlfcn.h>
 #endif
+
+#include "/home/luca/Dokumente/openvr/headers/openvr.h"
 
 namespace vrbridge {
 
@@ -62,25 +66,52 @@ std::string DetectPlatform() {
 #endif
 }
 
+std::string DetectOpenVRRuntimePath(bool* installed) {
+  if (installed != nullptr) {
+    *installed = false;
+  }
+
+  if (!vr::VR_IsRuntimeInstalled()) {
+    return std::string();
+  }
+
+  if (installed != nullptr) {
+    *installed = true;
+  }
+
+  uint32_t required_size = 0;
+  if (!vr::VR_GetRuntimePath(nullptr, 0, &required_size) || required_size == 0) {
+    return std::string();
+  }
+
+  std::vector<char> buffer(required_size, '\0');
+  if (!vr::VR_GetRuntimePath(buffer.data(), required_size, &required_size)) {
+    return std::string();
+  }
+
+  return std::string(buffer.data());
+}
+
 }  // namespace
 
 RuntimeInfo ProbeRuntime() {
   RuntimeInfo info;
   info.platform = DetectPlatform();
+  info.probe_mode = "native";
 
 #if defined(_WIN32)
   info.openxr_available = LibraryExists("openxr_loader.dll");
   info.openvr_available = LibraryExists("openvr_api.dll");
 #else
   info.openxr_available = LibraryExists("libopenxr_loader.so.1", "libopenxr_loader.so");
-  info.openvr_available = LibraryExists("libopenvr_api.so", "openvr_api.so");
+  info.openvr_available = LibraryExists("libopenvr_api.so", "/home/luca/Dokumente/openvr/lib/linux64/libopenvr_api.so") ||
+                          LibraryExists("/home/luca/Dokumente/openvr/bin/linux64/libopenvr_api.so");
 #endif
 
   info.openxr_overlay_extension_available = false;
+  info.openvr_runtime_path = DetectOpenVRRuntimePath(&info.openvr_runtime_installed);
 
-  if (info.openxr_available) {
-    info.selected_backend = BackendKind::kOpenXR;
-  } else if (info.openvr_available) {
+  if (info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
   } else {
     info.selected_backend = BackendKind::kMock;

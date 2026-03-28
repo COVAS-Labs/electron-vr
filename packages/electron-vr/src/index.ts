@@ -1,2 +1,12 @@
-export { VrBridge, createVrBridge, type AttachWindowOptions, type BackendKind, type InitializeVROptions, type RuntimeInfo } from "./bridge.js";
-export { VROverlay, type VROverlayOptions } from "./VROverlay.js";
+export {
+  VrBridge,
+  createVrBridge,
+  type AttachWindowOptions,
+  type BackendKind,
+  type InitializeVROptions,
+  type OverlayPlacement,
+  type Quat,
+  type RuntimeInfo,
+  type Vec3
+} from "./bridge.js";
+export { VROverlay, type ExistingWindowVROverlayOptions, type VROverlayOptions } from "./VROverlay.js";

@@ -18,6 +18,12 @@ app.on("ready", async () => {
     width: 1280,
     height: 720,
     url: overlayUrl,
+    sizeMeters: 0.9,
+    placement: {
+      mode: "head",
+      position: { x: 0, y: 0, z: -1.1 },
+      rotation: { x: 0, y: 0, z: 0, w: 1 }
+    },
     windowOptions: {
       backgroundColor: "#00000000",
       webPreferences: {
@@ -28,6 +34,12 @@ app.on("ready", async () => {
 
   const runtimeInfo = overlay.getRuntimeInfo();
   console.log("VR runtime probe:", runtimeInfo);
+  if (runtimeInfo.openvrAvailable) {
+    console.log(`OpenVR runtime installed: ${runtimeInfo.openvrRuntimeInstalled}`);
+    if (runtimeInfo.openvrRuntimePath) {
+      console.log(`OpenVR runtime path: ${runtimeInfo.openvrRuntimePath}`);
+    }
+  }
 
   const success = await overlay.init();
   if (!success) {
@@ -37,6 +49,19 @@ app.on("ready", async () => {
   }
 
   console.log(`Overlay initialized with backend: ${overlay.getSelectedBackend()}`);
+
+  const moved = overlay.setPlacement({
+    mode: "world",
+    position: { x: 0, y: 1.4, z: -2 },
+    rotation: { x: 0, y: 0, z: 0, w: 1 }
+  });
+  console.log(`Overlay world placement update: ${moved}`);
+
+  const resized = overlay.setSizeMeters(1.1);
+  console.log(`Overlay size update: ${resized}`);
+
+  const visible = overlay.setVisible(true);
+  console.log(`Overlay visibility update: ${visible}`);
 });
 
 app.on("window-all-closed", () => {

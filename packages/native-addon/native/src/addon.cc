@@ -10,6 +10,56 @@ namespace vrbridge {
 
 namespace {
 
+Vector3 ReadVector3(const Napi::Value& value, const char* context) {
+  if (!value.IsObject()) {
+    throw Napi::TypeError::New(value.Env(), std::string(context) + " must be an object.");
+  }
+
+  const Napi::Object object = value.As<Napi::Object>();
+  Vector3 vector;
+  vector.x = object.Get("x").As<Napi::Number>().FloatValue();
+  vector.y = object.Get("y").As<Napi::Number>().FloatValue();
+  vector.z = object.Get("z").As<Napi::Number>().FloatValue();
+  return vector;
+}
+
+Quaternion ReadQuaternion(const Napi::Value& value, const char* context) {
+  if (!value.IsObject()) {
+    throw Napi::TypeError::New(value.Env(), std::string(context) + " must be an object.");
+  }
+
+  const Napi::Object object = value.As<Napi::Object>();
+  Quaternion quaternion;
+  quaternion.x = object.Get("x").As<Napi::Number>().FloatValue();
+  quaternion.y = object.Get("y").As<Napi::Number>().FloatValue();
+  quaternion.z = object.Get("z").As<Napi::Number>().FloatValue();
+  quaternion.w = object.Get("w").As<Napi::Number>().FloatValue();
+  return quaternion;
+}
+
+OverlayPlacement ReadOverlayPlacement(const Napi::Value& value) {
+  if (!value.IsObject()) {
+    throw Napi::TypeError::New(value.Env(), "placement must be an object.");
+  }
+
+  const Napi::Object object = value.As<Napi::Object>();
+  const Napi::Value mode_value = object.Get("mode");
+  const std::string mode = mode_value.As<Napi::String>().Utf8Value();
+
+  OverlayPlacement placement;
+  if (mode == "head") {
+    placement.mode = OverlayPlacementMode::kHead;
+  } else if (mode == "world") {
+    placement.mode = OverlayPlacementMode::kWorld;
+  } else {
+    throw Napi::RangeError::New(value.Env(), "placement.mode must be 'head' or 'world'.");
+  }
+
+  placement.position = ReadVector3(object.Get("position"), "placement.position");
+  placement.rotation = ReadQuaternion(object.Get("rotation"), "placement.rotation");
+  return placement;
+}
+
 uint64_t ReadWindowsHandle(const Napi::Value& value) {
   if (value.IsBigInt()) {
     bool lossless = false;
@@ -159,6 +209,8 @@ Napi::Object RuntimeInfoToObject(Napi::Env env, const RuntimeInfo& info) {
   result.Set("openxrAvailable", info.openxr_available);
   result.Set("openxrOverlayExtensionAvailable", info.openxr_overlay_extension_available);
   result.Set("openvrAvailable", info.openvr_available);
+  result.Set("openvrRuntimeInstalled", info.openvr_runtime_installed);
+  result.Set("openvrRuntimePath", info.openvr_runtime_path);
   result.Set("selectedBackend", BackendKindToString(info.selected_backend));
   return result;
 }
@@ -180,14 +232,21 @@ Napi::Value InitializeVRWrapped(const Napi::CallbackInfo& info) {
   const Napi::Value name_value = options.Get("name");
   const Napi::Value width_value = options.Get("width");
   const Napi::Value height_value = options.Get("height");
+  const Napi::Value size_meters_value = options.Get("sizeMeters");
+  const Napi::Value visible_value = options.Get("visible");
+  const Napi::Value placement_value = options.Get("placement");
 
-  if (!name_value.IsString() || !width_value.IsNumber() || !height_value.IsNumber()) {
-    throw Napi::TypeError::New(info.Env(), "initializeVR options must include name, width, and height.");
+  if (!name_value.IsString() || !width_value.IsNumber() || !height_value.IsNumber() ||
+      !size_meters_value.IsNumber() || !visible_value.IsBoolean() || !placement_value.IsObject()) {
+    throw Napi::TypeError::New(info.Env(), "initializeVR options must include name, width, height, sizeMeters, visible, and placement.");
   }
 
   native_options.name = name_value.As<Napi::String>().Utf8Value();
   native_options.width = width_value.As<Napi::Number>().Uint32Value();
   native_options.height = height_value.As<Napi::Number>().Uint32Value();
+  native_options.size_meters = size_meters_value.As<Napi::Number>().FloatValue();
+  native_options.visible = visible_value.As<Napi::Boolean>().Value();
+  native_options.placement = ReadOverlayPlacement(placement_value);
 
   return Napi::Boolean::New(info.Env(), GetBridgeState().Initialize(native_options));
 }
@@ -221,6 +280,30 @@ Napi::Value ShutdownVRWrapped(const Napi::CallbackInfo& info) {
   return info.Env().Undefined();
 }
 
+Napi::Value SetOverlayPlacementWrapped(const Napi::CallbackInfo& info) {
+  if (info.Length() != 1) {
+    throw Napi::TypeError::New(info.Env(), "setOverlayPlacement expects one argument.");
+  }
+
+  return Napi::Boolean::New(info.Env(), GetBridgeState().SetOverlayPlacement(ReadOverlayPlacement(info[0])));
+}
+
+Napi::Value SetOverlayVisibleWrapped(const Napi::CallbackInfo& info) {
+  if (info.Length() != 1 || !info[0].IsBoolean()) {
+    throw Napi::TypeError::New(info.Env(), "setOverlayVisible expects a boolean.");
+  }
+
+  return Napi::Boolean::New(info.Env(), GetBridgeState().SetOverlayVisible(info[0].As<Napi::Boolean>().Value()));
+}
+
+Napi::Value SetOverlaySizeMetersWrapped(const Napi::CallbackInfo& info) {
+  if (info.Length() != 1 || !info[0].IsNumber()) {
+    throw Napi::TypeError::New(info.Env(), "setOverlaySizeMeters expects a number.");
+  }
+
+  return Napi::Boolean::New(info.Env(), GetBridgeState().SetOverlaySizeMeters(info[0].As<Napi::Number>().FloatValue()));
+}
+
 Napi::Value IsInitializedWrapped(const Napi::CallbackInfo& info) {
   return Napi::Boolean::New(info.Env(), GetBridgeState().IsInitialized());
 }
@@ -240,6 +323,9 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("submitFrameWindows", Napi::Function::New(env, SubmitFrameWindowsWrapped));
   exports.Set("submitFrameLinux", Napi::Function::New(env, SubmitFrameLinuxWrapped));
   exports.Set("submitSoftwareFrame", Napi::Function::New(env, SubmitSoftwareFrameWrapped));
+  exports.Set("setOverlayPlacement", Napi::Function::New(env, SetOverlayPlacementWrapped));
+  exports.Set("setOverlayVisible", Napi::Function::New(env, SetOverlayVisibleWrapped));
+  exports.Set("setOverlaySizeMeters", Napi::Function::New(env, SetOverlaySizeMetersWrapped));
   exports.Set("shutdownVR", Napi::Function::New(env, ShutdownVRWrapped));
   exports.Set("isInitialized", Napi::Function::New(env, IsInitializedWrapped));
   exports.Set("getLastError", Napi::Function::New(env, GetLastErrorWrapped));

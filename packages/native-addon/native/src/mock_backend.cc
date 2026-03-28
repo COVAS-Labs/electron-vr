@@ -656,6 +656,51 @@ bool SubmitMockSoftwareFrame(const SoftwareFrameInfo& frame_info, std::string* e
 #endif
 }
 
+bool SetMockPlacement(const OverlayPlacement& placement, std::string* error_message) {
+  (void)placement;
+  if (!g_initialized) {
+    if (error_message != nullptr) {
+      *error_message = "Mock backend is not initialized.";
+    }
+    return false;
+  }
+
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool SetMockVisible(bool visible, std::string* error_message) {
+  (void)visible;
+  if (!g_initialized) {
+    if (error_message != nullptr) {
+      *error_message = "Mock backend is not initialized.";
+    }
+    return false;
+  }
+
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool SetMockSizeMeters(float size_meters, std::string* error_message) {
+  (void)size_meters;
+  if (!g_initialized) {
+    if (error_message != nullptr) {
+      *error_message = "Mock backend is not initialized.";
+    }
+    return false;
+  }
+
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
 void ShutdownMockBackend() {
 #if defined(__linux__)
   g_linux_mock_preview.Shutdown();

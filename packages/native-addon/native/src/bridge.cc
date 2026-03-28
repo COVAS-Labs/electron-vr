@@ -35,6 +35,12 @@ bool BridgeState::Initialize(const InitializeOptions& options) {
     return false;
   }
 
+  if (options.size_meters <= 0.0f) {
+    SetLastError("Overlay sizeMeters must be greater than zero.");
+    initialized_ = false;
+    return false;
+  }
+
   bool success = false;
   switch (runtime_info_.selected_backend) {
     case BackendKind::kOpenXR:
@@ -153,6 +159,101 @@ bool BridgeState::SubmitSoftwareFrame(const SoftwareFrameInfo& frame_info) {
 
   if (success) {
     ++frame_count_;
+  }
+
+  return success;
+}
+
+bool BridgeState::SetOverlayPlacement(const OverlayPlacement& placement) {
+  if (!initialized_) {
+    SetLastError("Bridge is not initialized.");
+    return false;
+  }
+
+  bool success = false;
+  switch (runtime_info_.selected_backend) {
+    case BackendKind::kOpenXR:
+      success = SetOpenXRPlacement(placement, &last_error_);
+      break;
+    case BackendKind::kOpenVR:
+      success = SetOpenVRPlacement(placement, &last_error_);
+      break;
+    case BackendKind::kMock:
+      success = SetMockPlacement(placement, &last_error_);
+      break;
+    case BackendKind::kNone:
+    default:
+      SetLastError("No backend selected for overlay placement.");
+      return false;
+  }
+
+  if (success) {
+    options_.placement = placement;
+  }
+
+  return success;
+}
+
+bool BridgeState::SetOverlayVisible(bool visible) {
+  if (!initialized_) {
+    SetLastError("Bridge is not initialized.");
+    return false;
+  }
+
+  bool success = false;
+  switch (runtime_info_.selected_backend) {
+    case BackendKind::kOpenXR:
+      success = SetOpenXRVisible(visible, &last_error_);
+      break;
+    case BackendKind::kOpenVR:
+      success = SetOpenVRVisible(visible, &last_error_);
+      break;
+    case BackendKind::kMock:
+      success = SetMockVisible(visible, &last_error_);
+      break;
+    case BackendKind::kNone:
+    default:
+      SetLastError("No backend selected for overlay visibility.");
+      return false;
+  }
+
+  if (success) {
+    options_.visible = visible;
+  }
+
+  return success;
+}
+
+bool BridgeState::SetOverlaySizeMeters(float size_meters) {
+  if (!initialized_) {
+    SetLastError("Bridge is not initialized.");
+    return false;
+  }
+
+  if (size_meters <= 0.0f) {
+    SetLastError("Overlay sizeMeters must be greater than zero.");
+    return false;
+  }
+
+  bool success = false;
+  switch (runtime_info_.selected_backend) {
+    case BackendKind::kOpenXR:
+      success = SetOpenXRSizeMeters(size_meters, &last_error_);
+      break;
+    case BackendKind::kOpenVR:
+      success = SetOpenVRSizeMeters(size_meters, &last_error_);
+      break;
+    case BackendKind::kMock:
+      success = SetMockSizeMeters(size_meters, &last_error_);
+      break;
+    case BackendKind::kNone:
+    default:
+      SetLastError("No backend selected for overlay sizing.");
+      return false;
+  }
+
+  if (success) {
+    options_.size_meters = size_meters;
   }
 
   return success;

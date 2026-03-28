@@ -11,7 +11,8 @@
         "native/src/openvr_backend.cc"
       ],
       "include_dirs": [
-        "<!@(node -p \"require('node-addon-api').include\")"
+        "<!@(node -p \"require('node-addon-api').include\")",
+        "/home/luca/Dokumente/openvr/headers"
       ],
       "dependencies": [
         "<!(node -p \"require('node-addon-api').gyp\")"
@@ -38,6 +39,7 @@
           "OS==\"linux\"",
           {
             "libraries": [
+              "/home/luca/Dokumente/openvr/lib/linux64/libopenvr_api.so",
               "-lX11",
               "-lEGL",
               "-lGLESv2",
@@ -51,6 +53,9 @@
             "defines": [
               "NOMINMAX",
               "WIN32_LEAN_AND_MEAN"
+            ],
+            "libraries": [
+              "openvr_api.lib"
             ],
             "msvs_settings": {
               "VCCLCompilerTool": {

@@ -16,6 +16,8 @@ struct RuntimeInfo {
   bool openxr_available = false;
   bool openxr_overlay_extension_available = false;
   bool openvr_available = false;
+  bool openvr_runtime_installed = false;
+  std::string openvr_runtime_path;
   BackendKind selected_backend = BackendKind::kNone;
   std::string probe_mode = "stub";
 };
