@@ -57,7 +57,6 @@ jobs:
           cache: npm
           registry-url: https://npm.pkg.github.com
           scope: "@covas-labs"
-          always-auth: true
 
       - name: Install Linux native dependencies
         if: runner.os == 'Linux'
@@ -99,7 +98,6 @@ jobs:
           cache: npm
           registry-url: https://npm.pkg.github.com
           scope: "@covas-labs"
-          always-auth: true
 
       - run: npm ci
       - run: npm run build --workspace @covas-labs/electron-vr

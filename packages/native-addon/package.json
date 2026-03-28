@@ -2,6 +2,7 @@
   "name": "@covas-labs/electron-vr-native-addon",
   "private": true,
   "scripts": {
+    "install": "node -e \"console.log('Skipping implicit native rebuild during install.')\"",
     "build:addon": "node ../../tools/build-native-addon.mjs",
     "rebuild:electron": "node ../../tools/rebuild-electron-addon.mjs"
   },
