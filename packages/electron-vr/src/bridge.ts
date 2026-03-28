@@ -1,5 +1,6 @@
 import type { BrowserWindow, Rectangle } from "electron";
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -131,10 +132,36 @@ function resolvePrebuiltPackageName(): string | null {
   return packagesForPlatform[process.arch as keyof typeof packagesForPlatform] ?? null;
 }
 
+function ensureOpenVRLibraryPath(): void {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  const sdkDir = process.env.OPENVR_SDK_DIR;
+  if (!sdkDir) {
+    return;
+  }
+
+  const dllDir = resolve(sdkDir, "bin", "win64");
+  if (!existsSync(dllDir)) {
+    return;
+  }
+
+  const currentPath = process.env.PATH ?? "";
+  const pathEntries = currentPath.split(";").filter(Boolean);
+  if (pathEntries.includes(dllDir)) {
+    return;
+  }
+
+  process.env.PATH = currentPath ? `${dllDir};${currentPath}` : dllDir;
+}
+
 function loadVrBridgeAddon(): VrBridgeAddon {
   if (cachedAddon) {
     return cachedAddon;
   }
+
+  ensureOpenVRLibraryPath();
 
   const require = createRequire(import.meta.url);
   const applicationRequire = createRequire(resolve(process.cwd(), "package.json"));

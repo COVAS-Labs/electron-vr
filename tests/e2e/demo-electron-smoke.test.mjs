@@ -77,6 +77,10 @@ test("boots the demo app and exercises overlay API paths", async () => {
   child.on("error", (error) => {
     spawnError = error;
   });
+  child.on("close", (code, signal) => {
+    exitCode = code;
+    signalCode = signal;
+  });
 
   try {
     try {

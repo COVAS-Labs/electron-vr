@@ -54,6 +54,13 @@ test("runtime probe exposes OpenVR runtime installation details", async () => {
       console.log("Runtime info:", createVrBridge().getRuntimeInfo());
       app.quit();
     });
+    app.on("window-all-closed", () => {
+      app.quit();
+    });
+    process.on("unhandledRejection", (error) => {
+      console.error("Unhandled rejection in runtime info smoke:", error);
+      app.exit(1);
+    });
   `, "utf8");
 
   const electronArgs = [scriptPath];
@@ -86,6 +93,10 @@ test("runtime probe exposes OpenVR runtime installation details", async () => {
   });
   child.on("error", (error) => {
     spawnError = error;
+  });
+  child.on("close", (code, signal) => {
+    exitCode = code;
+    signalCode = signal;
   });
 
   try {
