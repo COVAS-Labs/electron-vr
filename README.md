@@ -30,7 +30,6 @@ The GitHub Actions workflow in `.github/workflows/prebuilt-modules.yml` builds p
 Each uploaded artifact includes:
 
 - installable `package/`
-- `*.tgz`
 - `metadata.json`
 
 The metadata marks the build as an `all-backends` prebuilt, meaning the module is compiled with the OpenXR, OpenVR, and mock backend paths included.

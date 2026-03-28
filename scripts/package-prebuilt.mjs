@@ -1,7 +1,5 @@
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 function parseArgs(argv) {
@@ -17,7 +15,6 @@ function parseArgs(argv) {
   return parsed;
 }
 
-const require = createRequire(import.meta.url);
 const args = parseArgs(process.argv.slice(2));
 const runtime = args.runtime;
 
@@ -49,7 +46,6 @@ const artifactName = `vr_bridge-${runtime}-v${runtimeVersion}-${platform}-${arch
 const artifactDir = join(artifactRoot, artifactName);
 const packageDir = join(artifactDir, "package");
 const packageName = `@${ownerScope}/vr-bridge-prebuilt-${runtime}-${platform}-${arch}`;
-const packageBasename = `${ownerScope}-vr-bridge-prebuilt-${runtime}-${platform}-${arch}`;
 const packageReadme = [
   `# ${packageName}`,
   "",
@@ -101,34 +97,5 @@ await writeFile(join(packageDir, "metadata.json"), `${JSON.stringify(metadata, n
 await writeFile(join(packageDir, "package.json"), `${JSON.stringify(packageManifest, null, 2)}\n`, "utf8");
 await writeFile(join(packageDir, "README.md"), `${packageReadme}\n`, "utf8");
 
-const npmExecutable = process.env.npm_execpath
-  ? process.execPath
-  : process.platform === "win32"
-    ? process.env.ComSpec ?? "cmd.exe"
-    : "npm";
-const npmArgs = process.env.npm_execpath
-  ? [process.env.npm_execpath, "pack", packageDir, "--pack-destination", artifactDir]
-  : process.platform === "win32"
-    ? ["/d", "/s", "/c", `npm pack "${packageDir}" --pack-destination "${artifactDir}"`]
-    : ["pack", packageDir, "--pack-destination", artifactDir];
-const packResult = spawnSync(
-  npmExecutable,
-  npmArgs,
-  {
-    cwd: projectRoot,
-    stdio: "inherit"
-  }
-);
-
-if (packResult.error) {
-  console.error(packResult.error);
-}
-
-if (packResult.status !== 0) {
-  process.exit(packResult.status ?? 1);
-}
-
-const packageTarball = `${packageBasename}-${publishVersion}.tgz`;
 console.log(`Prepared prebuilt artifact in ${artifactDir}`);
 console.log(`PACKAGE_DIR=${packageDir}`);
-console.log(`PACKAGE_TARBALL=${join(artifactDir, packageTarball)}`);

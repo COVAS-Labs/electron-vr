@@ -1,5 +1,8 @@
 name: Publish Prebuilt Packages
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   workflow_dispatch:
   push:
@@ -88,8 +91,7 @@ jobs:
         with:
           name: published-${{ matrix.runtime }}-${{ runner.os }}-${{ runner.arch }}
           path: |
-            artifacts/prebuilds/*/*.tgz
-            artifacts/prebuilds/*/package/metadata.json
+            artifacts/prebuilds/*/package/**
           if-no-files-found: error
 
   smoke-consumer:
