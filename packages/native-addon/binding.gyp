@@ -42,7 +42,7 @@
           "OS==\"linux\"",
           {
             "libraries": [
-              "<(openvr_sdk_dir)/bin/linux64/libopenvr_api.a",
+              "<(openvr_sdk_dir)/lib/linux64/libopenvr_api.so",
               "-lX11",
               "-lEGL",
               "-lGLESv2",

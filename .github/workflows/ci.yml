@@ -47,6 +47,14 @@ jobs:
       - run: npm run rebuild:electron
       - run: npm run test:unit
 
+      - name: Run runtime info smoke test
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e:runtime-info
+
+      - name: Run runtime info smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: npm run test:e2e:runtime-info
+
   smoke:
     name: Electron Smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -84,6 +92,14 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run rebuild:electron
+
+      - name: Run runtime info smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e:runtime-info
+
+      - name: Run runtime info smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: npm run test:e2e:runtime-info
 
       - name: Run Electron smoke test (Linux)
         if: runner.os == 'Linux'

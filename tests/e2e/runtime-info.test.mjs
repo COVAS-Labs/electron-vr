@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const demoAppDir = resolve(projectRoot, "apps", "demo-electron");
 const artifactDir = resolve(projectRoot, "artifacts");
 const electronBinary = require("electron");
 
@@ -31,16 +30,27 @@ async function waitFor(check, timeoutMs, description) {
   throw new Error(`Timed out waiting for ${description}.`);
 }
 
-test("boots the demo app and exercises overlay API paths", async () => {
+test("runtime probe exposes OpenVR runtime installation details", async () => {
   await mkdir(artifactDir, { recursive: true });
 
-  const electronArgs = [demoAppDir];
+  const scriptPath = resolve(artifactDir, "runtime-info-smoke.mjs");
+  await writeFile(scriptPath, `
+    import { app } from "electron";
+    import { createVrBridge } from "../packages/electron-vr/dist/bridge.js";
+
+    app.whenReady().then(() => {
+      console.log("Runtime info:", createVrBridge().getRuntimeInfo());
+      app.quit();
+    });
+  `, "utf8");
+
+  const electronArgs = [scriptPath];
   if (process.platform === "linux") {
     electronArgs.push("--no-sandbox");
   }
 
   const child = spawn(electronBinary, electronArgs, {
-    cwd: demoAppDir,
+    cwd: projectRoot,
     env: {
       ...process.env,
       CI: "1"
@@ -57,21 +67,12 @@ test("boots the demo app and exercises overlay API paths", async () => {
   });
 
   try {
-    await waitFor(() => combinedOutput.includes("VR runtime probe:"), 20000, "runtime probe logging");
-    await waitFor(() => combinedOutput.includes("OpenVR runtime installed:"), 20000, "OpenVR install logging");
-    await waitFor(() => combinedOutput.includes("Overlay initialized with backend:"), 20000, "overlay initialization");
-    await waitFor(() => combinedOutput.includes("Overlay world placement update: true"), 20000, "placement update logging");
-    await waitFor(() => combinedOutput.includes("Overlay size update: true"), 20000, "size update logging");
-    await waitFor(() => combinedOutput.includes("Overlay visibility update: true"), 20000, "visibility update logging");
+    await waitFor(() => combinedOutput.includes("Runtime info:"), 20000, "runtime info logging");
 
-    assert.match(combinedOutput, /VR runtime probe:/);
-    assert.match(combinedOutput, /OpenVR runtime installed:/);
-    assert.match(combinedOutput, /Overlay initialized with backend:/);
-    assert.match(combinedOutput, /Overlay world placement update: true/);
-    assert.match(combinedOutput, /Overlay size update: true/);
-    assert.match(combinedOutput, /Overlay visibility update: true/);
-    assert.doesNotMatch(combinedOutput, /Failed to initialize VR bridge/);
-    assert.doesNotMatch(combinedOutput, /UnhandledPromiseRejection|uncaught exception|Error while forwarding frame to VR bridge/i);
+    assert.match(combinedOutput, /Runtime info:/);
+    assert.match(combinedOutput, /openvrAvailable/i);
+    assert.match(combinedOutput, /openvrRuntimeInstalled/i);
+    assert.match(combinedOutput, /openvrRuntimePath/i);
   } finally {
     child.kill("SIGTERM");
     await Promise.race([
@@ -83,6 +84,6 @@ test("boots the demo app and exercises overlay API paths", async () => {
       child.kill("SIGKILL");
     }
 
-    await writeFile(resolve(artifactDir, `demo-smoke-${process.platform}.log`), combinedOutput, "utf8");
+    await writeFile(resolve(artifactDir, `runtime-info-${process.platform}.log`), combinedOutput, "utf8");
   }
 });

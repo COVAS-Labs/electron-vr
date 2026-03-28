@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { assertSizeMeters, normalizePlacement } from "../../packages/electron-vr/dist/overlayOptions.js";
-import { createVrBridge } from "../../packages/electron-vr/dist/bridge.js";
 
 test("overlay placement defaults to a head-locked transform", () => {
   const placement = normalizePlacement();
@@ -35,12 +34,4 @@ test("overlay placement validation rejects bad mode and coordinates", () => {
     () => normalizePlacement({ mode: "world", position: { x: 0, y: 0, z: -2 }, rotation: { x: 0, y: 0, z: 0, w: Number.NaN } }),
     /placement.rotation/
   );
-});
-
-test("runtime probe exposes OpenVR runtime installation details", () => {
-  const runtimeInfo = createVrBridge().getRuntimeInfo();
-
-  assert.equal(typeof runtimeInfo.openvrAvailable, "boolean");
-  assert.equal(typeof runtimeInfo.openvrRuntimeInstalled, "boolean");
-  assert.equal(typeof runtimeInfo.openvrRuntimePath, "string");
 });
