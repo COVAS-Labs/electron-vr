@@ -13,18 +13,21 @@ let overlay: VROverlay | null = null;
 app.commandLine.appendSwitch("enable-features", "SharedImages");
 
 app.on("ready", async () => {
+  console.log("Using Electron shared texture -> OpenVR on Windows.");
+
   overlay = new VROverlay({
     name: "Status_HUD",
     width: 1280,
     height: 720,
     url: overlayUrl,
-    sizeMeters: 0.9,
+    sizeMeters: 1.1,
     placement: {
       mode: "head",
-      position: { x: 0, y: 0, z: -1.1 },
+      position: { x: 0, y: 0, z: -0.8 },
       rotation: { x: 0, y: 0, z: 0, w: 1 }
     },
     windowOptions: {
+      transparent: true,
       backgroundColor: "#00000000",
       webPreferences: {
         preload: preloadPath
@@ -50,10 +53,10 @@ app.on("ready", async () => {
 
   const moved = overlay.setPlacement({
     mode: "world",
-    position: { x: 0, y: 1.4, z: -2 },
+    position: { x: 0, y: 1, z: -1.5},
     rotation: { x: 0, y: 0, z: 0, w: 1 }
   });
-  console.log(`Overlay world placement update: ${moved}`);
+  console.log(`Overlay head placement update: ${moved}`);
 
   const resized = overlay.setSizeMeters(1.1);
   console.log(`Overlay size update: ${resized}`);

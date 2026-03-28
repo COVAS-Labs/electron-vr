@@ -87,7 +87,7 @@ test("boots the demo app and exercises overlay API paths", async () => {
       await waitFor(() => combinedOutput.includes("VR runtime probe:"), 20000, "runtime probe logging");
       await waitFor(() => combinedOutput.includes("OpenVR runtime installed:"), 20000, "OpenVR install logging");
       await waitFor(() => combinedOutput.includes("Overlay initialized with backend:"), 20000, "overlay initialization");
-      await waitFor(() => combinedOutput.includes("Overlay world placement update: true"), 20000, "placement update logging");
+      await waitFor(() => combinedOutput.includes("Overlay head placement update: true"), 20000, "placement update logging");
       await waitFor(() => combinedOutput.includes("Overlay size update: true"), 20000, "size update logging");
       await waitFor(() => combinedOutput.includes("Overlay visibility update: true"), 20000, "visibility update logging");
     } catch {
@@ -97,7 +97,7 @@ test("boots the demo app and exercises overlay API paths", async () => {
     assert.match(combinedOutput, /VR runtime probe:/);
     assert.match(combinedOutput, /OpenVR runtime installed:/);
     assert.match(combinedOutput, /Overlay initialized with backend:/);
-    assert.match(combinedOutput, /Overlay world placement update: true/);
+    assert.match(combinedOutput, /Overlay head placement update: true/);
     assert.match(combinedOutput, /Overlay size update: true/);
     assert.match(combinedOutput, /Overlay visibility update: true/);
     assert.doesNotMatch(combinedOutput, /Failed to initialize VR bridge/);

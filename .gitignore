@@ -3,4 +3,5 @@ dist/
 build/
 artifacts/
 .tmp/
+.openvr-sdk/
 *.log

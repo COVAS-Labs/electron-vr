@@ -63,7 +63,7 @@ bool BridgeState::Initialize(const InitializeOptions& options) {
   return initialized_;
 }
 
-bool BridgeState::SubmitFrameWindows(uint64_t shared_handle) {
+bool BridgeState::SubmitSharedTextureWindows(uint64_t shared_handle) {
   if (!initialized_) {
     SetLastError("Bridge is not initialized.");
     return false;
@@ -87,7 +87,7 @@ bool BridgeState::SubmitFrameWindows(uint64_t shared_handle) {
       break;
     case BackendKind::kNone:
     default:
-      SetLastError("No backend selected for Windows frame submission.");
+      SetLastError("No backend selected for Windows shared-texture submission.");
       return false;
   }
 
@@ -98,7 +98,7 @@ bool BridgeState::SubmitFrameWindows(uint64_t shared_handle) {
   return success;
 }
 
-bool BridgeState::SubmitFrameLinux(const LinuxTextureInfo& texture_info) {
+bool BridgeState::SubmitSharedTextureLinux(const LinuxTextureInfo& texture_info) {
   if (!initialized_) {
     SetLastError("Bridge is not initialized.");
     return false;
@@ -122,7 +122,7 @@ bool BridgeState::SubmitFrameLinux(const LinuxTextureInfo& texture_info) {
       break;
     case BackendKind::kNone:
     default:
-      SetLastError("No backend selected for Linux frame submission.");
+      SetLastError("No backend selected for Linux shared-texture submission.");
       return false;
   }
 
@@ -133,14 +133,14 @@ bool BridgeState::SubmitFrameLinux(const LinuxTextureInfo& texture_info) {
   return success;
 }
 
-bool BridgeState::SubmitSoftwareFrame(const SoftwareFrameInfo& frame_info) {
+bool BridgeState::SubmitSoftwareFrameWindows(const SoftwareFrameInfo& frame_info) {
   if (!initialized_) {
     SetLastError("Bridge is not initialized.");
     return false;
   }
 
   if (frame_info.width == 0 || frame_info.height == 0 || frame_info.rgba_pixels.empty()) {
-    SetLastError("Software frame must include width, height, and RGBA pixel data.");
+    SetLastError("Windows software frame must include width, height, and RGBA pixel data.");
     return false;
   }
 
@@ -149,11 +149,46 @@ bool BridgeState::SubmitSoftwareFrame(const SoftwareFrameInfo& frame_info) {
     case BackendKind::kMock:
       success = SubmitMockSoftwareFrame(frame_info, &last_error_);
       break;
-    case BackendKind::kOpenXR:
     case BackendKind::kOpenVR:
+      success = SubmitOpenVRSoftwareFrame(frame_info, &last_error_);
+      break;
+    case BackendKind::kOpenXR:
     case BackendKind::kNone:
     default:
-      SetLastError("Software frame submission is only available for the mock backend.");
+      SetLastError("Windows software frame submission is only available for the mock and OpenVR backends.");
+      return false;
+  }
+
+  if (success) {
+    ++frame_count_;
+  }
+
+  return success;
+}
+
+bool BridgeState::SubmitSoftwareFrameLinux(const SoftwareFrameInfo& frame_info) {
+  if (!initialized_) {
+    SetLastError("Bridge is not initialized.");
+    return false;
+  }
+
+  if (frame_info.width == 0 || frame_info.height == 0 || frame_info.rgba_pixels.empty()) {
+    SetLastError("Linux software frame must include width, height, and RGBA pixel data.");
+    return false;
+  }
+
+  bool success = false;
+  switch (runtime_info_.selected_backend) {
+    case BackendKind::kMock:
+      success = SubmitMockSoftwareFrame(frame_info, &last_error_);
+      break;
+    case BackendKind::kOpenVR:
+      success = SubmitOpenVRSoftwareFrame(frame_info, &last_error_);
+      break;
+    case BackendKind::kOpenXR:
+    case BackendKind::kNone:
+    default:
+      SetLastError("Linux software frame submission is only available for the mock and OpenVR backends.");
       return false;
   }
 

@@ -72,7 +72,7 @@ uint64_t ReadWindowsHandle(const Napi::Value& value) {
   }
 
   if (!value.IsBuffer()) {
-    throw Napi::TypeError::New(value.Env(), "submitFrameWindows expects a Buffer or BigInt.");
+    throw Napi::TypeError::New(value.Env(), "submitSharedTexture expects a Buffer or BigInt on Windows.");
   }
 
   const Napi::Buffer<uint8_t> buffer = value.As<Napi::Buffer<uint8_t>>();
@@ -123,7 +123,7 @@ LinuxTextureInfo ReadLinuxTextureInfo(const Napi::Value& value) {
   }
 
   if (!value.IsObject()) {
-    throw Napi::TypeError::New(value.Env(), "submitFrameLinux expects a texture info object or numeric file descriptor.");
+    throw Napi::TypeError::New(value.Env(), "submitSharedTexture expects a texture info object or numeric file descriptor on Linux.");
   }
 
   const Napi::Object texture_object = value.As<Napi::Object>();
@@ -179,9 +179,9 @@ LinuxTextureInfo ReadLinuxTextureInfo(const Napi::Value& value) {
   return texture_info;
 }
 
-SoftwareFrameInfo ReadSoftwareFrameInfo(const Napi::Value& value) {
+SoftwareFrameInfo ReadSoftwareFrameInfo(const Napi::Value& value, const char* method_name) {
   if (!value.IsObject()) {
-    throw Napi::TypeError::New(value.Env(), "submitSoftwareFrame expects a frame object.");
+    throw Napi::TypeError::New(value.Env(), std::string(method_name) + " expects a frame object.");
   }
 
   const Napi::Object frame_object = value.As<Napi::Object>();
@@ -190,7 +190,7 @@ SoftwareFrameInfo ReadSoftwareFrameInfo(const Napi::Value& value) {
   const Napi::Value pixels_value = frame_object.Get("rgbaPixels");
 
   if (!width_value.IsNumber() || !height_value.IsNumber() || !pixels_value.IsBuffer()) {
-    throw Napi::TypeError::New(value.Env(), "submitSoftwareFrame expects width, height, and rgbaPixels.");
+    throw Napi::TypeError::New(value.Env(), std::string(method_name) + " expects width, height, and rgbaPixels.");
   }
 
   SoftwareFrameInfo frame_info;
@@ -251,20 +251,18 @@ Napi::Value InitializeVRWrapped(const Napi::CallbackInfo& info) {
   return Napi::Boolean::New(info.Env(), GetBridgeState().Initialize(native_options));
 }
 
-Napi::Value SubmitFrameWindowsWrapped(const Napi::CallbackInfo& info) {
+Napi::Value SubmitSharedTextureWrapped(const Napi::CallbackInfo& info) {
   if (info.Length() != 1) {
-    throw Napi::TypeError::New(info.Env(), "submitFrameWindows expects one argument.");
+    throw Napi::TypeError::New(info.Env(), "submitSharedTexture expects one argument.");
   }
 
-  return Napi::Boolean::New(info.Env(), GetBridgeState().SubmitFrameWindows(ReadWindowsHandle(info[0])));
-}
-
-Napi::Value SubmitFrameLinuxWrapped(const Napi::CallbackInfo& info) {
-  if (info.Length() != 1) {
-    throw Napi::TypeError::New(info.Env(), "submitFrameLinux expects one argument.");
-  }
-
-  return Napi::Boolean::New(info.Env(), GetBridgeState().SubmitFrameLinux(ReadLinuxTextureInfo(info[0])));
+  #if defined(_WIN32)
+  return Napi::Boolean::New(info.Env(), GetBridgeState().SubmitSharedTextureWindows(ReadWindowsHandle(info[0])));
+  #elif defined(__linux__)
+  return Napi::Boolean::New(info.Env(), GetBridgeState().SubmitSharedTextureLinux(ReadLinuxTextureInfo(info[0])));
+  #else
+  throw Napi::Error::New(info.Env(), "submitSharedTexture is not supported on this platform.");
+  #endif
 }
 
 Napi::Value SubmitSoftwareFrameWrapped(const Napi::CallbackInfo& info) {
@@ -272,7 +270,20 @@ Napi::Value SubmitSoftwareFrameWrapped(const Napi::CallbackInfo& info) {
     throw Napi::TypeError::New(info.Env(), "submitSoftwareFrame expects one argument.");
   }
 
-  return Napi::Boolean::New(info.Env(), GetBridgeState().SubmitSoftwareFrame(ReadSoftwareFrameInfo(info[0])));
+  const SoftwareFrameInfo frame_info = ReadSoftwareFrameInfo(info[0], "submitSoftwareFrame");
+  #if defined(_WIN32)
+  return Napi::Boolean::New(
+    info.Env(),
+    GetBridgeState().SubmitSoftwareFrameWindows(frame_info)
+  );
+  #elif defined(__linux__)
+  return Napi::Boolean::New(
+    info.Env(),
+    GetBridgeState().SubmitSoftwareFrameLinux(frame_info)
+  );
+  #else
+  throw Napi::Error::New(info.Env(), "submitSoftwareFrame is not supported on this platform.");
+  #endif
 }
 
 Napi::Value ShutdownVRWrapped(const Napi::CallbackInfo& info) {
@@ -320,8 +331,7 @@ Napi::Value GetLastErrorWrapped(const Napi::CallbackInfo& info) {
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("getRuntimeInfo", Napi::Function::New(env, GetRuntimeInfoWrapped));
   exports.Set("initializeVR", Napi::Function::New(env, InitializeVRWrapped));
-  exports.Set("submitFrameWindows", Napi::Function::New(env, SubmitFrameWindowsWrapped));
-  exports.Set("submitFrameLinux", Napi::Function::New(env, SubmitFrameLinuxWrapped));
+  exports.Set("submitSharedTexture", Napi::Function::New(env, SubmitSharedTextureWrapped));
   exports.Set("submitSoftwareFrame", Napi::Function::New(env, SubmitSoftwareFrameWrapped));
   exports.Set("setOverlayPlacement", Napi::Function::New(env, SetOverlayPlacementWrapped));
   exports.Set("setOverlayVisible", Napi::Function::New(env, SetOverlayVisibleWrapped));

@@ -1,13 +1,21 @@
 #include "openvr_backend.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cstdint>
+#include <chrono>
+#include <cstdlib>
+#include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "openvr.h"
 
 #if defined(_WIN32)
+#include <d3d11_1.h>
+#include <dxgi1_2.h>
 #include <windows.h>
 #endif
 
@@ -26,10 +34,24 @@ struct OpenVRState {
   vr::IVRIPCResourceManagerClient* ipc = nullptr;
 #endif
   vr::VROverlayHandle_t overlay_handle = vr::k_ulOverlayHandleInvalid;
+#if defined(_WIN32)
+  ID3D11Device* d3d_device = nullptr;
+  ID3D11DeviceContext* d3d_context = nullptr;
+  ID3D11Device1* d3d_device1 = nullptr;
+  ID3D11Texture2D* shared_texture = nullptr;
+  ID3D11Texture2D* submit_texture = nullptr;
+  HANDLE submit_texture_shared_handle = nullptr;
+  uint64_t shared_texture_handle_value = 0;
+  DXGI_FORMAT submit_texture_format = DXGI_FORMAT_UNKNOWN;
+  uint32_t submit_texture_width = 0;
+  uint32_t submit_texture_height = 0;
+  bool logged_shared_texture_desc = false;
+#endif
   bool initialized = false;
 };
 
 OpenVRState g_state;
+std::atomic<uint64_t> g_overlay_key_counter{0};
 
 void SetError(std::string* error_message, std::string message) {
   if (error_message != nullptr) {
@@ -37,14 +59,361 @@ void SetError(std::string* error_message, std::string message) {
   }
 }
 
+bool CheckOverlayError(vr::EVROverlayError error, std::string context, std::string* error_message);
 #if defined(_WIN32)
-std::string StructuredExceptionCodeToString(unsigned int code) {
+bool EnsureD3D11Device(std::string* error_message);
+bool EnsureSubmitTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, std::string* error_message);
+bool ConfigureOverlayTextureFromSubmitTexture(vr::Texture_t* texture, std::string* error_message);
+#endif
+
+std::string BuildOverlayKey(const std::string& overlay_name) {
+  const uint64_t instance_id = g_overlay_key_counter.fetch_add(1, std::memory_order_relaxed);
+  const uint64_t timestamp = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+
   std::ostringstream stream;
-  stream << "0x" << std::hex << code;
+  stream << "electron_vr." << overlay_name << "." << timestamp << "." << instance_id;
   return stream.str();
 }
 
-bool SafeVRInit(vr::IVRSystem** system, vr::EVRInitError* init_error, std::string* error_message) {
+#if defined(_WIN32)
+std::string HResultToString(HRESULT value) {
+  std::ostringstream stream;
+  stream << "0x" << std::hex << static_cast<unsigned long>(value);
+  return stream.str();
+}
+
+const char* DxgiFormatToString(DXGI_FORMAT format) {
+  switch (format) {
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+      return "DXGI_FORMAT_B8G8R8A8_UNORM";
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+      return "DXGI_FORMAT_B8G8R8A8_UNORM_SRGB";
+    case DXGI_FORMAT_B8G8R8X8_UNORM:
+      return "DXGI_FORMAT_B8G8R8X8_UNORM";
+    case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+      return "DXGI_FORMAT_B8G8R8X8_UNORM_SRGB";
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+      return "DXGI_FORMAT_R8G8B8A8_UNORM";
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+      return "DXGI_FORMAT_R8G8B8A8_UNORM_SRGB";
+    default:
+      return "DXGI_FORMAT_OTHER";
+  }
+}
+
+bool IsOpenVRFriendlyFormat(DXGI_FORMAT format) {
+  return format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+         format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
+         format == DXGI_FORMAT_B8G8R8X8_UNORM ||
+         format == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB;
+}
+
+void ReleaseSubmitTexture() {
+  if (g_state.submit_texture != nullptr) {
+    g_state.submit_texture->Release();
+    g_state.submit_texture = nullptr;
+  }
+  g_state.submit_texture_shared_handle = nullptr;
+  g_state.submit_texture_format = DXGI_FORMAT_UNKNOWN;
+  g_state.submit_texture_width = 0;
+  g_state.submit_texture_height = 0;
+}
+
+void ReleaseSharedTexture() {
+  if (g_state.shared_texture != nullptr) {
+    g_state.shared_texture->Release();
+    g_state.shared_texture = nullptr;
+  }
+  g_state.shared_texture_handle_value = 0;
+}
+
+void ReleaseD3DResources() {
+  ReleaseSubmitTexture();
+  ReleaseSharedTexture();
+
+  if (g_state.d3d_context != nullptr) {
+    g_state.d3d_context->Release();
+    g_state.d3d_context = nullptr;
+  }
+
+  if (g_state.d3d_device1 != nullptr) {
+    g_state.d3d_device1->Release();
+    g_state.d3d_device1 = nullptr;
+  }
+
+  if (g_state.d3d_device != nullptr) {
+    g_state.d3d_device->Release();
+    g_state.d3d_device = nullptr;
+  }
+}
+
+bool EnsureD3D11Device(std::string* error_message) {
+  if (g_state.d3d_device != nullptr) {
+    return true;
+  }
+
+  const D3D_FEATURE_LEVEL requested_feature_levels[] = {
+    D3D_FEATURE_LEVEL_11_1,
+    D3D_FEATURE_LEVEL_11_0,
+    D3D_FEATURE_LEVEL_10_1,
+    D3D_FEATURE_LEVEL_10_0
+  };
+  const D3D_DRIVER_TYPE driver_types[] = {
+    D3D_DRIVER_TYPE_HARDWARE,
+    D3D_DRIVER_TYPE_WARP
+  };
+
+  HRESULT last_error = E_FAIL;
+  if (g_state.system != nullptr) {
+    int32_t adapter_index = -1;
+    g_state.system->GetDXGIOutputInfo(&adapter_index);
+
+    if (adapter_index >= 0) {
+      IDXGIFactory1* factory = nullptr;
+      const HRESULT factory_result = CreateDXGIFactory1(
+        __uuidof(IDXGIFactory1),
+        reinterpret_cast<void**>(&factory)
+      );
+
+      if (SUCCEEDED(factory_result) && factory != nullptr) {
+        IDXGIAdapter1* adapter = nullptr;
+        const HRESULT adapter_result = factory->EnumAdapters1(static_cast<UINT>(adapter_index), &adapter);
+        if (SUCCEEDED(adapter_result) && adapter != nullptr) {
+          DXGI_ADAPTER_DESC1 adapter_desc = {};
+          (void)adapter->GetDesc1(&adapter_desc);
+
+          D3D_FEATURE_LEVEL acquired_feature_level = D3D_FEATURE_LEVEL_10_0;
+          last_error = D3D11CreateDevice(
+            adapter,
+            D3D_DRIVER_TYPE_UNKNOWN,
+            nullptr,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            requested_feature_levels,
+            ARRAYSIZE(requested_feature_levels),
+            D3D11_SDK_VERSION,
+            &g_state.d3d_device,
+            &acquired_feature_level,
+            &g_state.d3d_context
+          );
+
+          if (SUCCEEDED(last_error)) {
+            std::cout
+              << "OpenVR D3D11 device created on SteamVR adapter index "
+              << adapter_index
+              << " (vendorId=0x" << std::hex << adapter_desc.VendorId
+              << ", deviceId=0x" << adapter_desc.DeviceId
+              << std::dec << ")"
+              << std::endl;
+            if (g_state.d3d_device != nullptr) {
+              (void)g_state.d3d_device->QueryInterface(__uuidof(ID3D11Device1), reinterpret_cast<void**>(&g_state.d3d_device1));
+            }
+            adapter->Release();
+            factory->Release();
+            return true;
+          }
+
+          std::cout
+            << "OpenVR D3D11 device creation failed on SteamVR adapter index "
+            << adapter_index
+            << " with error "
+            << HResultToString(last_error)
+            << "; falling back to default adapter selection."
+            << std::endl;
+          adapter->Release();
+        } else {
+          std::cout
+            << "OpenVR DXGI adapter index "
+            << adapter_index
+            << " was not available via EnumAdapters1 ("
+            << HResultToString(adapter_result)
+            << "); falling back to default adapter selection."
+            << std::endl;
+        }
+
+        factory->Release();
+      } else {
+        std::cout
+          << "CreateDXGIFactory1 failed while preparing the OpenVR D3D11 device ("
+          << HResultToString(factory_result)
+          << "); falling back to default adapter selection."
+          << std::endl;
+      }
+    } else {
+      std::cout << "OpenVR did not report a DXGI adapter index; falling back to default adapter selection." << std::endl;
+    }
+  }
+
+  for (const D3D_DRIVER_TYPE driver_type : driver_types) {
+    D3D_FEATURE_LEVEL acquired_feature_level = D3D_FEATURE_LEVEL_10_0;
+    last_error = D3D11CreateDevice(
+      nullptr,
+      driver_type,
+      nullptr,
+      D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+      requested_feature_levels,
+      ARRAYSIZE(requested_feature_levels),
+      D3D11_SDK_VERSION,
+      &g_state.d3d_device,
+      &acquired_feature_level,
+      &g_state.d3d_context
+    );
+
+    if (SUCCEEDED(last_error)) {
+      if (g_state.d3d_device != nullptr) {
+        (void)g_state.d3d_device->QueryInterface(__uuidof(ID3D11Device1), reinterpret_cast<void**>(&g_state.d3d_device1));
+      }
+      return true;
+    }
+  }
+
+  SetError(error_message, "Failed to create a D3D11 device for OpenVR texture import (" + HResultToString(last_error) + ").");
+  ReleaseD3DResources();
+  return false;
+}
+
+void LogSharedTextureDescOnce(const D3D11_TEXTURE2D_DESC& desc) {
+  if (g_state.logged_shared_texture_desc) {
+    return;
+  }
+
+  g_state.logged_shared_texture_desc = true;
+  std::cout
+    << "OpenVR shared texture desc: "
+    << "width=" << desc.Width
+    << ", height=" << desc.Height
+    << ", format=" << DxgiFormatToString(desc.Format)
+    << ", bindFlags=0x" << std::hex << desc.BindFlags
+    << ", miscFlags=0x" << desc.MiscFlags
+    << std::dec
+    << ", sampleCount=" << desc.SampleDesc.Count
+    << std::endl;
+}
+
+bool EnsureSubmitTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, std::string* error_message) {
+  if (g_state.submit_texture != nullptr &&
+      g_state.submit_texture_format == format &&
+      g_state.submit_texture_width == width &&
+      g_state.submit_texture_height == height) {
+    return true;
+  }
+
+  ReleaseSubmitTexture();
+
+  D3D11_TEXTURE2D_DESC submit_desc = {};
+  submit_desc.Width = width;
+  submit_desc.Height = height;
+  submit_desc.MipLevels = 1;
+  submit_desc.ArraySize = 1;
+  submit_desc.Format = format;
+  submit_desc.SampleDesc.Count = 1;
+  submit_desc.SampleDesc.Quality = 0;
+  submit_desc.Usage = D3D11_USAGE_DEFAULT;
+  submit_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+  submit_desc.CPUAccessFlags = 0;
+  submit_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+
+  const HRESULT create_result = g_state.d3d_device->CreateTexture2D(&submit_desc, nullptr, &g_state.submit_texture);
+  if (FAILED(create_result) || g_state.submit_texture == nullptr) {
+    SetError(error_message, "Failed to create an intermediate D3D11 texture for OpenVR submission (" + HResultToString(create_result) + ").");
+    ReleaseSubmitTexture();
+    return false;
+  }
+
+  IDXGIResource* dxgi_resource = nullptr;
+  const HRESULT query_result = g_state.submit_texture->QueryInterface(
+    __uuidof(IDXGIResource),
+    reinterpret_cast<void**>(&dxgi_resource)
+  );
+  if (FAILED(query_result) || dxgi_resource == nullptr) {
+    SetError(error_message, "Failed to query an IDXGIResource for the OpenVR submit texture (" + HResultToString(query_result) + ").");
+    ReleaseSubmitTexture();
+    return false;
+  }
+
+  const HRESULT shared_handle_result = dxgi_resource->GetSharedHandle(&g_state.submit_texture_shared_handle);
+  dxgi_resource->Release();
+  if (FAILED(shared_handle_result) || g_state.submit_texture_shared_handle == nullptr) {
+    SetError(error_message, "Failed to get a DXGI shared handle for the OpenVR submit texture (" + HResultToString(shared_handle_result) + ").");
+    ReleaseSubmitTexture();
+    return false;
+  }
+
+  g_state.submit_texture_format = submit_desc.Format;
+  g_state.submit_texture_width = submit_desc.Width;
+  g_state.submit_texture_height = submit_desc.Height;
+  return true;
+}
+
+bool ConfigureOverlayTextureFromSubmitTexture(vr::Texture_t* texture, std::string* error_message) {
+  if (texture == nullptr || g_state.submit_texture == nullptr) {
+    SetError(error_message, "OpenVR submit texture is unavailable.");
+    return false;
+  }
+
+  if (g_state.submit_texture_shared_handle == nullptr) {
+    SetError(error_message, "OpenVR submit texture does not expose a DXGI shared handle.");
+    return false;
+  }
+
+  texture->handle = g_state.submit_texture_shared_handle;
+  texture->eType = vr::TextureType_DXGISharedHandle;
+  texture->eColorSpace = vr::ColorSpace_Auto;
+  return true;
+}
+
+bool EnsureSubmitTexture(const D3D11_TEXTURE2D_DESC& source_desc, std::string* error_message) {
+  return EnsureSubmitTexture(source_desc.Width, source_desc.Height, source_desc.Format, error_message);
+}
+
+bool OpenSharedTextureFromHandle(uint64_t shared_handle, std::string* error_message) {
+  if (g_state.shared_texture != nullptr && g_state.shared_texture_handle_value == shared_handle) {
+    return true;
+  }
+
+  ReleaseSharedTexture();
+
+  if (!EnsureD3D11Device(error_message)) {
+    return false;
+  }
+
+  const HANDLE handle = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(shared_handle));
+  HRESULT open_result = E_FAIL;
+
+  if (g_state.d3d_device1 != nullptr) {
+    open_result = g_state.d3d_device1->OpenSharedResource1(
+      handle,
+      __uuidof(ID3D11Texture2D),
+      reinterpret_cast<void**>(&g_state.shared_texture)
+    );
+
+    if (SUCCEEDED(open_result) && g_state.shared_texture != nullptr) {
+      g_state.shared_texture_handle_value = shared_handle;
+      return true;
+    }
+  }
+
+  open_result = g_state.d3d_device->OpenSharedResource(
+    handle,
+    __uuidof(ID3D11Texture2D),
+    reinterpret_cast<void**>(&g_state.shared_texture)
+  );
+
+  if (FAILED(open_result) || g_state.shared_texture == nullptr) {
+    SetError(error_message, "Failed to open Windows shared texture handle for OpenVR (" + HResultToString(open_result) + ").");
+    ReleaseSharedTexture();
+    return false;
+  }
+
+  g_state.shared_texture_handle_value = shared_handle;
+  D3D11_TEXTURE2D_DESC shared_desc = {};
+  g_state.shared_texture->GetDesc(&shared_desc);
+  LogSharedTextureDescOnce(shared_desc);
+  return true;
+}
+#endif
+
+#if defined(_WIN32)
+bool SafeVRInit(vr::IVRSystem** system, vr::EVRInitError* init_error) {
   __try {
     *system = vr::VR_Init(init_error, vr::VRApplication_Overlay);
     return true;
@@ -55,16 +424,11 @@ bool SafeVRInit(vr::IVRSystem** system, vr::EVRInitError* init_error, std::strin
     if (init_error != nullptr) {
       *init_error = vr::VRInitError_Init_Internal;
     }
-    SetError(
-      error_message,
-      "OpenVR initialization triggered a structured exception on Windows (" +
-        StructuredExceptionCodeToString(GetExceptionCode()) + ")."
-    );
     return false;
   }
 }
 
-bool SafeAcquireOverlay(vr::IVROverlay** overlay, std::string* error_message) {
+bool SafeAcquireOverlay(vr::IVROverlay** overlay) {
   __try {
     *overlay = vr::VROverlay();
     return true;
@@ -72,24 +436,18 @@ bool SafeAcquireOverlay(vr::IVROverlay** overlay, std::string* error_message) {
     if (overlay != nullptr) {
       *overlay = nullptr;
     }
-    SetError(
-      error_message,
-      "OpenVR overlay interface acquisition triggered a structured exception on Windows (" +
-        StructuredExceptionCodeToString(GetExceptionCode()) + ")."
-    );
     return false;
   }
 }
 
 bool SafeCreateOverlay(
   vr::IVROverlay* overlay,
-  const std::string& overlay_key,
-  const std::string& overlay_name,
+  const char* overlay_key,
+  const char* overlay_name,
   vr::VROverlayHandle_t* overlay_handle,
-  std::string* error_message,
   vr::EVROverlayError* overlay_error) {
   __try {
-    *overlay_error = overlay->CreateOverlay(overlay_key.c_str(), overlay_name.c_str(), overlay_handle);
+    *overlay_error = overlay->CreateOverlay(overlay_key, overlay_name, overlay_handle);
     return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     if (overlay_handle != nullptr) {
@@ -98,28 +456,18 @@ bool SafeCreateOverlay(
     if (overlay_error != nullptr) {
       *overlay_error = vr::VROverlayError_UnknownOverlay;
     }
-    SetError(
-      error_message,
-      "OpenVR overlay creation triggered a structured exception on Windows (" +
-        StructuredExceptionCodeToString(GetExceptionCode()) + ")."
-    );
     return false;
   }
 }
 
-bool SafeSetPremultipliedFlag(vr::IVROverlay* overlay, vr::VROverlayHandle_t overlay_handle, std::string* error_message, vr::EVROverlayError* overlay_error) {
+bool SafeSetPremultipliedFlag(vr::IVROverlay* overlay, vr::VROverlayHandle_t overlay_handle, bool enabled, vr::EVROverlayError* overlay_error) {
   __try {
-    *overlay_error = overlay->SetOverlayFlag(overlay_handle, vr::VROverlayFlags_IsPremultiplied, true);
+    *overlay_error = overlay->SetOverlayFlag(overlay_handle, vr::VROverlayFlags_IsPremultiplied, enabled);
     return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     if (overlay_error != nullptr) {
       *overlay_error = vr::VROverlayError_UnknownOverlay;
     }
-    SetError(
-      error_message,
-      "OpenVR overlay configuration triggered a structured exception on Windows (" +
-        StructuredExceptionCodeToString(GetExceptionCode()) + ")."
-    );
     return false;
   }
 }
@@ -300,6 +648,10 @@ uint64_t ParseModifier(const std::string& modifier) {
 #endif
 
 void ResetState() {
+#if defined(_WIN32)
+  ReleaseD3DResources();
+  g_state.logged_shared_texture_desc = false;
+#endif
 #if defined(__linux__)
   g_state.ipc = nullptr;
 #endif
@@ -320,7 +672,8 @@ bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* erro
   ShutdownOpenVRBackend();
 
   vr::EVRInitError init_error = vr::VRInitError_None;
-  if (!SafeVRInit(&g_state.system, &init_error, error_message)) {
+  if (!SafeVRInit(&g_state.system, &init_error)) {
+    SetError(error_message, "OpenVR initialization triggered a structured exception on Windows.");
     ResetState();
     return false;
   }
@@ -331,7 +684,8 @@ bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* erro
     return false;
   }
 
-  if (!SafeAcquireOverlay(&g_state.overlay, error_message)) {
+  if (!SafeAcquireOverlay(&g_state.overlay)) {
+    SetError(error_message, "OpenVR overlay interface acquisition triggered a structured exception on Windows.");
     ShutdownOpenVRBackend();
     return false;
   }
@@ -346,9 +700,15 @@ bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* erro
   g_state.ipc = vr::VRIPCResourceManager();
 #endif
 
-  const std::string overlay_key = "electron_vr." + options.name;
+  const std::string overlay_key = BuildOverlayKey(options.name);
   vr::EVROverlayError create_error = vr::VROverlayError_None;
-  if (!SafeCreateOverlay(g_state.overlay, overlay_key, options.name, &g_state.overlay_handle, error_message, &create_error)) {
+  if (!SafeCreateOverlay(
+        g_state.overlay,
+        overlay_key.c_str(),
+        options.name.c_str(),
+        &g_state.overlay_handle,
+        &create_error)) {
+    SetError(error_message, "OpenVR overlay creation triggered a structured exception on Windows.");
     ShutdownOpenVRBackend();
     return false;
   }
@@ -361,8 +721,21 @@ bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* erro
   g_state.initialized = true;
 
   vr::EVROverlayError flag_error = vr::VROverlayError_None;
-  if (!SafeSetPremultipliedFlag(g_state.overlay, g_state.overlay_handle, error_message, &flag_error) ||
-      !CheckOverlayError(flag_error, "Failed to configure OpenVR overlay alpha mode", error_message)) {
+  if (!SafeSetPremultipliedFlag(
+        g_state.overlay,
+        g_state.overlay_handle,
+#if defined(_WIN32)
+        true,
+#else
+        error_message,
+#endif
+        &flag_error)) {
+    SetError(error_message, "OpenVR overlay configuration triggered a structured exception on Windows.");
+    ShutdownOpenVRBackend();
+    return false;
+  }
+
+  if (!CheckOverlayError(flag_error, "Failed to configure OpenVR overlay alpha mode", error_message)) {
     ShutdownOpenVRBackend();
     return false;
   }
@@ -391,10 +764,28 @@ bool SubmitOpenVRFrameWindows(uint64_t shared_handle, std::string* error_message
     return false;
   }
 
+  if (!OpenSharedTextureFromHandle(shared_handle, error_message)) {
+    return false;
+  }
+
+  D3D11_TEXTURE2D_DESC shared_desc = {};
+  g_state.shared_texture->GetDesc(&shared_desc);
+
+  if (!EnsureSubmitTexture(shared_desc, error_message)) {
+    return false;
+  }
+
+  g_state.d3d_context->CopyResource(g_state.submit_texture, g_state.shared_texture);
+  g_state.d3d_context->Flush();
+
+  if (!IsOpenVRFriendlyFormat(shared_desc.Format) && error_message != nullptr && error_message->empty()) {
+    std::cout << "OpenVR warning: submitting non-BGRA DirectX texture format " << DxgiFormatToString(shared_desc.Format) << std::endl;
+  }
+
   vr::Texture_t texture = {};
-  texture.handle = reinterpret_cast<void*>(shared_handle);
-  texture.eType = vr::TextureType_DXGISharedHandle;
-  texture.eColorSpace = vr::ColorSpace_Auto;
+  if (!ConfigureOverlayTextureFromSubmitTexture(&texture, error_message)) {
+    return false;
+  }
 
   if (!CheckOverlayError(
         g_state.overlay->SetOverlayTexture(g_state.overlay_handle, &texture),
@@ -402,6 +793,8 @@ bool SubmitOpenVRFrameWindows(uint64_t shared_handle, std::string* error_message
         error_message)) {
     return false;
   }
+
+  g_state.d3d_context->Flush();
 
   if (error_message != nullptr) {
     error_message->clear();
@@ -474,6 +867,41 @@ bool SubmitOpenVRFrameLinux(const LinuxTextureInfo& texture_info, std::string* e
   SetError(error_message, "OpenVR Linux frame submission is only available on Linux builds.");
   return false;
 #endif
+}
+
+bool SubmitOpenVRSoftwareFrame(const SoftwareFrameInfo& frame_info, std::string* error_message) {
+  if (!g_state.initialized || g_state.overlay == nullptr || g_state.overlay_handle == vr::k_ulOverlayHandleInvalid) {
+    SetError(error_message, "OpenVR backend is not initialized.");
+    return false;
+  }
+
+  if (frame_info.width == 0 || frame_info.height == 0) {
+    SetError(error_message, "OpenVR software frame submission requires non-zero width and height.");
+    return false;
+  }
+
+  const size_t expected_size = static_cast<size_t>(frame_info.width) * static_cast<size_t>(frame_info.height) * 4;
+  if (frame_info.rgba_pixels.size() != expected_size) {
+    SetError(error_message, "OpenVR software frame submission received an unexpected RGBA buffer size.");
+    return false;
+  }
+
+  if (!CheckOverlayError(
+        g_state.overlay->SetOverlayRaw(
+          g_state.overlay_handle,
+          const_cast<uint8_t*>(frame_info.rgba_pixels.data()),
+          frame_info.width,
+          frame_info.height,
+          4),
+        "Failed to submit software frame to OpenVR overlay",
+        error_message)) {
+    return false;
+  }
+
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
 }
 
 bool SetOpenVRPlacement(const OverlayPlacement& placement, std::string* error_message) {

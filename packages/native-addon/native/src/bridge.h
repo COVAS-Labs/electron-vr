@@ -66,9 +66,10 @@ class BridgeState {
  public:
   RuntimeInfo GetRuntimeInfo() const;
   bool Initialize(const InitializeOptions& options);
-  bool SubmitFrameWindows(uint64_t shared_handle);
-  bool SubmitFrameLinux(const LinuxTextureInfo& texture_info);
-  bool SubmitSoftwareFrame(const SoftwareFrameInfo& frame_info);
+  bool SubmitSharedTextureWindows(uint64_t shared_handle);
+  bool SubmitSharedTextureLinux(const LinuxTextureInfo& texture_info);
+  bool SubmitSoftwareFrameWindows(const SoftwareFrameInfo& frame_info);
+  bool SubmitSoftwareFrameLinux(const SoftwareFrameInfo& frame_info);
   bool SetOverlayPlacement(const OverlayPlacement& placement);
   bool SetOverlayVisible(bool visible);
   bool SetOverlaySizeMeters(float size_meters);

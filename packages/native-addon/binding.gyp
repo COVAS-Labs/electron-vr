@@ -1,6 +1,6 @@
 {
   "variables": {
-    "openvr_sdk_dir%": "<!(node -p \"process.env.OPENVR_SDK_DIR || '/home/luca/Dokumente/openvr'\")"
+    "openvr_sdk_dir%": "<!(node -p \"process.env.OPENVR_SDK_DIR || require('node:path').resolve(process.cwd(), '..', '..', '.openvr-sdk')\")"
   },
   "targets": [
     {
@@ -63,7 +63,9 @@
               "WIN32_LEAN_AND_MEAN"
             ],
             "libraries": [
-              "<(openvr_sdk_dir)/lib/win64/openvr_api.lib"
+              "<(openvr_sdk_dir)/lib/win64/openvr_api.lib",
+              "d3d11.lib",
+              "dxgi.lib"
             ],
             "msvs_settings": {
               "VCCLCompilerTool": {

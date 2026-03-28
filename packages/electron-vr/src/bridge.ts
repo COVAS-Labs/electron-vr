@@ -96,13 +96,13 @@ interface OffscreenWebContents {
   on(event: "paint", listener: (event: SharedTexturePaintEvent, dirty: Rectangle, result?: unknown) => void): void;
   removeListener(event: "paint", listener: (event: SharedTexturePaintEvent, dirty: Rectangle, result?: unknown) => void): void;
   setFrameRate(frameRate: number): void;
+  capturePage(rect?: Rectangle): Promise<NativeImageLike>;
 }
 
 interface VrBridgeAddon {
   getRuntimeInfo(): RuntimeInfo;
   initializeVR(options: InitializeVROptions): boolean;
-  submitFrameWindows(handle: Buffer | bigint): boolean;
-  submitFrameLinux(textureInfo: LinuxTextureInfo | number): boolean;
+  submitSharedTexture(texture: Buffer | bigint | LinuxTextureInfo | number): boolean;
   submitSoftwareFrame(frameInfo: SoftwareFrameInfo): boolean;
   setOverlayPlacement(placement: OverlayPlacement): boolean;
   setOverlayVisible(visible: boolean): boolean;
@@ -288,6 +288,13 @@ export class VrBridge {
   private attachedWindow: BrowserWindow | null = null;
   private warnedAboutMissingSharedTexture = false;
   private warnedAboutSoftwareFallback = false;
+  private warnedAboutWindowsSoftwareFallback = false;
+  private loggedFirstPaint = false;
+  private loggedFirstWindowsHandle = false;
+  private loggedFirstWindowsSubmit = false;
+  private loggedFirstWindowsSoftwareSubmit = false;
+  private windowsReadbackInFlight = false;
+  private windowsReadbackPending = false;
 
   attachWindow(window: BrowserWindow, options: AttachWindowOptions = {}): void {
     this.detachWindow();
@@ -345,6 +352,77 @@ export class VrBridge {
     return this.addon.getLastError();
   }
 
+  private submitWindowsSoftwareFrame(nativeImage: NativeImageLike): boolean {
+    const { width, height } = nativeImage.getSize();
+    const bitmap = nativeImage.toBitmap();
+    if (width === 0 || height === 0 || bitmap.length === 0) {
+      console.warn(`Windows software frame readback was empty (width=${width}, height=${height}, bytes=${bitmap.length}).`);
+      return false;
+    }
+
+    const submitted = this.addon.submitSoftwareFrame({
+      width,
+      height,
+      rgbaPixels: bgraToRgba(bitmap)
+    });
+
+    if (!submitted) {
+      console.error("Failed to submit Windows software frame to VR bridge:", this.addon.getLastError());
+      return false;
+    }
+
+    if (!this.loggedFirstWindowsSoftwareSubmit) {
+      this.loggedFirstWindowsSoftwareSubmit = true;
+      console.log("VR overlay submitted first Windows software frame to the native bridge.");
+    }
+
+    return true;
+  }
+
+  private useWindowsSoftwareFallback(nativeImage: NativeImageLike | null, warning: string): void {
+    if (!this.warnedAboutWindowsSoftwareFallback) {
+      this.warnedAboutWindowsSoftwareFallback = true;
+      console.warn(warning);
+    }
+
+    if (nativeImage && this.submitWindowsSoftwareFrame(nativeImage)) {
+      return;
+    }
+
+    this.scheduleWindowsCaptureFallback();
+  }
+
+  private scheduleWindowsCaptureFallback(): void {
+    if (!this.attachedWindow) {
+      return;
+    }
+
+    if (this.windowsReadbackInFlight) {
+      this.windowsReadbackPending = true;
+      return;
+    }
+
+    this.windowsReadbackInFlight = true;
+    const window = this.attachedWindow;
+    const offscreenContents = window.webContents as unknown as OffscreenWebContents;
+    const [width, height] = window.getContentSize();
+
+    void offscreenContents.capturePage({ x: 0, y: 0, width, height })
+      .then((image) => {
+        this.submitWindowsSoftwareFrame(image);
+      })
+      .catch((error) => {
+        console.error("Failed to capture Windows software fallback frame:", error);
+      })
+      .finally(() => {
+        this.windowsReadbackInFlight = false;
+        if (this.windowsReadbackPending) {
+          this.windowsReadbackPending = false;
+          this.scheduleWindowsCaptureFallback();
+        }
+      });
+  }
+
   private readonly onPaint = (event: SharedTexturePaintEvent, _dirty: Rectangle, paintResult?: unknown): void => {
     const nativeImage = isNativeImageLike(paintResult) ? paintResult : null;
     const texture = isSharedTexturePayload(event.texture)
@@ -353,7 +431,22 @@ export class VrBridge {
         ? paintResult
         : null;
 
+    if (!this.loggedFirstPaint) {
+      this.loggedFirstPaint = true;
+      console.log(
+        `VR overlay received first paint event (platform=${process.platform}, backend=${this.getSelectedBackend()}, hasTexture=${texture ? "yes" : "no"}, hasBitmap=${nativeImage ? "yes" : "no"}).`
+      );
+    }
+
     if (!texture) {
+      if (process.platform === "win32" && this.getSelectedBackend() === "openvr") {
+        this.useWindowsSoftwareFallback(
+          nativeImage,
+          "Windows shared texture payload was unavailable; falling back to software RGBA upload."
+        );
+        return;
+      }
+
       if (this.getSelectedBackend() === "mock" && nativeImage) {
         const { width, height } = nativeImage.getSize();
         this.addon.submitSoftwareFrame({
@@ -382,10 +475,29 @@ export class VrBridge {
 
       if (process.platform === "win32") {
         if (Buffer.isBuffer(handle)) {
-          const submitted = this.addon.submitFrameWindows(handle);
+          if (!this.loggedFirstWindowsHandle) {
+            this.loggedFirstWindowsHandle = true;
+            console.log(`VR overlay received Windows shared texture handle (${handle.byteLength} bytes).`);
+          }
+
+          const submitted = this.addon.submitSharedTexture(handle);
           if (!submitted) {
             console.error("Failed to submit Windows frame to VR bridge:", this.addon.getLastError());
+            if (this.getSelectedBackend() === "openvr") {
+              this.useWindowsSoftwareFallback(
+                nativeImage,
+                "Windows shared texture submission failed; falling back to software RGBA upload."
+              );
+            }
+          } else if (!this.loggedFirstWindowsSubmit) {
+            this.loggedFirstWindowsSubmit = true;
+            console.log("VR overlay submitted first Windows frame to the native bridge.");
           }
+        } else if (this.getSelectedBackend() === "openvr") {
+          this.useWindowsSoftwareFallback(
+            nativeImage,
+            "Windows shared texture handle was unavailable; falling back to software RGBA upload."
+          );
         } else if (!this.warnedAboutMissingSharedTexture) {
           this.warnedAboutMissingSharedTexture = true;
           console.warn("Shared texture handle was unavailable on Windows; VR submission was skipped.");
@@ -395,7 +507,7 @@ export class VrBridge {
 
       if (process.platform === "linux") {
         if (textureInfo?.planes?.length) {
-          const submitted = this.addon.submitFrameLinux(textureInfo);
+          const submitted = this.addon.submitSharedTexture(textureInfo);
           if (!submitted) {
             console.error("Failed to submit Linux frame to VR bridge:", this.addon.getLastError());
           }
