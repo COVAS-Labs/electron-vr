@@ -58,6 +58,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: "@covas-labs"
+          always-auth: true
 
       - name: Install Linux native dependencies
         if: runner.os == 'Linux'
@@ -109,8 +112,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          registry-url: https://npm.pkg.github.com
-          scope: "@covas-labs"
 
       - name: Install Linux runtime dependencies
         run: |
