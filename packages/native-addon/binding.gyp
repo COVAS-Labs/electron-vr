@@ -58,7 +58,7 @@
               "WIN32_LEAN_AND_MEAN"
             ],
             "libraries": [
-              "<(openvr_sdk_dir)\\lib\\win64\\openvr_api.lib"
+              "<(openvr_sdk_dir)/lib/win64/openvr_api.lib"
             ],
             "msvs_settings": {
               "VCCLCompilerTool": {
