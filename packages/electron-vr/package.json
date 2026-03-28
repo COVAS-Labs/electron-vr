@@ -1,0 +1,23 @@
+{
+  "name": "@covas-labs/electron-vr",
+  "version": "0.1.0",
+  "description": "Electron VR overlay bridge with OpenXR, OpenVR, and mock fallback backends.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node ../../tools/build-typescript.mjs"
+  },
+  "peerDependencies": {
+    "electron": ">=37"
+  }
+}

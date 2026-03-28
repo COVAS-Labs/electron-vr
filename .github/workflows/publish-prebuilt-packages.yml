@@ -1,7 +1,4 @@
-name: Publish Prebuilt Packages
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+name: Publish Packages
 
 on:
   workflow_dispatch:
@@ -15,7 +12,7 @@ permissions:
 
 jobs:
   version:
-    name: Compute Package Version
+    name: Compute Version
     runs-on: ubuntu-latest
     outputs:
       package_version: ${{ steps.compute.outputs.package_version }}
@@ -23,10 +20,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
       - id: compute
         shell: bash
         run: |
-          base_version=$(node -p "require('./package.json').version")
+          base_version=$(node -p "require('./packages/electron-vr/package.json').version")
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             package_version="${GITHUB_REF_NAME#v}"
           else
@@ -34,8 +35,8 @@ jobs:
           fi
           echo "package_version=${package_version}" >> "$GITHUB_OUTPUT"
 
-  publish:
-    name: Publish ${{ matrix.runtime }} / ${{ matrix.os }}
+  publish-prebuilt:
+    name: Publish Prebuilt (${{ matrix.platform_id }})
     needs: version
     runs-on: ${{ matrix.os }}
     strategy:
@@ -43,18 +44,14 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            runtime: node
-          - os: ubuntu-latest
-            runtime: electron
+            platform_id: linux-x64
           - os: windows-latest
-            runtime: node
-          - os: windows-latest
-            runtime: electron
+            platform_id: win32-x64
 
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -69,37 +66,64 @@ jobs:
           sudo apt-get install -y libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev
 
       - run: npm ci
+      - run: npm run rebuild:electron
 
-      - name: Build Node addon prebuilt
-        if: matrix.runtime == 'node'
-        run: npm run build:addon
+      - name: Prepare prebuilt package
+        run: node ./tools/prepare-prebuilt-package.mjs --owner-scope=covas-labs --package-version=${{ needs.version.outputs.package_version }}
 
-      - name: Build Electron addon prebuilt
-        if: matrix.runtime == 'electron'
-        run: npm run rebuild:electron
-
-      - name: Package prebuilt addon
-        run: node ./scripts/package-prebuilt.mjs --runtime=${{ matrix.runtime }} --owner-scope=covas-labs --package-version=${{ needs.version.outputs.package_version }}
-
-      - name: Publish package
-        shell: bash
-        run: npm publish artifacts/prebuilds/*/package
+      - name: Publish prebuilt package
+        run: npm publish artifacts/publish/prebuilt-${{ matrix.platform_id }}/package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload packaged artifact
-        uses: actions/upload-artifact@v5
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: published-${{ matrix.runtime }}-${{ runner.os }}-${{ runner.arch }}
-          path: |
-            artifacts/prebuilds/*/package/**
+          name: prebuilt-${{ matrix.platform_id }}
+          path: artifacts/publish/prebuilt-${{ matrix.platform_id }}/package/**
+          if-no-files-found: error
+
+  publish-public:
+    name: Publish Public Package
+    needs:
+      - version
+      - publish-prebuilt
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: "@covas-labs"
+          always-auth: true
+
+      - run: npm ci
+      - run: npm run build --workspace @covas-labs/electron-vr
+
+      - name: Prepare public package
+        run: node ./tools/prepare-public-package.mjs --owner-scope=covas-labs --package-version=${{ needs.version.outputs.package_version }}
+
+      - name: Publish public package
+        run: npm publish artifacts/publish/public/package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload public package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: electron-vr-public-package
+          path: artifacts/publish/public/package/**
           if-no-files-found: error
 
   smoke-consumer:
-    name: Smoke Registry Consumer
+    name: Smoke Published Package
     needs:
       - version
-      - publish
+      - publish-public
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -108,7 +132,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -118,34 +142,51 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2 libegl1 libgles2
 
-      - name: Install consumer dependencies
-        working-directory: samples/registry-consumer
-        run: npm install
+      - name: Create temporary consumer app
+        shell: bash
+        run: |
+          mkdir -p .tmp/consumer
+          cat > .tmp/consumer/package.json <<'EOF'
+          {
+            "name": "electron-vr-smoke-consumer",
+            "private": true,
+            "type": "module",
+            "scripts": {
+              "smoke": "electron --no-sandbox ./smoke-electron.mjs"
+            },
+              "dependencies": {
+                "@covas-labs/electron-vr": "${{ needs.version.outputs.package_version }}",
+                "electron": "^37.6.0"
+            }
+          }
+          EOF
+          cat > .tmp/consumer/smoke-electron.mjs <<'EOF'
+          import { app } from "electron";
+          import { createVrBridge } from "@covas-labs/electron-vr";
+
+          app.whenReady().then(() => {
+            const bridge = createVrBridge();
+            console.log("Published package runtime info:", bridge.getRuntimeInfo());
+            app.quit();
+          });
+          EOF
 
       - name: Configure GitHub Packages auth
-        working-directory: samples/registry-consumer
+        working-directory: .tmp/consumer
         run: |
           npm config set @covas-labs:registry https://npm.pkg.github.com
           npm config set //npm.pkg.github.com/:_authToken "${NODE_AUTH_TOKEN}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install published Linux packages
-        working-directory: samples/registry-consumer
-        run: |
-          npm install @covas-labs/vr-bridge-prebuilt-node-linux-x64@${{ needs.version.outputs.package_version }}
-          npm install @covas-labs/vr-bridge-prebuilt-electron-linux-x64@${{ needs.version.outputs.package_version }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Run Node smoke test
-        working-directory: samples/registry-consumer
-        run: npm run smoke:node
+      - name: Install consumer dependencies
+        working-directory: .tmp/consumer
+        run: npm install
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run Electron smoke test
-        working-directory: samples/registry-consumer
-        run: xvfb-run -a npm run smoke:electron
+        working-directory: .tmp/consumer
+        run: xvfb-run -a npm run smoke
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

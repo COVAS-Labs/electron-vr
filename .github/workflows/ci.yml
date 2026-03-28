@@ -1,8 +1,5 @@
 name: CI
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 on:
   push:
     branches:
@@ -24,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -36,19 +33,17 @@ jobs:
           sudo apt-get install -y libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev
 
       - run: npm ci
-
       - run: npm run build
-
       - run: npm run rebuild:electron
 
   e2e:
-    name: E2E Mock Preview
+    name: E2E Demo App
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -59,17 +54,15 @@ jobs:
           sudo apt-get install -y xvfb x11-utils libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2
 
       - run: npm ci
-
       - run: npm run build
-
       - run: npm run rebuild:electron
 
-      - name: Run Electron e2e test
+      - name: Run demo e2e test
         run: xvfb-run -a npm run test:e2e
 
       - name: Upload e2e artifacts
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-artifacts
           path: artifacts/

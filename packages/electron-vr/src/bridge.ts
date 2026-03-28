@@ -84,17 +84,59 @@ interface VrBridgeAddon {
 
 let cachedAddon: VrBridgeAddon | null = null;
 
+const PREBUILT_ADDON_PACKAGES = {
+  linux: {
+    x64: "@covas-labs/electron-vr-prebuilt-linux-x64"
+  },
+  win32: {
+    x64: "@covas-labs/electron-vr-prebuilt-win32-x64"
+  }
+} as const;
+
+function resolvePrebuiltPackageName(): string | null {
+  const packagesForPlatform = PREBUILT_ADDON_PACKAGES[process.platform as keyof typeof PREBUILT_ADDON_PACKAGES];
+  if (!packagesForPlatform) {
+    return null;
+  }
+
+  return packagesForPlatform[process.arch as keyof typeof packagesForPlatform] ?? null;
+}
+
 function loadVrBridgeAddon(): VrBridgeAddon {
   if (cachedAddon) {
     return cachedAddon;
   }
 
   const require = createRequire(import.meta.url);
+  const applicationRequire = createRequire(resolve(process.cwd(), "package.json"));
   const currentDir = dirname(fileURLToPath(import.meta.url));
-  const addonPath = resolve(currentDir, "..", "..", "build", "Release", "vr_bridge.node");
+  const localAddonPath = resolve(currentDir, "..", "..", "native-addon", "build", "Release", "vr_bridge.node");
 
-  cachedAddon = require(addonPath) as VrBridgeAddon;
-  return cachedAddon;
+  try {
+    cachedAddon = require(localAddonPath) as VrBridgeAddon;
+    return cachedAddon;
+  } catch (localError) {
+    const prebuiltPackageName = resolvePrebuiltPackageName();
+    if (!prebuiltPackageName) {
+      throw new Error(
+        `No supported prebuilt Electron addon is available for ${process.platform}-${process.arch}. Local addon load failed: ${String(localError)}`
+      );
+    }
+
+    try {
+      cachedAddon = require(prebuiltPackageName) as VrBridgeAddon;
+      return cachedAddon;
+    } catch (packageRequireError) {
+      try {
+        cachedAddon = applicationRequire(prebuiltPackageName) as VrBridgeAddon;
+        return cachedAddon;
+      } catch (applicationRequireError) {
+      throw new Error(
+          `Failed to load the Electron VR addon from ${localAddonPath} or ${prebuiltPackageName}. Local error: ${String(localError)}. Package-local prebuilt error: ${String(packageRequireError)}. Application-level prebuilt error: ${String(applicationRequireError)}`
+      );
+      }
+    }
+  }
 }
 
 function isSharedTexturePayload(value: unknown): value is SharedTexturePayload {

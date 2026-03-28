@@ -2,10 +2,11 @@ import { app } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { VROverlay } from "./VROverlay.js";
+import { VROverlay } from "@covas-labs/electron-vr";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const overlayUrl = pathToFileURL(join(currentDir, "ui", "index.html")).toString();
+const preloadPath = fileURLToPath(new URL("./preload.js", import.meta.url));
 
 let overlay: VROverlay | null = null;
 
@@ -16,7 +17,12 @@ app.on("ready", async () => {
     name: "Status_HUD",
     width: 1280,
     height: 720,
-    url: overlayUrl
+    url: overlayUrl,
+    windowOptions: {
+      webPreferences: {
+        preload: preloadPath
+      }
+    }
   });
 
   const runtimeInfo = overlay.getRuntimeInfo();

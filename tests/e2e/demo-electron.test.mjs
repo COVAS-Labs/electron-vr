@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const demoAppDir = resolve(projectRoot, "apps", "demo-electron");
 const artifactDir = resolve(projectRoot, "artifacts");
 const electronBinary = require("electron");
 
@@ -46,8 +47,8 @@ function hasMockPreviewWindow() {
 test("renders the native mock preview fallback", { skip: process.platform !== "linux" }, async () => {
   await mkdir(artifactDir, { recursive: true });
 
-  const child = spawn(electronBinary, [projectRoot, "--no-sandbox"], {
-    cwd: projectRoot,
+  const child = spawn(electronBinary, [demoAppDir, "--no-sandbox"], {
+    cwd: demoAppDir,
     env: {
       ...process.env,
       CI: "1"

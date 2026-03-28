@@ -1,31 +1,27 @@
 {
-  "name": "electron-vr-overlay-api",
-  "version": "0.1.0",
+  "name": "electron-vr-workspace",
   "private": true,
-  "description": "TypeScript + ESM Electron demo with a node-gyp VR overlay bridge scaffold.",
   "type": "module",
-  "main": "dist/electron/main.js",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "install": "node ./scripts/install.mjs",
-    "clean": "node ./scripts/clean.mjs",
-    "build": "node ./scripts/build.mjs",
-    "build:addon": "node-gyp rebuild",
-    "rebuild:electron": "node ./scripts/rebuild-electron.mjs",
-    "build:all": "npm run build && npm run rebuild:electron",
-    "test:e2e": "node --test ./tests/e2e/mock-preview.test.mjs",
-    "start": "npm run build && npm run rebuild:electron && electron .",
-    "start:no-sandbox": "npm run build && npm run rebuild:electron && electron . --no-sandbox",
-    "dev": "npm run start"
+    "clean": "node ./tools/clean.mjs",
+    "build": "npm run build --workspace @covas-labs/electron-vr && npm run build --workspace @covas-labs/electron-vr-demo",
+    "build:addon": "npm run build:addon --workspace @covas-labs/electron-vr-native-addon",
+    "rebuild:electron": "npm run rebuild:electron --workspace @covas-labs/electron-vr-native-addon",
+    "start": "npm run build && npm run rebuild:electron && npm run start --workspace @covas-labs/electron-vr-demo",
+    "start:no-sandbox": "npm run build && npm run rebuild:electron && npm run start:no-sandbox --workspace @covas-labs/electron-vr-demo",
+    "test:e2e": "node --test ./tests/e2e/demo-electron.test.mjs"
   },
   "engines": {
     "node": ">=20"
   },
-  "dependencies": {
-    "node-addon-api": "^8.3.1"
-  },
   "devDependencies": {
     "@types/node": "^24.6.0",
     "electron": "^37.6.0",
+    "node-addon-api": "^8.3.1",
     "node-gyp": "^11.5.0",
     "typescript": "^5.9.3"
   }

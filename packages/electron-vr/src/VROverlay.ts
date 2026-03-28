@@ -1,13 +1,17 @@
 import { app, BrowserWindow } from "electron";
-import { fileURLToPath } from "node:url";
+import type { BrowserWindowConstructorOptions } from "electron";
 
-import { createVrBridge, type BackendKind, type RuntimeInfo } from "./native.js";
+import { createVrBridge, type BackendKind, type RuntimeInfo } from "./bridge.js";
 
-interface VROverlayOptions {
+export interface VROverlayOptions {
   name?: string;
   width?: number;
   height?: number;
   url?: string;
+  frameRate?: number;
+  windowOptions?: Omit<BrowserWindowConstructorOptions, "width" | "height" | "webPreferences"> & {
+    webPreferences?: BrowserWindowConstructorOptions["webPreferences"];
+  };
 }
 
 export class VROverlay {
@@ -15,6 +19,8 @@ export class VROverlay {
   readonly height: number;
   readonly url: string;
   readonly overlayName: string;
+  readonly frameRate: number;
+  readonly windowOptions?: VROverlayOptions["windowOptions"];
 
   private readonly vrBridge = createVrBridge();
   private window: BrowserWindow | null = null;
@@ -25,6 +31,8 @@ export class VROverlay {
     this.height = options.height ?? 1024;
     this.url = options.url ?? "about:blank";
     this.overlayName = options.name ?? "Electron_VR_Overlay";
+    this.frameRate = options.frameRate ?? 60;
+    this.windowOptions = options.windowOptions;
   }
 
   getRuntimeInfo(): RuntimeInfo {
@@ -59,18 +67,19 @@ export class VROverlay {
       show: false,
       frame: false,
       transparent: true,
+      ...this.windowOptions,
       webPreferences: {
-        preload: fileURLToPath(new URL("./preload.js", import.meta.url)),
         offscreen: {
           useSharedTexture: true
         },
         contextIsolation: true,
         nodeIntegration: false,
-        backgroundThrottling: false
+        backgroundThrottling: false,
+        ...this.windowOptions?.webPreferences
       }
     });
 
-    this.vrBridge.attachWindow(this.window, { frameRate: 60 });
+    this.vrBridge.attachWindow(this.window, { frameRate: this.frameRate });
     await this.window.loadURL(this.url);
 
     this.initialized = true;

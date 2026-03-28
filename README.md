@@ -1,60 +1,36 @@
-# electron-vr-overlay-api
+# electron-vr
 
-Scaffold for a TypeScript + ESM Electron demo backed by a `node-gyp` native addon.
+Electron VR overlay workspace built around one public package: `@covas-labs/electron-vr`.
 
-## What is included
+## Layout
 
-- `src/electron/*`: Electron main-process wrapper and demo UI
-- `native/src/*`: N-API addon scaffold with runtime probing and backend stubs
-- `scripts/*`: local build helpers for TypeScript output, asset copying, and Electron header rebuilds
+- `packages/native-addon`: native `node-gyp` addon source and build config
+- `packages/electron-vr`: public Electron package and runtime loader
+- `apps/demo-electron`: demo application that consumes the public package
+- `tests/e2e`: repository-owned end-to-end tests
+- `tools`: workspace build and publish helpers
 
-## Commands
+## Local workflow
 
 - `npm install`
 - `npm run build`
 - `npm run rebuild:electron`
-- `npm run test:e2e`
 - `npm run start`
+- `npm run test:e2e`
 
-`npm install` does not auto-build the native addon. Build it explicitly with `npm run build:addon` for Node or `npm run rebuild:electron` for Electron.
+## Package model
 
-## Prebuilt modules
+Consumers install only `@covas-labs/electron-vr`.
 
-The GitHub Actions workflow in `.github/workflows/prebuilt-modules.yml` builds prebuilt `vr_bridge.node` artifacts for:
+Platform-specific prebuilt binaries are published as internal implementation packages and loaded automatically by the public package at runtime.
 
-- Linux x64 for Node
-- Linux x64 for Electron
-- Windows x64 for Node
-- Windows x64 for Electron
+The public package is the only consumer-facing install target. Apps should not import platform-specific package names directly.
 
-Each uploaded artifact includes:
+## Publishing
 
-- installable `package/`
-- `metadata.json`
+`.github/workflows/publish-prebuilt-packages.yml` publishes:
 
-The metadata marks the build as an `all-backends` prebuilt, meaning the module is compiled with the OpenXR, OpenVR, and mock backend paths included.
+- internal Electron prebuilt packages for Linux and Windows
+- the public `@covas-labs/electron-vr` package that depends on those prebuilds
 
-## Published prebuilt packages
-
-The workflow in `.github/workflows/publish-prebuilt-packages.yml` publishes installable prebuilt packages to GitHub Packages for each runtime and platform target.
-
-The sample consumer in `samples/registry-consumer/package.json` is designed to install those published packages from `npm.pkg.github.com` and smoke test them under Node and Electron.
-
-To install the published packages on another device, configure `NODE_AUTH_TOKEN` for GitHub Packages access and point the `@covas-labs` scope at `https://npm.pkg.github.com`.
-
-On Linux, the consumer machine also needs the runtime graphics libraries used by the addon, including `libEGL.so.1` and `libGLESv2.so.2`.
-
-## Current native status
-
-This version is an initialization scaffold:
-
-- probes for likely OpenXR/OpenVR loader libraries at runtime
-- selects `openxr`, then `openvr`, then `mock` as a final fallback
-- accepts Electron frame handles through the addon boundary
-- logs and tracks state safely
-
-## Mock preview fallback
-
-When neither OpenXR nor OpenVR is available, the addon now selects a `mock` backend. The repo also includes a Linux/Xvfb e2e path so CI can validate that the native mock preview window receives frames without a VR runtime.
-
-It does not yet create a real OpenXR/OpenVR overlay or import GPU textures into a compositor.
+The same workflow also creates a temporary consumer app and verifies that the published package installs and boots under Electron.

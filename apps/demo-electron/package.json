@@ -1,0 +1,14 @@
+{
+  "name": "@covas-labs/electron-vr-demo",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node ../../tools/build-demo-app.mjs",
+    "start": "node ../../tools/run-demo-electron.mjs",
+    "start:no-sandbox": "node ../../tools/run-demo-electron.mjs --no-sandbox"
+  },
+  "dependencies": {
+    "@covas-labs/electron-vr": "0.1.0"
+  }
+}

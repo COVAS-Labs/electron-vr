@@ -1,0 +1,11 @@
+{
+  "name": "@covas-labs/electron-vr-native-addon",
+  "private": true,
+  "scripts": {
+    "build:addon": "node ../../tools/build-native-addon.mjs",
+    "rebuild:electron": "node ../../tools/rebuild-electron-addon.mjs"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.3.1"
+  }
+}
