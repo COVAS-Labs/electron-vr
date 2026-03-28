@@ -116,7 +116,7 @@ jobs:
       - name: Install Linux runtime dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2 libegl1 libgles2
 
       - name: Install consumer dependencies
         working-directory: samples/registry-consumer

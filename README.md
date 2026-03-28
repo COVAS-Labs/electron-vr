@@ -42,6 +42,8 @@ The sample consumer in `samples/registry-consumer/package.json` is designed to i
 
 To install the published packages on another device, configure `NODE_AUTH_TOKEN` for GitHub Packages access and point the `@covas-labs` scope at `https://npm.pkg.github.com`.
 
+On Linux, the consumer machine also needs the runtime graphics libraries used by the addon, including `libEGL.so.1` and `libGLESv2.so.2`.
+
 ## Current native status
 
 This version is an initialization scaffold:
