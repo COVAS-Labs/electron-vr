@@ -1,0 +1,16 @@
+{
+  "name": "prebuilt-registry-consumer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke:node": "node ./smoke-node.mjs",
+    "smoke:electron": "electron --no-sandbox ./smoke-electron.mjs"
+  },
+  "devDependencies": {
+    "electron": "^37.6.0"
+  },
+  "dependencies": {
+    "@covas-labs/vr-bridge-prebuilt-electron-linux-x64": "file:../../artifacts/prebuilds/vr_bridge-electron-v37.10.3-linux-x64-all-backends/covas-labs-vr-bridge-prebuilt-electron-linux-x64-0.1.0-local.tgz",
+    "@covas-labs/vr-bridge-prebuilt-node-linux-x64": "file:../../artifacts/prebuilds/vr_bridge-node-v22.18.0-linux-x64-all-backends/covas-labs-vr-bridge-prebuilt-node-linux-x64-0.1.0-local.tgz"
+  }
+}

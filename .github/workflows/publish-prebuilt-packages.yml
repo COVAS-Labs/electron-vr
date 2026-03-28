@@ -1,0 +1,144 @@
+name: Publish Prebuilt Packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  version:
+    name: Compute Package Version
+    runs-on: ubuntu-latest
+    outputs:
+      package_version: ${{ steps.compute.outputs.package_version }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: compute
+        shell: bash
+        run: |
+          base_version=$(node -p "require('./package.json').version")
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            package_version="${GITHUB_REF_NAME#v}"
+          else
+            package_version="${base_version}-ci.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "package_version=${package_version}" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish ${{ matrix.runtime }} / ${{ matrix.os }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            runtime: node
+          - os: ubuntu-latest
+            runtime: electron
+          - os: windows-latest
+            runtime: node
+          - os: windows-latest
+            runtime: electron
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: "@covas-labs"
+
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev
+
+      - run: npm ci
+
+      - name: Build Node addon prebuilt
+        if: matrix.runtime == 'node'
+        run: npm run build:addon
+
+      - name: Build Electron addon prebuilt
+        if: matrix.runtime == 'electron'
+        run: npm run rebuild:electron
+
+      - name: Package prebuilt addon
+        run: node ./scripts/package-prebuilt.mjs --runtime=${{ matrix.runtime }} --owner-scope=covas-labs --package-version=${{ needs.version.outputs.package_version }}
+
+      - name: Publish package
+        shell: bash
+        run: npm publish artifacts/prebuilds/*/package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-${{ matrix.runtime }}-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            artifacts/prebuilds/*/*.tgz
+            artifacts/prebuilds/*/package/metadata.json
+          if-no-files-found: error
+
+  smoke-consumer:
+    name: Smoke Registry Consumer
+    needs:
+      - version
+      - publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: "@covas-labs"
+
+      - name: Install Linux runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2
+
+      - name: Install consumer dependencies
+        working-directory: samples/registry-consumer
+        run: npm install
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install published Linux packages
+        working-directory: samples/registry-consumer
+        run: |
+          npm install @covas-labs/vr-bridge-prebuilt-node-linux-x64@${{ needs.version.outputs.package_version }}
+          npm install @covas-labs/vr-bridge-prebuilt-electron-linux-x64@${{ needs.version.outputs.package_version }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Node smoke test
+        working-directory: samples/registry-consumer
+        run: npm run smoke:node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Electron smoke test
+        working-directory: samples/registry-consumer
+        run: xvfb-run -a npm run smoke:electron
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

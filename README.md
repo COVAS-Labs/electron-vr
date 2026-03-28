@@ -29,10 +29,19 @@ The GitHub Actions workflow in `.github/workflows/prebuilt-modules.yml` builds p
 
 Each uploaded artifact includes:
 
-- `vr_bridge.node`
+- installable `package/`
+- `*.tgz`
 - `metadata.json`
 
 The metadata marks the build as an `all-backends` prebuilt, meaning the module is compiled with the OpenXR, OpenVR, and mock backend paths included.
+
+## Published prebuilt packages
+
+The workflow in `.github/workflows/publish-prebuilt-packages.yml` publishes installable prebuilt packages to GitHub Packages for each runtime and platform target.
+
+The sample consumer in `samples/registry-consumer/package.json` is designed to install those published packages from `npm.pkg.github.com` and smoke test them under Node and Electron.
+
+To install the published packages on another device, configure `NODE_AUTH_TOKEN` for GitHub Packages access and point the `@covas-labs` scope at `https://npm.pkg.github.com`.
 
 ## Current native status
 
