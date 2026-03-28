@@ -58,8 +58,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          registry-url: https://npm.pkg.github.com
-          scope: "@covas-labs"
 
       - name: Install Linux native dependencies
         if: runner.os == 'Linux'
@@ -122,6 +120,12 @@ jobs:
       - name: Install consumer dependencies
         working-directory: samples/registry-consumer
         run: npm install
+
+      - name: Configure GitHub Packages auth
+        working-directory: samples/registry-consumer
+        run: |
+          npm config set @covas-labs:registry https://npm.pkg.github.com
+          npm config set //npm.pkg.github.com/:_authToken "${NODE_AUTH_TOKEN}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
