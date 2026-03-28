@@ -19,6 +19,7 @@ app.on("ready", async () => {
     height: 720,
     url: overlayUrl,
     windowOptions: {
+      backgroundColor: "#00000000",
       webPreferences: {
         preload: preloadPath
       }

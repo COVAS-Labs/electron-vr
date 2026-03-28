@@ -1,4 +1,4 @@
-import { cp, rm } from "node:fs/promises";
+import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -19,5 +19,8 @@ if (result.status !== 0) {
 const srcUiDir = resolve(workspaceDir, "src", "ui");
 const distUiDir = resolve(workspaceDir, "dist", "ui");
 
-await rm(distUiDir, { force: true, recursive: true });
-await cp(srcUiDir, distUiDir, { recursive: true, force: true });
+await mkdir(distUiDir, { recursive: true });
+await Promise.all([
+  copyFile(resolve(srcUiDir, "index.html"), resolve(distUiDir, "index.html")),
+  copyFile(resolve(srcUiDir, "index.css"), resolve(distUiDir, "index.css"))
+]);

@@ -67,6 +67,7 @@ export class VROverlay {
       show: false,
       frame: false,
       transparent: true,
+      backgroundColor: "#00000000",
       ...this.windowOptions,
       webPreferences: {
         offscreen: {

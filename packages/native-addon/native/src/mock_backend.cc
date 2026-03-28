@@ -5,6 +5,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #if defined(__linux__)
 #include <X11/Xlib.h>
@@ -151,28 +152,48 @@ class LinuxMockPreviewWindow {
     };
 
     EGLint num_configs = 0;
-    if (eglChooseConfig(egl_display_, config_attributes, &egl_config_, 1, &num_configs) != EGL_TRUE || num_configs != 1) {
+    if (eglChooseConfig(egl_display_, config_attributes, nullptr, 0, &num_configs) != EGL_TRUE || num_configs <= 0) {
       SetError(error_message, "Failed to choose EGL config: " + EglErrorString(eglGetError()));
       Cleanup();
       return false;
     }
 
-    EGLint visual_id = 0;
-    if (eglGetConfigAttrib(egl_display_, egl_config_, EGL_NATIVE_VISUAL_ID, &visual_id) != EGL_TRUE) {
-      SetError(error_message, "Failed to get EGL visual ID: " + EglErrorString(eglGetError()));
+    std::vector<EGLConfig> configs(static_cast<size_t>(num_configs));
+    if (eglChooseConfig(egl_display_, config_attributes, configs.data(), num_configs, &num_configs) != EGL_TRUE || num_configs <= 0) {
+      SetError(error_message, "Failed to enumerate EGL configs: " + EglErrorString(eglGetError()));
       Cleanup();
       return false;
     }
 
-    XVisualInfo visual_template{};
-    visual_template.visualid = static_cast<VisualID>(visual_id);
-    int matched_visuals = 0;
-    XVisualInfo* visual_info = XGetVisualInfo(x_display_, VisualIDMask, &visual_template, &matched_visuals);
-    if (visual_info == nullptr || matched_visuals == 0) {
-      SetError(error_message, "Failed to resolve X11 visual for mock preview window.");
-      if (visual_info != nullptr) {
-        XFree(visual_info);
+    XVisualInfo* visual_info = nullptr;
+    for (EGLint config_index = 0; config_index < num_configs; ++config_index) {
+      EGLint visual_id = 0;
+      if (eglGetConfigAttrib(egl_display_, configs[static_cast<size_t>(config_index)], EGL_NATIVE_VISUAL_ID, &visual_id) != EGL_TRUE || visual_id == 0) {
+        continue;
       }
+
+      XVisualInfo visual_template{};
+      visual_template.visualid = static_cast<VisualID>(visual_id);
+      int matched_visuals = 0;
+      XVisualInfo* candidate_visual_info = XGetVisualInfo(x_display_, VisualIDMask, &visual_template, &matched_visuals);
+      if (candidate_visual_info == nullptr || matched_visuals == 0) {
+        if (candidate_visual_info != nullptr) {
+          XFree(candidate_visual_info);
+        }
+        continue;
+      }
+
+      if (candidate_visual_info->depth >= 32) {
+        egl_config_ = configs[static_cast<size_t>(config_index)];
+        visual_info = candidate_visual_info;
+        break;
+      }
+
+      XFree(candidate_visual_info);
+    }
+
+    if (visual_info == nullptr) {
+      SetError(error_message, "Failed to find an EGL/X11 visual with an alpha channel for mock preview transparency.");
       Cleanup();
       return false;
     }
@@ -182,6 +203,8 @@ class LinuxMockPreviewWindow {
 
     XSetWindowAttributes window_attributes{};
     window_attributes.colormap = x_colormap_;
+    window_attributes.background_pixmap = None;
+    window_attributes.border_pixel = 0;
     window_attributes.event_mask = ExposureMask | StructureNotifyMask;
 
     x_window_ = XCreateWindow(
@@ -195,16 +218,17 @@ class LinuxMockPreviewWindow {
         visual_info->depth,
         InputOutput,
         visual_info->visual,
-        CWColormap | CWEventMask,
+        CWBackPixmap | CWBorderPixel | CWColormap | CWEventMask,
         &window_attributes);
 
-    XFree(visual_info);
-
     if (x_window_ == 0) {
+      XFree(visual_info);
       SetError(error_message, "Failed to create X11 mock preview window.");
       Cleanup();
       return false;
     }
+
+    XFree(visual_info);
 
     XStoreName(x_display_, x_window_, "VR Mock Preview");
     delete_window_atom_ = XInternAtom(x_display_, "WM_DELETE_WINDOW", False);
@@ -340,7 +364,7 @@ class LinuxMockPreviewWindow {
     }
 
     glViewport(0, 0, static_cast<GLsizei>(window_width_), static_cast<GLsizei>(window_height_));
-    glClearColor(0.04f, 0.07f, 0.11f, 1.0f);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(program_);
     glActiveTexture(GL_TEXTURE0);
@@ -401,7 +425,7 @@ class LinuxMockPreviewWindow {
     }
 
     glViewport(0, 0, static_cast<GLsizei>(window_width_), static_cast<GLsizei>(window_height_));
-    glClearColor(0.04f, 0.07f, 0.11f, 1.0f);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(program_);
     glActiveTexture(GL_TEXTURE0);
