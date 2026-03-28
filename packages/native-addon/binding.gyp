@@ -1,4 +1,7 @@
 {
+  "variables": {
+    "openvr_sdk_dir%": "<!(node -p \"process.env.OPENVR_SDK_DIR || '/home/luca/Dokumente/openvr'\")"
+  },
   "targets": [
     {
       "target_name": "vr_bridge",
@@ -12,7 +15,7 @@
       ],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",
-        "/home/luca/Dokumente/openvr/headers"
+        "<(openvr_sdk_dir)/headers"
       ],
       "dependencies": [
         "<!(node -p \"require('node-addon-api').gyp\")"
@@ -39,7 +42,7 @@
           "OS==\"linux\"",
           {
             "libraries": [
-              "/home/luca/Dokumente/openvr/lib/linux64/libopenvr_api.so",
+              "<(openvr_sdk_dir)/bin/linux64/libopenvr_api.a",
               "-lX11",
               "-lEGL",
               "-lGLESv2",
@@ -55,7 +58,7 @@
               "WIN32_LEAN_AND_MEAN"
             ],
             "libraries": [
-              "openvr_api.lib"
+              "<(openvr_sdk_dir)\\lib\\win64\\openvr_api.lib"
             ],
             "msvs_settings": {
               "VCCLCompilerTool": {

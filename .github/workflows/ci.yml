@@ -35,6 +35,43 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run rebuild:electron
+      - run: npm run test:unit
+
+  smoke:
+    name: Electron Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm run rebuild:electron
+
+      - name: Run Electron smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e:smoke
+
+      - name: Run Electron smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: npm run test:e2e:smoke
 
   e2e:
     name: E2E Demo App

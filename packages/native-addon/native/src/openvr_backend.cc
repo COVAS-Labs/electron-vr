@@ -4,7 +4,7 @@
 #include <cmath>
 #include <string>
 
-#include "/home/luca/Dokumente/openvr/headers/openvr.h"
+#include "openvr.h"
 
 #if defined(__linux__)
 #include <drm/drm_fourcc.h>

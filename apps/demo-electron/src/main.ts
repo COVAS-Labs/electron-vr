@@ -34,11 +34,9 @@ app.on("ready", async () => {
 
   const runtimeInfo = overlay.getRuntimeInfo();
   console.log("VR runtime probe:", runtimeInfo);
-  if (runtimeInfo.openvrAvailable) {
-    console.log(`OpenVR runtime installed: ${runtimeInfo.openvrRuntimeInstalled}`);
-    if (runtimeInfo.openvrRuntimePath) {
-      console.log(`OpenVR runtime path: ${runtimeInfo.openvrRuntimePath}`);
-    }
+  console.log(`OpenVR runtime installed: ${runtimeInfo.openvrRuntimeInstalled}`);
+  if (runtimeInfo.openvrRuntimePath) {
+    console.log(`OpenVR runtime path: ${runtimeInfo.openvrRuntimePath}`);
   }
 
   const success = await overlay.init();

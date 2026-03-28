@@ -302,14 +302,23 @@ export class VrBridge {
 
       if (process.platform === "win32") {
         if (Buffer.isBuffer(handle)) {
-          this.addon.submitFrameWindows(handle);
+          const submitted = this.addon.submitFrameWindows(handle);
+          if (!submitted) {
+            console.error("Failed to submit Windows frame to VR bridge:", this.addon.getLastError());
+          }
+        } else if (!this.warnedAboutMissingSharedTexture) {
+          this.warnedAboutMissingSharedTexture = true;
+          console.warn("Shared texture handle was unavailable on Windows; VR submission was skipped.");
         }
         return;
       }
 
       if (process.platform === "linux") {
         if (textureInfo?.planes?.length) {
-          this.addon.submitFrameLinux(textureInfo);
+          const submitted = this.addon.submitFrameLinux(textureInfo);
+          if (!submitted) {
+            console.error("Failed to submit Linux frame to VR bridge:", this.addon.getLastError());
+          }
         } else if (!this.warnedAboutMissingSharedTexture) {
           this.warnedAboutMissingSharedTexture = true;
           console.warn("Shared texture metadata was unavailable on paint; preview submission was skipped.");

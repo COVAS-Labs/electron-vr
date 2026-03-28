@@ -8,7 +8,7 @@
 #include <dlfcn.h>
 #endif
 
-#include "/home/luca/Dokumente/openvr/headers/openvr.h"
+#include "openvr.h"
 
 namespace vrbridge {
 
@@ -104,8 +104,7 @@ RuntimeInfo ProbeRuntime() {
   info.openvr_available = LibraryExists("openvr_api.dll");
 #else
   info.openxr_available = LibraryExists("libopenxr_loader.so.1", "libopenxr_loader.so");
-  info.openvr_available = LibraryExists("libopenvr_api.so", "/home/luca/Dokumente/openvr/lib/linux64/libopenvr_api.so") ||
-                          LibraryExists("/home/luca/Dokumente/openvr/bin/linux64/libopenvr_api.so");
+  info.openvr_available = LibraryExists("libopenvr_api.so", "openvr_api.so");
 #endif
 
   info.openxr_overlay_extension_available = false;
