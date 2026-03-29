@@ -1,5 +1,7 @@
 #include "runtime_probe.h"
 
+#include "openxr_loader_win.h"
+
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -12,6 +14,8 @@
 #ifndef XR_USE_GRAPHICS_API_D3D11
 #define XR_USE_GRAPHICS_API_D3D11
 #endif
+#include <d3d11_1.h>
+#include <dxgi1_2.h>
 #include <windows.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -269,7 +273,7 @@ bool QueryOpenXRExtensions(RuntimeInfo* info) {
   }
 
 #if defined(_WIN32)
-  HMODULE loader_module = LoadLibraryA("openxr_loader.dll");
+  HMODULE loader_module = openxrwin::LoadOpenXRLoaderModule();
   if (loader_module == nullptr) {
     info->probe_mode = "openxr-loader-load-failed";
     return false;
@@ -356,7 +360,10 @@ RuntimeInfo ProbeRuntime() {
   info.probe_mode = "filesystem";
 
 #if defined(_WIN32)
-  info.openxr_available = LibraryExists("openxr_loader.dll");
+  info.openxr_runtime_name = openxrwin::GetActiveRuntimeName();
+  info.openxr_runtime_manifest_path = openxrwin::GetActiveRuntimeManifestPath();
+  info.openxr_runtime_library_path = openxrwin::GetActiveRuntimeLibraryPath();
+  info.openxr_available = openxrwin::CanLoadOpenXRLoader(&info.openxr_loader_path);
   info.openvr_available = LibraryExists("openvr_api.dll");
 #else
   info.openxr_available = LibraryExists("libopenxr_loader.so.1", "libopenxr_loader.so");

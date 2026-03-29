@@ -13,6 +13,10 @@ export interface RuntimeInfo {
   openxrOverlayExtensionAvailable: boolean;
   openxrLinuxEglBindingAvailable: boolean;
   openxrWindowsD3D11BindingAvailable: boolean;
+  openxrRuntimeName: string;
+  openxrRuntimeManifestPath: string;
+  openxrRuntimeLibraryPath: string;
+  openxrLoaderPath: string;
   openvrAvailable: boolean;
   openvrRuntimeInstalled: boolean;
   openvrRuntimePath: string;

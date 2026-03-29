@@ -17,6 +17,10 @@ struct RuntimeInfo {
   bool openxr_overlay_extension_available = false;
   bool openxr_linux_egl_binding_available = false;
   bool openxr_windows_d3d11_binding_available = false;
+  std::string openxr_runtime_name;
+  std::string openxr_runtime_manifest_path;
+  std::string openxr_runtime_library_path;
+  std::string openxr_loader_path;
   bool openvr_available = false;
   bool openvr_runtime_installed = false;
   std::string openvr_runtime_path;

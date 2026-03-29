@@ -226,6 +226,10 @@ Napi::Object RuntimeInfoToObject(Napi::Env env, const RuntimeInfo& info) {
   result.Set("openxrOverlayExtensionAvailable", info.openxr_overlay_extension_available);
   result.Set("openxrLinuxEglBindingAvailable", info.openxr_linux_egl_binding_available);
   result.Set("openxrWindowsD3D11BindingAvailable", info.openxr_windows_d3d11_binding_available);
+  result.Set("openxrRuntimeName", info.openxr_runtime_name);
+  result.Set("openxrRuntimeManifestPath", info.openxr_runtime_manifest_path);
+  result.Set("openxrRuntimeLibraryPath", info.openxr_runtime_library_path);
+  result.Set("openxrLoaderPath", info.openxr_loader_path);
   result.Set("openvrAvailable", info.openvr_available);
   result.Set("openvrRuntimeInstalled", info.openvr_runtime_installed);
   result.Set("openvrRuntimePath", info.openvr_runtime_path);

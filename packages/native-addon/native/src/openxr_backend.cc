@@ -1,5 +1,7 @@
 #include "openxr_backend.h"
 
+#include "openxr_loader_win.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -620,9 +622,12 @@ bool LoadOpenXRLoader(std::string* error_message) {
     return true;
   }
 
-  g_state.openxr_loader = LoadLibraryA("openxr_loader.dll");
+  g_state.openxr_loader = openxrwin::LoadOpenXRLoaderModule();
   if (g_state.openxr_loader == nullptr) {
-    SetError(error_message, "Failed to load openxr_loader.dll for the Windows OpenXR backend.");
+    SetError(
+      error_message,
+      "Failed to load openxr_loader.dll for the Windows OpenXR backend. Set ELECTRON_VR_OPENXR_LOADER_PATH if the loader is installed outside PATH."
+    );
     return false;
   }
 
@@ -663,7 +668,6 @@ bool LoadInstanceOpenXRFunctions(std::string* error_message) {
 #endif
 
 #if defined(__linux__)
-
 GLuint CompileShader(GLenum shader_type, const char* source, std::string* error_message) {
   const GLuint shader = glCreateShader(shader_type);
   glShaderSource(shader, 1, &source, nullptr);
@@ -723,6 +727,7 @@ GLuint LinkProgram(const char* vertex_source, const char* fragment_source, std::
   SetError(error_message, "OpenXR GL program link failed: " + log);
   return 0;
 }
+#endif
 
 void DestroySwapchain() {
   if (g_state.swapchain != XR_NULL_HANDLE) {
@@ -734,6 +739,7 @@ void DestroySwapchain() {
   g_state.frame_height = 0;
 }
 
+#if defined(__linux__)
 void ShutdownGraphicsObjects() {
   if (g_state.framebuffer != 0) {
     glDeleteFramebuffers(1, &g_state.framebuffer);
@@ -749,6 +755,7 @@ void ShutdownGraphicsObjects() {
   }
   g_state.sampler_uniform = -1;
 }
+#endif
 
 void ResetState() {
 #if defined(__linux__)
@@ -1014,6 +1021,7 @@ bool BeginSessionIfNeeded(std::string* error_message) {
   return true;
 }
 
+#if defined(__linux__)
 bool InitializeEgl(std::string* error_message) {
   g_state.egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
   if (g_state.egl_display == EGL_NO_DISPLAY) {
@@ -1134,6 +1142,7 @@ bool InitializeGraphicsResources(std::string* error_message) {
 
   return true;
 }
+#endif
 
 bool CreateInstance(std::string* error_message) {
   uint32_t extension_count = 0;
@@ -1416,6 +1425,7 @@ const char* GetLayerSpaceNameForPlacement(const OverlayPlacement& placement) {
   return "local";
 }
 
+#if defined(__linux__)
 bool RenderImportedFrameToSwapchain(GLuint destination_texture, const LinuxTextureInfo& texture_info, std::string* error_message) {
   if (texture_info.planes.empty()) {
     SetError(error_message, "OpenXR backend requires at least one DMA-BUF plane.");
@@ -1500,6 +1510,7 @@ bool RenderImportedFrameToSwapchain(GLuint destination_texture, const LinuxTextu
 
   return true;
 }
+#endif
 
 bool PollEvents(std::string* error_message) {
   auto event_buffer = MakeXrStruct<XrEventDataBuffer, XR_TYPE_EVENT_DATA_BUFFER>();
@@ -1539,6 +1550,7 @@ bool PollEvents(std::string* error_message) {
   }
 }
 
+#if defined(__linux__)
 bool EnsureSwapchainForFrame(const LinuxTextureInfo& texture_info, std::string* error_message) {
   if (texture_info.width == 0 || texture_info.height == 0) {
     SetError(error_message, "Linux OpenXR texture submission requires codedSize width and height.");
@@ -1647,7 +1659,6 @@ bool SubmitLayerForCurrentFrame(const LinuxTextureInfo& texture_info, std::strin
 
   return true;
 }
-
 #endif
 
 bool g_initialized = false;
