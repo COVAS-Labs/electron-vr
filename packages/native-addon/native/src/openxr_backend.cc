@@ -1083,8 +1083,13 @@ bool SetOpenXRPlacement(const OverlayPlacement& placement, std::string* error_me
     return false;
   }
 
+#if defined(__linux__)
   g_state.placement = placement;
   g_state.logged_first_frame_submission = false;
+#else
+  (void)placement;
+#endif
+
   if (error_message != nullptr) {
     error_message->clear();
   }
@@ -1097,7 +1102,12 @@ bool SetOpenXRVisible(bool visible, std::string* error_message) {
     return false;
   }
 
+#if defined(__linux__)
   g_state.visible = visible;
+#else
+  (void)visible;
+#endif
+
   if (error_message != nullptr) {
     error_message->clear();
   }
@@ -1114,7 +1124,10 @@ bool SetOpenXRSizeMeters(float size_meters, std::string* error_message) {
     return false;
   }
 
+#if defined(__linux__)
   g_state.size_meters = size_meters;
+#endif
+
   if (error_message != nullptr) {
     error_message->clear();
   }
