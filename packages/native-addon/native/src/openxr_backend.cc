@@ -151,6 +151,7 @@ struct OpenXRBackendState {
   XrSession session = XR_NULL_HANDLE;
   XrSpace local_space = XR_NULL_HANDLE;
   XrSpace view_space = XR_NULL_HANDLE;
+  XrSpace stage_space = XR_NULL_HANDLE;
   XrSwapchain swapchain = XR_NULL_HANDLE;
   std::vector<XrSwapchainImageOpenGLESKHR> swapchain_images;
   int64_t swapchain_format = 0;
@@ -280,6 +281,10 @@ void ResetState() {
   if (g_state.view_space != XR_NULL_HANDLE) {
     xrDestroySpace(g_state.view_space);
     g_state.view_space = XR_NULL_HANDLE;
+  }
+  if (g_state.stage_space != XR_NULL_HANDLE) {
+    xrDestroySpace(g_state.stage_space);
+    g_state.stage_space = XR_NULL_HANDLE;
   }
   if (g_state.local_space != XR_NULL_HANDLE) {
     xrDestroySpace(g_state.local_space);
@@ -652,6 +657,14 @@ bool CreateSession(std::string* error_message) {
     return false;
   }
 
+  auto stage_space_info = MakeXrStruct<XrReferenceSpaceCreateInfo, XR_TYPE_REFERENCE_SPACE_CREATE_INFO>();
+  stage_space_info.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
+  stage_space_info.poseInReferenceSpace.orientation.w = 1.0f;
+  const XrResult stage_space_result = xrCreateReferenceSpace(g_state.session, &stage_space_info, &g_state.stage_space);
+  if (XR_FAILED(stage_space_result)) {
+    g_state.stage_space = XR_NULL_HANDLE;
+  }
+
   if (!SelectSwapchainFormat(error_message)) {
     return false;
   }
@@ -719,7 +732,27 @@ bool CreateSwapchain(uint32_t width, uint32_t height, std::string* error_message
 }
 
 XrSpace GetLayerSpaceForPlacement(const OverlayPlacement& placement) {
-  return placement.mode == OverlayPlacementMode::kHead ? g_state.view_space : g_state.local_space;
+  if (placement.mode == OverlayPlacementMode::kHead) {
+    return g_state.view_space;
+  }
+
+  if (g_state.stage_space != XR_NULL_HANDLE) {
+    return g_state.stage_space;
+  }
+
+  return g_state.local_space;
+}
+
+const char* GetLayerSpaceNameForPlacement(const OverlayPlacement& placement) {
+  if (placement.mode == OverlayPlacementMode::kHead) {
+    return "view";
+  }
+
+  if (g_state.stage_space != XR_NULL_HANDLE) {
+    return "stage";
+  }
+
+  return "local";
 }
 
 bool RenderImportedFrameToSwapchain(GLuint destination_texture, const LinuxTextureInfo& texture_info, std::string* error_message) {
@@ -933,7 +966,7 @@ bool SubmitLayerForCurrentFrame(const LinuxTextureInfo& texture_info, std::strin
     if (!g_state.logged_first_frame_submission) {
       g_state.logged_first_frame_submission = true;
       std::cout << "OpenXR submitted first quad layer: space="
-                << (g_state.placement.mode == OverlayPlacementMode::kHead ? "view" : "local")
+                << GetLayerSpaceNameForPlacement(g_state.placement)
                 << ", pose=(" << quad_layer.pose.position.x << ", " << quad_layer.pose.position.y << ", " << quad_layer.pose.position.z
                 << "), size=(" << quad_layer.size.width << "m x " << quad_layer.size.height << "m), frame="
                 << g_state.frame_width << "x" << g_state.frame_height
@@ -1051,6 +1084,7 @@ bool SetOpenXRPlacement(const OverlayPlacement& placement, std::string* error_me
   }
 
   g_state.placement = placement;
+  g_state.logged_first_frame_submission = false;
   if (error_message != nullptr) {
     error_message->clear();
   }

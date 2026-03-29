@@ -5,7 +5,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { VROverlay } from "@covas-labs/electron-vr";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
-const overlayUrl = pathToFileURL(join(currentDir, "ui", "index.html")).toString();
+const overlayUrl = pathToFileURL(join(currentDir, "ui", "index.html"))
+  .toString();
 const preloadPath = fileURLToPath(new URL("./preload.js", import.meta.url));
 
 let overlay: VROverlay | null = null;
@@ -24,25 +25,19 @@ app.on("ready", async () => {
     placement: {
       mode: "head",
       position: { x: 0, y: 0, z: -0.8 },
-      rotation: { x: 0, y: 0, z: 0, w: 1 }
+      rotation: { x: 0, y: 0, z: 0, w: 1 },
     },
     windowOptions: {
       transparent: true,
       backgroundColor: "#00000000",
       webPreferences: {
-        preload: preloadPath
-      }
-    }
+        preload: preloadPath,
+      },
+    },
   });
 
   const runtimeInfo = overlay.getRuntimeInfo();
   console.log("VR runtime probe:", runtimeInfo);
-  console.log(`OpenXR overlay extension available: ${runtimeInfo.openxrOverlayExtensionAvailable}`);
-  console.log(`OpenXR Linux EGL binding available: ${runtimeInfo.openxrLinuxEglBindingAvailable}`);
-  console.log(`OpenVR runtime installed: ${runtimeInfo.openvrRuntimeInstalled}`);
-  if (runtimeInfo.openvrRuntimePath) {
-    console.log(`OpenVR runtime path: ${runtimeInfo.openvrRuntimePath}`);
-  }
 
   const success = await overlay.init();
   if (!success) {
@@ -51,12 +46,14 @@ app.on("ready", async () => {
     return;
   }
 
-  console.log(`Overlay initialized with backend: ${overlay.getSelectedBackend()}`);
+  console.log(
+    `Overlay initialized with backend: ${overlay.getSelectedBackend()}`,
+  );
 
   const moved = overlay.setPlacement({
     mode: "head",
     position: { x: 0, y: 0, z: -0.8 },
-    rotation: { x: 0, y: 0, z: 0, w: 1 }
+    rotation: { x: 0, y: 0, z: 0, w: 1 },
   });
   console.log(`Overlay head placement update: ${moved}`);
 
