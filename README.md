@@ -57,13 +57,23 @@ app.on("before-quit", () => {
 });
 ```
 
-The package now probes Linux OpenXR capability and initializes the real Linux OpenXR backend automatically whenever `XR_EXTX_overlay`, `XR_MNDX_egl_enable`, and `XR_KHR_opengl_enable` are available. Set `ELECTRON_VR_DISABLE_OPENXR=1` to force Linux back onto the legacy non-OpenXR path while debugging. `ELECTRON_VR_ENABLE_OPENXR=1` is still accepted, but OpenXR no longer requires it.
+The package now probes Linux OpenXR capability and chooses backends in this order:
+
+- `openxr` when `XR_EXTX_overlay`, `XR_MNDX_egl_enable`, and `XR_KHR_opengl_enable` are available
+- `openvr` when the OpenXR overlay path is unavailable or explicitly disabled and a Linux OpenVR runtime is installed
+- `mock` otherwise
+
+Linux OpenXR remains the preferred path. Linux OpenVR is kept as a best-effort alternate or fallback runtime path for compatible OpenVR overlay runtimes, but it is not end-to-end validated on the main development machine or in CI. Set `ELECTRON_VR_DISABLE_OPENXR=1` to force Linux onto the OpenVR-or-mock selection branch while debugging. `ELECTRON_VR_ENABLE_OPENXR=1` is still accepted, but OpenXR no longer requires it.
 
 Linux OpenXR overlay submission now preserves the Electron window alpha channel by default, so transparent overlay UI should composite correctly on top of other XR content.
 
 For Linux verification, `npm run test:e2e:smoke:openxr` forces the demo app onto the OpenXR backend and asserts that initialization plus placement, size, and visibility updates succeed.
 
+`npm run test:e2e:smoke:openvr:linux` disables OpenXR and, when a Linux OpenVR runtime with overlay support is available, asserts that the demo app initializes the OpenVR backend and that placement, size, and visibility updates succeed. The test is runtime-gated so it skips cleanly on hosts without a usable Linux OpenVR overlay runtime, including the current development machine and CI.
+
 The packaged Windows and Linux builds bundle the OpenVR runtime library they need, so consumers do not need to set `OPENVR_SDK_DIR` just to load the addon.
+
+On Windows, runtime probing now also reports whether the current OpenXR runtime exposes `XR_EXTX_overlay` and `XR_KHR_D3D11_enable`. Windows still defaults to `openvr` when available, even if Windows OpenXR looks capable. Set `ELECTRON_VR_ENABLE_OPENXR=1` to opt into the Windows OpenXR path during bring-up. This path is not validated on the current development machine or in CI, so treat it as careful best-effort support rather than production-proven behavior.
 
 ### Position the overlay in VR space
 
@@ -91,7 +101,7 @@ overlay.setVisible(true);
 
 `sizeMeters` must be greater than zero, and placement vectors/quaternions must use finite numeric values.
 
-`getRuntimeInfo()` reports OpenXR loader and overlay capability details as well as whether an OpenVR runtime is installed by reading the OpenVR paths file, avoiding OpenVR initialization during simple availability checks.
+`getRuntimeInfo()` reports OpenXR loader and overlay capability details as well as whether an OpenVR runtime is installed by reading the OpenVR paths file, avoiding OpenVR initialization during simple availability checks. `probeMode` now also carries the backend-selection decision path, which helps explain whether Linux fell back because OpenXR was disabled or because the required overlay or EGL extensions were missing, and on Windows whether OpenXR was available but intentionally not selected by default. For Linux OpenVR specifically, treat this as diagnostic support rather than proof that overlay initialization will succeed on a given runtime.
 
 ### Reuse an existing BrowserWindow
 

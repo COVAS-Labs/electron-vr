@@ -1,6 +1,6 @@
 # @covas-labs/electron-vr
 
-Electron-facing VR overlay bridge package for OpenVR with native mock preview fallback.
+Electron-facing VR overlay bridge package for OpenXR or OpenVR overlays, with native mock preview fallback when no real XR runtime is usable.
 
 Published Windows and Linux packages bundle the OpenVR runtime library they need, so consumers do not need to configure `OPENVR_SDK_DIR` for normal usage.
 
@@ -66,4 +66,8 @@ You can also reposition the overlay later with `overlay.setPlacement(...)`, togg
 
 `sizeMeters` must be greater than zero, and placement values should be finite numbers.
 
-`getRuntimeInfo()` also includes `openvrRuntimeInstalled` and `openvrRuntimePath` based on the OpenVR paths file, so runtime diagnostics do not need to initialize OpenVR just to check availability.
+On Linux, runtime selection prefers `openxr`, then falls back to `openvr`, then to `mock`. Linux OpenVR is treated as a best-effort alternate backend when a compatible OpenVR runtime is installed but the OpenXR overlay path is unavailable or disabled. It is not currently validated end to end on the main development machine or in CI.
+
+On Windows, runtime probing reports OpenXR overlay and D3D11 graphics-binding capability, but the default backend remains `openvr` during rollout. Set `ELECTRON_VR_ENABLE_OPENXR=1` to opt into the Windows OpenXR path when a compatible runtime exposes `XR_EXTX_overlay` and `XR_KHR_D3D11_enable`. This path is not currently validated end to end on the main development machine or in CI.
+
+`getRuntimeInfo()` also includes `openvrRuntimeInstalled`, `openvrRuntimePath`, and platform-specific OpenXR capability details such as `openxrWindowsD3D11BindingAvailable`, so runtime diagnostics do not need to initialize OpenVR just to check availability. `probeMode` includes the backend-selection decision as well, which makes fallback behavior easier to diagnose even when Linux OpenVR or Windows OpenXR cannot be validated on the current host.

@@ -1,6 +1,7 @@
 {
   "variables": {
-    "openvr_sdk_dir%": "<!(node -p \"process.env.OPENVR_SDK_DIR || require('node:path').resolve(process.cwd(), '..', '..', '.openvr-sdk')\")"
+    "openvr_sdk_dir%": "<!(node -p \"process.env.OPENVR_SDK_DIR || require('node:path').resolve(process.cwd(), '..', '..', '.openvr-sdk')\")",
+    "openxr_sdk_dir%": "<!(node -p \"process.env.OPENXR_SDK_DIR || require('node:path').resolve(process.cwd(), '..', '..', '.openxr-sdk')\")"
   },
   "targets": [
     {
@@ -62,6 +63,9 @@
         [
           "OS==\"win\"",
           {
+            "include_dirs": [
+              "<(openxr_sdk_dir)/include"
+            ],
             "defines": [
               "NOMINMAX",
               "WIN32_LEAN_AND_MEAN"

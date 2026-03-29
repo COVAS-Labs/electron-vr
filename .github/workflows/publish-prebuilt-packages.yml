@@ -202,7 +202,10 @@ jobs:
               }
             });
 
-            console.log("Published package runtime info:", overlay.getRuntimeInfo());
+            const runtimeInfo = overlay.getRuntimeInfo();
+            console.log("Published package runtime info:", runtimeInfo);
+            console.log("Published package selected backend:", overlay.getSelectedBackend());
+            console.log("Published package OpenVR runtime installed:", runtimeInfo.openvrRuntimeInstalled);
             const initialized = await overlay.init();
             console.log("Published package overlay init:", initialized);
             if (initialized) {
@@ -291,7 +294,10 @@ jobs:
               }
             });
 
-            console.log("Published package runtime info:", overlay.getRuntimeInfo());
+            const runtimeInfo = overlay.getRuntimeInfo();
+            console.log("Published package runtime info:", runtimeInfo);
+            console.log("Published package selected backend:", overlay.getSelectedBackend());
+            console.log("Published package OpenVR runtime installed:", runtimeInfo.openvrRuntimeInstalled);
             const initialized = await overlay.init();
             console.log("Published package overlay init:", initialized);
             if (initialized) {

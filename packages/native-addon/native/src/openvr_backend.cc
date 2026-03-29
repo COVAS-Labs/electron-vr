@@ -605,40 +605,56 @@ bool ParseInteger(const std::string& value, uint64_t* result) {
   }
 }
 
-uint32_t ParsePixelFormat(const std::string& pixel_format) {
+bool TryParsePixelFormat(const std::string& pixel_format, uint32_t* result) {
+  if (result == nullptr) {
+    return false;
+  }
+
   uint64_t parsed_format = 0;
   if (ParseInteger(pixel_format, &parsed_format)) {
-    return static_cast<uint32_t>(parsed_format);
+    *result = static_cast<uint32_t>(parsed_format);
+    return true;
   }
 
   if (pixel_format == "rgba") {
-    return DRM_FORMAT_ABGR8888;
+    *result = DRM_FORMAT_ABGR8888;
+    return true;
   }
   if (pixel_format == "bgra") {
-    return DRM_FORMAT_ARGB8888;
+    *result = DRM_FORMAT_ARGB8888;
+    return true;
   }
   if (pixel_format == "ARGB8888") {
-    return DRM_FORMAT_ARGB8888;
+    *result = DRM_FORMAT_ARGB8888;
+    return true;
   }
   if (pixel_format == "ABGR8888") {
-    return DRM_FORMAT_ABGR8888;
+    *result = DRM_FORMAT_ABGR8888;
+    return true;
   }
   if (pixel_format == "XRGB8888") {
-    return DRM_FORMAT_XRGB8888;
+    *result = DRM_FORMAT_XRGB8888;
+    return true;
   }
   if (pixel_format == "XBGR8888") {
-    return DRM_FORMAT_XBGR8888;
+    *result = DRM_FORMAT_XBGR8888;
+    return true;
   }
-  return DRM_FORMAT_ARGB8888;
+
+  return false;
 }
 
-uint64_t ParseModifier(const std::string& modifier) {
-  uint64_t parsed_modifier = 0;
-  if (!ParseInteger(modifier, &parsed_modifier)) {
-    return DRM_FORMAT_MOD_INVALID;
+bool TryParseModifier(const std::string& modifier, uint64_t* result) {
+  if (result == nullptr) {
+    return false;
   }
 
-  return parsed_modifier;
+  if (modifier.empty()) {
+    *result = DRM_FORMAT_MOD_INVALID;
+    return true;
+  }
+
+  return ParseInteger(modifier, result);
 }
 #endif
 
@@ -816,6 +832,46 @@ bool SubmitOpenVRFrameLinux(const LinuxTextureInfo& texture_info, std::string* e
     return false;
   }
 
+  if (texture_info.width == 0 || texture_info.height == 0) {
+    SetError(error_message, "Linux OpenVR texture submission requires non-zero width and height.");
+    return false;
+  }
+
+  if (texture_info.planes.size() != 1) {
+    SetError(
+      error_message,
+      "Linux OpenVR currently supports only single-plane DMA-BUF textures from Electron; received " + std::to_string(texture_info.planes.size()) + " planes.");
+    return false;
+  }
+
+  const LinuxPlaneInfo& plane = texture_info.planes.front();
+  if (plane.fd < 0) {
+    SetError(error_message, "Linux OpenVR texture submission requires a non-negative DMA-BUF fd.");
+    return false;
+  }
+
+  if (plane.stride == 0) {
+    SetError(error_message, "Linux OpenVR texture submission requires a non-zero DMA-BUF plane stride.");
+    return false;
+  }
+
+  uint32_t pixel_format = 0;
+  if (!TryParsePixelFormat(texture_info.pixel_format, &pixel_format)) {
+    const std::string format_name = texture_info.pixel_format.empty() ? std::string("<empty>") : texture_info.pixel_format;
+    SetError(
+      error_message,
+      "Linux OpenVR received unsupported DMA-BUF pixel format '" + format_name + "'. Expected Electron's single-plane bgra/rgba or the equivalent DRM fourcc string.");
+    return false;
+  }
+
+  uint64_t modifier = DRM_FORMAT_MOD_INVALID;
+  if (!TryParseModifier(texture_info.modifier, &modifier)) {
+    SetError(
+      error_message,
+      "Linux OpenVR received an invalid DMA-BUF modifier '" + texture_info.modifier + "'. Expected an integer string or an empty modifier.");
+    return false;
+  }
+
   vr::DmabufAttributes_t attributes = {};
   attributes.pNext = nullptr;
   attributes.unWidth = texture_info.width;
@@ -824,21 +880,12 @@ bool SubmitOpenVRFrameLinux(const LinuxTextureInfo& texture_info, std::string* e
   attributes.unMipLevels = 1;
   attributes.unArrayLayers = 1;
   attributes.unSampleCount = 1;
-  attributes.unFormat = ParsePixelFormat(texture_info.pixel_format);
-  attributes.ulModifier = ParseModifier(texture_info.modifier);
-  attributes.unPlaneCount = static_cast<uint32_t>(std::min<size_t>(texture_info.planes.size(), vr::MaxDmabufPlaneCount));
-
-  if (attributes.unWidth == 0 || attributes.unHeight == 0) {
-    SetError(error_message, "Linux texture submission requires non-zero width and height.");
-    return false;
-  }
-
-  for (uint32_t index = 0; index < attributes.unPlaneCount; ++index) {
-    const LinuxPlaneInfo& plane = texture_info.planes[index];
-    attributes.plane[index].nFd = plane.fd;
-    attributes.plane[index].unOffset = plane.offset;
-    attributes.plane[index].unStride = plane.stride;
-  }
+  attributes.unFormat = pixel_format;
+  attributes.ulModifier = modifier;
+  attributes.unPlaneCount = 1;
+  attributes.plane[0].nFd = plane.fd;
+  attributes.plane[0].unOffset = plane.offset;
+  attributes.plane[0].unStride = plane.stride;
 
   vr::SharedTextureHandle_t imported_texture = static_cast<vr::SharedTextureHandle_t>(0);
   if (!g_state.ipc->ImportDmabuf(vr::VRApplication_Overlay, &attributes, &imported_texture) ||

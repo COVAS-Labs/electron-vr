@@ -12,6 +12,7 @@ export interface RuntimeInfo {
   openxrAvailable: boolean;
   openxrOverlayExtensionAvailable: boolean;
   openxrLinuxEglBindingAvailable: boolean;
+  openxrWindowsD3D11BindingAvailable: boolean;
   openvrAvailable: boolean;
   openvrRuntimeInstalled: boolean;
   openvrRuntimePath: string;
@@ -231,22 +232,7 @@ function loadVrBridgeAddon(): VrBridgeAddon {
 }
 
 function sanitizeRuntimeInfo(runtimeInfo: RuntimeInfo): RuntimeInfo {
-  if (runtimeInfo.platform !== "win32") {
-    return runtimeInfo;
-  }
-
-  if (runtimeInfo.probeMode === "filesystem") {
-    return runtimeInfo;
-  }
-
-  return {
-    ...runtimeInfo,
-    openvrAvailable: false,
-    openvrRuntimeInstalled: false,
-    openvrRuntimePath: "",
-    selectedBackend: runtimeInfo.selectedBackend === "openvr" ? "mock" : runtimeInfo.selectedBackend,
-    probeMode: `${runtimeInfo.probeMode}-sanitized`
-  };
+  return runtimeInfo;
 }
 
 function isSharedTexturePayload(value: unknown): value is SharedTexturePayload {

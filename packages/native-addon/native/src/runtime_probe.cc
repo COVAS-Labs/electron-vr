@@ -6,7 +6,15 @@
 #include <vector>
 
 #if defined(_WIN32)
+#ifndef XR_USE_PLATFORM_WIN32
+#define XR_USE_PLATFORM_WIN32
+#endif
+#ifndef XR_USE_GRAPHICS_API_D3D11
+#define XR_USE_GRAPHICS_API_D3D11
+#endif
 #include <windows.h>
+#include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
 #else
 #include <dlfcn.h>
 #endif
@@ -65,6 +73,19 @@ bool LibraryExists(const char* primary_name, const char* secondary_name = nullpt
 
   return false;
 #endif
+}
+
+void AppendProbeMode(RuntimeInfo* info, const std::string& suffix) {
+  if (info == nullptr || suffix.empty()) {
+    return;
+  }
+
+  if (info->probe_mode.empty()) {
+    info->probe_mode = suffix;
+    return;
+  }
+
+  info->probe_mode += ":" + suffix;
 }
 
 std::string DetectPlatform() {
@@ -231,7 +252,7 @@ std::string DetectOpenVRRuntimePath(bool* installed) {
   return runtime_path;
 }
 
-#if defined(__linux__)
+#if defined(_WIN32) || defined(__linux__)
 bool HasExtension(const std::vector<XrExtensionProperties>& extensions, const char* name) {
   for (const XrExtensionProperties& extension : extensions) {
     if (std::string(extension.extensionName) == name) {
@@ -247,6 +268,54 @@ bool QueryOpenXRExtensions(RuntimeInfo* info) {
     return false;
   }
 
+#if defined(_WIN32)
+  HMODULE loader_module = LoadLibraryA("openxr_loader.dll");
+  if (loader_module == nullptr) {
+    info->probe_mode = "openxr-loader-load-failed";
+    return false;
+  }
+
+  const auto enumerate_extensions = reinterpret_cast<PFN_xrEnumerateInstanceExtensionProperties>(
+    GetProcAddress(loader_module, "xrEnumerateInstanceExtensionProperties")
+  );
+  if (enumerate_extensions == nullptr) {
+    info->probe_mode = "openxr-loader-proc-missing";
+    FreeLibrary(loader_module);
+    return false;
+  }
+
+  uint32_t extension_count = 0;
+  const XrResult enumerate_count_result = enumerate_extensions(nullptr, 0, &extension_count, nullptr);
+  if (XR_FAILED(enumerate_count_result)) {
+    info->probe_mode = "openxr-loader-enumerate-failed";
+    FreeLibrary(loader_module);
+    return false;
+  }
+
+  std::vector<XrExtensionProperties> extensions(extension_count);
+  for (XrExtensionProperties& extension : extensions) {
+    extension.type = XR_TYPE_EXTENSION_PROPERTIES;
+    extension.next = nullptr;
+  }
+
+  const XrResult enumerate_result = enumerate_extensions(
+    nullptr,
+    extension_count,
+    &extension_count,
+    extensions.data());
+  if (XR_FAILED(enumerate_result)) {
+    info->probe_mode = "openxr-loader-enumerate-failed";
+    FreeLibrary(loader_module);
+    return false;
+  }
+
+  info->openxr_available = true;
+  info->openxr_overlay_extension_available = HasExtension(extensions, XR_EXTX_OVERLAY_EXTENSION_NAME);
+  info->openxr_windows_d3d11_binding_available = HasExtension(extensions, XR_KHR_D3D11_ENABLE_EXTENSION_NAME);
+  info->probe_mode = "openxr-extension-enumeration";
+  FreeLibrary(loader_module);
+  return true;
+#else
   uint32_t extension_count = 0;
   const XrResult enumerate_count_result = xrEnumerateInstanceExtensionProperties(nullptr, 0, &extension_count, nullptr);
   if (XR_FAILED(enumerate_count_result)) {
@@ -275,6 +344,7 @@ bool QueryOpenXRExtensions(RuntimeInfo* info) {
   info->openxr_linux_egl_binding_available = HasExtension(extensions, XR_MNDX_EGL_ENABLE_EXTENSION_NAME);
   info->probe_mode = "openxr-extension-enumeration";
   return true;
+#endif
 }
 #endif
 
@@ -306,32 +376,104 @@ RuntimeInfo ProbeRuntime() {
   }
 
   const bool openxr_ready = info.openxr_available && info.openxr_overlay_extension_available && info.openxr_linux_egl_binding_available;
-  const bool openxr_enabled = openxr_ready && !IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
+  const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
+  const bool openxr_enabled = openxr_ready && !openxr_disabled_by_env;
 
   if (openxr_enabled) {
     info.selected_backend = BackendKind::kOpenXR;
+    AppendProbeMode(&info, "selected-openxr");
   } else if (info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
+    if (openxr_disabled_by_env) {
+      AppendProbeMode(&info, "openxr-disabled-by-env");
+    } else if (info.openxr_available && !openxr_ready) {
+      AppendProbeMode(&info, "openxr-missing-overlay-or-egl");
+    }
+    AppendProbeMode(&info, "selected-openvr");
   } else {
     info.selected_backend = BackendKind::kMock;
+    if (openxr_disabled_by_env) {
+      AppendProbeMode(&info, "openxr-disabled-by-env");
+    } else if (info.openxr_available && !openxr_ready) {
+      AppendProbeMode(&info, "openxr-missing-overlay-or-egl");
+    }
+    if (!info.openvr_runtime_installed) {
+      AppendProbeMode(&info, "openvr-runtime-not-installed");
+    } else if (!info.openvr_available) {
+      AppendProbeMode(&info, "openvr-library-unavailable");
+    }
+    AppendProbeMode(&info, "selected-mock");
   }
 #elif defined(_WIN32)
-  info.openxr_overlay_extension_available = false;
+  if (info.openxr_available) {
+    const bool queried_extensions = QueryOpenXRExtensions(&info);
+    if (!queried_extensions) {
+      info.openxr_available = false;
+      info.openxr_overlay_extension_available = false;
+      info.openxr_windows_d3d11_binding_available = false;
+    }
+  }
+
   info.openxr_linux_egl_binding_available = false;
 
-  if (info.openvr_available && info.openvr_runtime_installed) {
+  const bool openxr_ready = info.openxr_available && info.openxr_overlay_extension_available && info.openxr_windows_d3d11_binding_available;
+  const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
+  const bool openxr_enabled_by_env = !openxr_disabled_by_env && IsTruthyEnvVar("ELECTRON_VR_ENABLE_OPENXR");
+
+  if (openxr_enabled_by_env && openxr_ready) {
+    info.selected_backend = BackendKind::kOpenXR;
+    AppendProbeMode(&info, "openxr-enabled-by-env");
+    AppendProbeMode(&info, "selected-openxr");
+  } else if (info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
+    if (openxr_disabled_by_env) {
+      AppendProbeMode(&info, "openxr-disabled-by-env");
+    } else if (openxr_enabled_by_env && !openxr_ready) {
+      AppendProbeMode(&info, "openxr-enable-requested-but-unavailable");
+    } else if (openxr_ready) {
+      AppendProbeMode(&info, "openxr-available-not-default");
+    } else if (info.openxr_available) {
+      AppendProbeMode(&info, "openxr-missing-overlay-or-d3d11");
+    }
+    AppendProbeMode(&info, "selected-openvr");
+  } else if (openxr_enabled_by_env && openxr_ready) {
+    info.selected_backend = BackendKind::kOpenXR;
+    AppendProbeMode(&info, "openxr-enabled-by-env");
+    AppendProbeMode(&info, "selected-openxr");
   } else {
     info.selected_backend = BackendKind::kMock;
+    if (openxr_disabled_by_env) {
+      AppendProbeMode(&info, "openxr-disabled-by-env");
+    } else if (openxr_enabled_by_env && !openxr_ready) {
+      AppendProbeMode(&info, "openxr-enable-requested-but-unavailable");
+    } else if (openxr_ready) {
+      AppendProbeMode(&info, "openxr-available-not-default");
+    } else if (info.openxr_available) {
+      AppendProbeMode(&info, "openxr-missing-overlay-or-d3d11");
+    }
+    if (!info.openvr_runtime_installed) {
+      AppendProbeMode(&info, "openvr-runtime-not-installed");
+    } else if (!info.openvr_available) {
+      AppendProbeMode(&info, "openvr-library-unavailable");
+    }
+    AppendProbeMode(&info, "selected-mock");
   }
 #else
   info.openxr_overlay_extension_available = false;
   info.openxr_linux_egl_binding_available = false;
+  info.openxr_windows_d3d11_binding_available = false;
 
   if (info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
+    AppendProbeMode(&info, "selected-openvr");
   } else {
     info.selected_backend = BackendKind::kMock;
+    if (!info.openvr_runtime_installed) {
+      AppendProbeMode(&info, "openvr-runtime-not-installed");
+    } else if (!info.openvr_available) {
+      AppendProbeMode(&info, "openvr-library-unavailable");
+    }
+    AppendProbeMode(&info, "selected-mock");
   }
 #endif
 

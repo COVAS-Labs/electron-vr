@@ -12,6 +12,21 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef XR_USE_PLATFORM_WIN32
+#define XR_USE_PLATFORM_WIN32
+#endif
+#ifndef XR_USE_GRAPHICS_API_D3D11
+#define XR_USE_GRAPHICS_API_D3D11
+#endif
+
+#include <d3d11_1.h>
+#include <dxgi1_2.h>
+#include <windows.h>
+#include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
+#endif
+
 #if defined(__linux__)
 #ifndef XR_USE_PLATFORM_EGL
 #define XR_USE_PLATFORM_EGL
@@ -40,8 +55,6 @@ void SetError(std::string* error_message, const std::string& message) {
   }
 }
 
-#if defined(__linux__)
-
 std::string ToString(XrResult result) {
   std::ostringstream stream;
   stream << static_cast<int32_t>(result);
@@ -49,16 +62,19 @@ std::string ToString(XrResult result) {
 }
 
 std::string XrResultToString(XrInstance instance, XrResult result) {
+#if !defined(_WIN32)
   if (instance != XR_NULL_HANDLE) {
     char buffer[XR_MAX_RESULT_STRING_SIZE] = {};
     if (XR_SUCCEEDED(xrResultToString(instance, result, buffer))) {
       return std::string(buffer);
     }
   }
+#endif
 
   return ToString(result);
 }
 
+#if defined(__linux__)
 std::string EglErrorString(EGLint error) {
   std::ostringstream stream;
   stream << "0x" << std::hex << static_cast<unsigned long>(error);
@@ -100,6 +116,7 @@ bool ParseModifier(const std::string& modifier_string, uint64_t* modifier_out) {
     return false;
   }
 }
+#endif
 
 XrPosef ToXrPose(const OverlayPlacement& placement) {
   XrPosef pose{};
@@ -153,8 +170,13 @@ struct OpenXRBackendState {
   XrSpace view_space = XR_NULL_HANDLE;
   XrSpace stage_space = XR_NULL_HANDLE;
   XrSwapchain swapchain = XR_NULL_HANDLE;
-  std::vector<XrSwapchainImageOpenGLESKHR> swapchain_images;
   int64_t swapchain_format = 0;
+  XrEnvironmentBlendMode environment_blend_mode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+  XrSessionState session_state = XR_SESSION_STATE_UNKNOWN;
+  bool session_running = false;
+  bool logged_first_frame_submission = false;
+#if defined(__linux__)
+  std::vector<XrSwapchainImageOpenGLESKHR> swapchain_images;
   EGLDisplay egl_display = EGL_NO_DISPLAY;
   EGLSurface egl_surface = EGL_NO_SURFACE;
   EGLContext egl_context = EGL_NO_CONTEXT;
@@ -167,11 +189,480 @@ struct OpenXRBackendState {
   GLuint framebuffer = 0;
   GLuint program = 0;
   GLint sampler_uniform = -1;
-  XrEnvironmentBlendMode environment_blend_mode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-  XrSessionState session_state = XR_SESSION_STATE_UNKNOWN;
-  bool session_running = false;
-  bool logged_first_frame_submission = false;
+#elif defined(_WIN32)
+  std::vector<XrSwapchainImageD3D11KHR> swapchain_images;
+  HMODULE openxr_loader = nullptr;
+  PFN_xrGetInstanceProcAddr xr_get_instance_proc_addr = nullptr;
+  PFN_xrEnumerateInstanceExtensionProperties xr_enumerate_instance_extension_properties = nullptr;
+  PFN_xrCreateInstance xr_create_instance = nullptr;
+  PFN_xrDestroyInstance xr_destroy_instance = nullptr;
+  PFN_xrGetSystem xr_get_system = nullptr;
+  PFN_xrCreateSession xr_create_session = nullptr;
+  PFN_xrDestroySession xr_destroy_session = nullptr;
+  PFN_xrCreateReferenceSpace xr_create_reference_space = nullptr;
+  PFN_xrDestroySpace xr_destroy_space = nullptr;
+  PFN_xrEnumerateSwapchainFormats xr_enumerate_swapchain_formats = nullptr;
+  PFN_xrCreateSwapchain xr_create_swapchain = nullptr;
+  PFN_xrDestroySwapchain xr_destroy_swapchain = nullptr;
+  PFN_xrEnumerateSwapchainImages xr_enumerate_swapchain_images = nullptr;
+  PFN_xrEnumerateEnvironmentBlendModes xr_enumerate_environment_blend_modes = nullptr;
+  PFN_xrPollEvent xr_poll_event = nullptr;
+  PFN_xrBeginSession xr_begin_session = nullptr;
+  PFN_xrEndSession xr_end_session = nullptr;
+  PFN_xrWaitFrame xr_wait_frame = nullptr;
+  PFN_xrBeginFrame xr_begin_frame = nullptr;
+  PFN_xrEndFrame xr_end_frame = nullptr;
+  PFN_xrAcquireSwapchainImage xr_acquire_swapchain_image = nullptr;
+  PFN_xrWaitSwapchainImage xr_wait_swapchain_image = nullptr;
+  PFN_xrReleaseSwapchainImage xr_release_swapchain_image = nullptr;
+  PFN_xrResultToString xr_result_to_string = nullptr;
+  PFN_xrGetD3D11GraphicsRequirementsKHR xr_get_d3d11_graphics_requirements_khr = nullptr;
+  ID3D11Device* d3d_device = nullptr;
+  ID3D11DeviceContext* d3d_context = nullptr;
+  ID3D11Device1* d3d_device1 = nullptr;
+  ID3D11Texture2D* shared_texture = nullptr;
+  uint64_t shared_texture_handle_value = 0;
+  bool logged_shared_texture_desc = false;
+#endif
 };
+
+OpenXRBackendState g_state;
+
+bool CheckXr(XrResult result, const char* message, std::string* error_message) {
+  if (XR_SUCCEEDED(result)) {
+    return true;
+  }
+
+  SetError(error_message, std::string(message) + ": " + XrResultToString(g_state.instance, result));
+  return false;
+}
+
+XrResult DestroySwapchainHandle(XrSwapchain swapchain) {
+#if defined(_WIN32)
+  return g_state.xr_destroy_swapchain(swapchain);
+#else
+  return xrDestroySwapchain(swapchain);
+#endif
+}
+
+XrResult DestroySpaceHandle(XrSpace space) {
+#if defined(_WIN32)
+  return g_state.xr_destroy_space(space);
+#else
+  return xrDestroySpace(space);
+#endif
+}
+
+XrResult DestroySessionHandle(XrSession session) {
+#if defined(_WIN32)
+  return g_state.xr_destroy_session(session);
+#else
+  return xrDestroySession(session);
+#endif
+}
+
+XrResult DestroyInstanceHandle(XrInstance instance) {
+#if defined(_WIN32)
+  return g_state.xr_destroy_instance(instance);
+#else
+  return xrDestroyInstance(instance);
+#endif
+}
+
+XrResult EnumerateSwapchainFormatsHandle(XrSession session, uint32_t capacity_input, uint32_t* count_output, int64_t* formats) {
+#if defined(_WIN32)
+  return g_state.xr_enumerate_swapchain_formats(session, capacity_input, count_output, formats);
+#else
+  return xrEnumerateSwapchainFormats(session, capacity_input, count_output, formats);
+#endif
+}
+
+XrResult EnumerateEnvironmentBlendModesHandle(
+  XrInstance instance,
+  XrSystemId system_id,
+  XrViewConfigurationType view_type,
+  uint32_t capacity_input,
+  uint32_t* count_output,
+  XrEnvironmentBlendMode* blend_modes) {
+#if defined(_WIN32)
+  return g_state.xr_enumerate_environment_blend_modes(instance, system_id, view_type, capacity_input, count_output, blend_modes);
+#else
+  return xrEnumerateEnvironmentBlendModes(instance, system_id, view_type, capacity_input, count_output, blend_modes);
+#endif
+}
+
+XrResult BeginSessionHandle(XrSession session, const XrSessionBeginInfo* begin_info) {
+#if defined(_WIN32)
+  return g_state.xr_begin_session(session, begin_info);
+#else
+  return xrBeginSession(session, begin_info);
+#endif
+}
+
+XrResult CreateInstanceHandle(const XrInstanceCreateInfo* create_info, XrInstance* instance) {
+#if defined(_WIN32)
+  return g_state.xr_create_instance(create_info, instance);
+#else
+  return xrCreateInstance(create_info, instance);
+#endif
+}
+
+XrResult GetSystemHandle(XrInstance instance, const XrSystemGetInfo* get_info, XrSystemId* system_id) {
+#if defined(_WIN32)
+  return g_state.xr_get_system(instance, get_info, system_id);
+#else
+  return xrGetSystem(instance, get_info, system_id);
+#endif
+}
+
+XrResult CreateSessionHandle(XrInstance instance, const XrSessionCreateInfo* create_info, XrSession* session) {
+#if defined(_WIN32)
+  return g_state.xr_create_session(instance, create_info, session);
+#else
+  return xrCreateSession(instance, create_info, session);
+#endif
+}
+
+XrResult CreateReferenceSpaceHandle(XrSession session, const XrReferenceSpaceCreateInfo* create_info, XrSpace* space) {
+#if defined(_WIN32)
+  return g_state.xr_create_reference_space(session, create_info, space);
+#else
+  return xrCreateReferenceSpace(session, create_info, space);
+#endif
+}
+
+XrResult CreateSwapchainHandle(XrSession session, const XrSwapchainCreateInfo* create_info, XrSwapchain* swapchain) {
+#if defined(_WIN32)
+  return g_state.xr_create_swapchain(session, create_info, swapchain);
+#else
+  return xrCreateSwapchain(session, create_info, swapchain);
+#endif
+}
+
+XrResult EnumerateSwapchainImagesHandle(XrSwapchain swapchain, uint32_t capacity_input, uint32_t* count_output, XrSwapchainImageBaseHeader* images) {
+#if defined(_WIN32)
+  return g_state.xr_enumerate_swapchain_images(swapchain, capacity_input, count_output, images);
+#else
+  return xrEnumerateSwapchainImages(swapchain, capacity_input, count_output, images);
+#endif
+}
+
+XrResult PollEventHandle(XrInstance instance, XrEventDataBuffer* event_buffer) {
+#if defined(_WIN32)
+  return g_state.xr_poll_event(instance, event_buffer);
+#else
+  return xrPollEvent(instance, event_buffer);
+#endif
+}
+
+XrResult EndSessionHandle(XrSession session) {
+#if defined(_WIN32)
+  return g_state.xr_end_session(session);
+#else
+  return xrEndSession(session);
+#endif
+}
+
+XrResult WaitFrameHandle(XrSession session, const XrFrameWaitInfo* wait_info, XrFrameState* frame_state) {
+#if defined(_WIN32)
+  return g_state.xr_wait_frame(session, wait_info, frame_state);
+#else
+  return xrWaitFrame(session, wait_info, frame_state);
+#endif
+}
+
+XrResult BeginFrameHandle(XrSession session, const XrFrameBeginInfo* begin_info) {
+#if defined(_WIN32)
+  return g_state.xr_begin_frame(session, begin_info);
+#else
+  return xrBeginFrame(session, begin_info);
+#endif
+}
+
+XrResult EndFrameHandle(XrSession session, const XrFrameEndInfo* end_info) {
+#if defined(_WIN32)
+  return g_state.xr_end_frame(session, end_info);
+#else
+  return xrEndFrame(session, end_info);
+#endif
+}
+
+XrResult AcquireSwapchainImageHandle(XrSwapchain swapchain, const XrSwapchainImageAcquireInfo* acquire_info, uint32_t* image_index) {
+#if defined(_WIN32)
+  return g_state.xr_acquire_swapchain_image(swapchain, acquire_info, image_index);
+#else
+  return xrAcquireSwapchainImage(swapchain, acquire_info, image_index);
+#endif
+}
+
+XrResult WaitSwapchainImageHandle(XrSwapchain swapchain, const XrSwapchainImageWaitInfo* wait_info) {
+#if defined(_WIN32)
+  return g_state.xr_wait_swapchain_image(swapchain, wait_info);
+#else
+  return xrWaitSwapchainImage(swapchain, wait_info);
+#endif
+}
+
+XrResult ReleaseSwapchainImageHandle(XrSwapchain swapchain, const XrSwapchainImageReleaseInfo* release_info) {
+#if defined(_WIN32)
+  return g_state.xr_release_swapchain_image(swapchain, release_info);
+#else
+  return xrReleaseSwapchainImage(swapchain, release_info);
+#endif
+}
+
+#if defined(_WIN32)
+std::string HResultToString(HRESULT value) {
+  std::ostringstream stream;
+  stream << "0x" << std::hex << static_cast<unsigned long>(value);
+  return stream.str();
+}
+
+const char* DxgiFormatToString(DXGI_FORMAT format) {
+  switch (format) {
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+      return "DXGI_FORMAT_B8G8R8A8_UNORM";
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+      return "DXGI_FORMAT_B8G8R8A8_UNORM_SRGB";
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+      return "DXGI_FORMAT_R8G8B8A8_UNORM";
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+      return "DXGI_FORMAT_R8G8B8A8_UNORM_SRGB";
+    default:
+      return "DXGI_FORMAT_OTHER";
+  }
+}
+
+template <typename FunctionType>
+bool LoadGlobalOpenXRFunction(const char* name, FunctionType* target, std::string* error_message) {
+  if (target == nullptr || g_state.xr_get_instance_proc_addr == nullptr) {
+    SetError(error_message, std::string("OpenXR global function loader is unavailable for ") + name + ".");
+    return false;
+  }
+
+  PFN_xrVoidFunction function = nullptr;
+  const XrResult result = g_state.xr_get_instance_proc_addr(XR_NULL_HANDLE, name, &function);
+  if (XR_FAILED(result) || function == nullptr) {
+    SetError(error_message, std::string("Failed to load global OpenXR function ") + name + ": " + ToString(result));
+    return false;
+  }
+
+  *target = reinterpret_cast<FunctionType>(function);
+  return true;
+}
+
+template <typename FunctionType>
+bool LoadInstanceOpenXRFunction(const char* name, FunctionType* target, std::string* error_message) {
+  if (target == nullptr || g_state.xr_get_instance_proc_addr == nullptr || g_state.instance == XR_NULL_HANDLE) {
+    SetError(error_message, std::string("OpenXR instance function loader is unavailable for ") + name + ".");
+    return false;
+  }
+
+  PFN_xrVoidFunction function = nullptr;
+  const XrResult result = g_state.xr_get_instance_proc_addr(g_state.instance, name, &function);
+  if (XR_FAILED(result) || function == nullptr) {
+    SetError(error_message, std::string("Failed to load instance OpenXR function ") + name + ": " + ToString(result));
+    return false;
+  }
+
+  *target = reinterpret_cast<FunctionType>(function);
+  return true;
+}
+
+void ReleaseSharedTexture() {
+  if (g_state.shared_texture != nullptr) {
+    g_state.shared_texture->Release();
+    g_state.shared_texture = nullptr;
+  }
+  g_state.shared_texture_handle_value = 0;
+}
+
+void ReleaseD3DResources() {
+  ReleaseSharedTexture();
+
+  if (g_state.d3d_context != nullptr) {
+    g_state.d3d_context->Release();
+    g_state.d3d_context = nullptr;
+  }
+
+  if (g_state.d3d_device1 != nullptr) {
+    g_state.d3d_device1->Release();
+    g_state.d3d_device1 = nullptr;
+  }
+
+  if (g_state.d3d_device != nullptr) {
+    g_state.d3d_device->Release();
+    g_state.d3d_device = nullptr;
+  }
+}
+
+void LogSharedTextureDescOnce(const D3D11_TEXTURE2D_DESC& desc) {
+  if (g_state.logged_shared_texture_desc) {
+    return;
+  }
+
+  g_state.logged_shared_texture_desc = true;
+  std::cout
+    << "OpenXR shared texture desc: "
+    << "width=" << desc.Width
+    << ", height=" << desc.Height
+    << ", format=" << DxgiFormatToString(desc.Format)
+    << ", bindFlags=0x" << std::hex << desc.BindFlags
+    << ", miscFlags=0x" << desc.MiscFlags
+    << std::dec
+    << ", sampleCount=" << desc.SampleDesc.Count
+    << std::endl;
+}
+
+bool EnsureD3D11Device(std::string* error_message) {
+  if (g_state.d3d_device != nullptr) {
+    return true;
+  }
+
+  const D3D_FEATURE_LEVEL requested_feature_levels[] = {
+    D3D_FEATURE_LEVEL_11_1,
+    D3D_FEATURE_LEVEL_11_0,
+    D3D_FEATURE_LEVEL_10_1,
+    D3D_FEATURE_LEVEL_10_0
+  };
+  const D3D_DRIVER_TYPE driver_types[] = {
+    D3D_DRIVER_TYPE_HARDWARE,
+    D3D_DRIVER_TYPE_WARP
+  };
+
+  HRESULT last_error = E_FAIL;
+  for (const D3D_DRIVER_TYPE driver_type : driver_types) {
+    D3D_FEATURE_LEVEL acquired_feature_level = D3D_FEATURE_LEVEL_10_0;
+    last_error = D3D11CreateDevice(
+      nullptr,
+      driver_type,
+      nullptr,
+      D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+      requested_feature_levels,
+      ARRAYSIZE(requested_feature_levels),
+      D3D11_SDK_VERSION,
+      &g_state.d3d_device,
+      &acquired_feature_level,
+      &g_state.d3d_context
+    );
+
+    if (SUCCEEDED(last_error)) {
+      if (g_state.d3d_device != nullptr) {
+        (void)g_state.d3d_device->QueryInterface(__uuidof(ID3D11Device1), reinterpret_cast<void**>(&g_state.d3d_device1));
+      }
+      return true;
+    }
+  }
+
+  SetError(error_message, "Failed to create a D3D11 device for OpenXR texture import (" + HResultToString(last_error) + ").");
+  ReleaseD3DResources();
+  return false;
+}
+
+bool OpenSharedTextureFromHandle(uint64_t shared_handle, std::string* error_message) {
+  if (g_state.shared_texture != nullptr && g_state.shared_texture_handle_value == shared_handle) {
+    return true;
+  }
+
+  ReleaseSharedTexture();
+
+  if (!EnsureD3D11Device(error_message)) {
+    return false;
+  }
+
+  const HANDLE handle = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(shared_handle));
+  HRESULT open_result = E_FAIL;
+
+  if (g_state.d3d_device1 != nullptr) {
+    open_result = g_state.d3d_device1->OpenSharedResource1(
+      handle,
+      __uuidof(ID3D11Texture2D),
+      reinterpret_cast<void**>(&g_state.shared_texture)
+    );
+
+    if (SUCCEEDED(open_result) && g_state.shared_texture != nullptr) {
+      g_state.shared_texture_handle_value = shared_handle;
+      D3D11_TEXTURE2D_DESC shared_desc = {};
+      g_state.shared_texture->GetDesc(&shared_desc);
+      LogSharedTextureDescOnce(shared_desc);
+      return true;
+    }
+  }
+
+  open_result = g_state.d3d_device->OpenSharedResource(
+    handle,
+    __uuidof(ID3D11Texture2D),
+    reinterpret_cast<void**>(&g_state.shared_texture)
+  );
+
+  if (FAILED(open_result) || g_state.shared_texture == nullptr) {
+    SetError(error_message, "Failed to open Windows shared texture handle for OpenXR (" + HResultToString(open_result) + ").");
+    ReleaseSharedTexture();
+    return false;
+  }
+
+  g_state.shared_texture_handle_value = shared_handle;
+  D3D11_TEXTURE2D_DESC shared_desc = {};
+  g_state.shared_texture->GetDesc(&shared_desc);
+  LogSharedTextureDescOnce(shared_desc);
+  return true;
+}
+
+bool IsCompatibleOpenXRSwapchainFormat(DXGI_FORMAT format) {
+  return format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+         format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
+         format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+         format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+}
+
+bool LoadOpenXRLoader(std::string* error_message) {
+  if (g_state.openxr_loader != nullptr) {
+    return true;
+  }
+
+  g_state.openxr_loader = LoadLibraryA("openxr_loader.dll");
+  if (g_state.openxr_loader == nullptr) {
+    SetError(error_message, "Failed to load openxr_loader.dll for the Windows OpenXR backend.");
+    return false;
+  }
+
+  g_state.xr_get_instance_proc_addr = reinterpret_cast<PFN_xrGetInstanceProcAddr>(GetProcAddress(g_state.openxr_loader, "xrGetInstanceProcAddr"));
+  if (g_state.xr_get_instance_proc_addr == nullptr) {
+    SetError(error_message, "Failed to resolve xrGetInstanceProcAddr from openxr_loader.dll.");
+    return false;
+  }
+
+  return LoadGlobalOpenXRFunction("xrEnumerateInstanceExtensionProperties", &g_state.xr_enumerate_instance_extension_properties, error_message) &&
+         LoadGlobalOpenXRFunction("xrCreateInstance", &g_state.xr_create_instance, error_message);
+}
+
+bool LoadInstanceOpenXRFunctions(std::string* error_message) {
+  return LoadInstanceOpenXRFunction("xrDestroyInstance", &g_state.xr_destroy_instance, error_message) &&
+         LoadInstanceOpenXRFunction("xrGetSystem", &g_state.xr_get_system, error_message) &&
+         LoadInstanceOpenXRFunction("xrCreateSession", &g_state.xr_create_session, error_message) &&
+         LoadInstanceOpenXRFunction("xrDestroySession", &g_state.xr_destroy_session, error_message) &&
+         LoadInstanceOpenXRFunction("xrCreateReferenceSpace", &g_state.xr_create_reference_space, error_message) &&
+         LoadInstanceOpenXRFunction("xrDestroySpace", &g_state.xr_destroy_space, error_message) &&
+         LoadInstanceOpenXRFunction("xrEnumerateSwapchainFormats", &g_state.xr_enumerate_swapchain_formats, error_message) &&
+         LoadInstanceOpenXRFunction("xrCreateSwapchain", &g_state.xr_create_swapchain, error_message) &&
+         LoadInstanceOpenXRFunction("xrDestroySwapchain", &g_state.xr_destroy_swapchain, error_message) &&
+         LoadInstanceOpenXRFunction("xrEnumerateSwapchainImages", &g_state.xr_enumerate_swapchain_images, error_message) &&
+         LoadInstanceOpenXRFunction("xrEnumerateEnvironmentBlendModes", &g_state.xr_enumerate_environment_blend_modes, error_message) &&
+         LoadInstanceOpenXRFunction("xrPollEvent", &g_state.xr_poll_event, error_message) &&
+         LoadInstanceOpenXRFunction("xrBeginSession", &g_state.xr_begin_session, error_message) &&
+         LoadInstanceOpenXRFunction("xrEndSession", &g_state.xr_end_session, error_message) &&
+         LoadInstanceOpenXRFunction("xrWaitFrame", &g_state.xr_wait_frame, error_message) &&
+         LoadInstanceOpenXRFunction("xrBeginFrame", &g_state.xr_begin_frame, error_message) &&
+         LoadInstanceOpenXRFunction("xrEndFrame", &g_state.xr_end_frame, error_message) &&
+         LoadInstanceOpenXRFunction("xrAcquireSwapchainImage", &g_state.xr_acquire_swapchain_image, error_message) &&
+         LoadInstanceOpenXRFunction("xrWaitSwapchainImage", &g_state.xr_wait_swapchain_image, error_message) &&
+         LoadInstanceOpenXRFunction("xrReleaseSwapchainImage", &g_state.xr_release_swapchain_image, error_message) &&
+         LoadInstanceOpenXRFunction("xrResultToString", &g_state.xr_result_to_string, error_message) &&
+         LoadInstanceOpenXRFunction("xrGetD3D11GraphicsRequirementsKHR", &g_state.xr_get_d3d11_graphics_requirements_khr, error_message);
+}
+#endif
+
+#if defined(__linux__)
 
 GLuint CompileShader(GLenum shader_type, const char* source, std::string* error_message) {
   const GLuint shader = glCreateShader(shader_type);
@@ -233,20 +724,9 @@ GLuint LinkProgram(const char* vertex_source, const char* fragment_source, std::
   return 0;
 }
 
-OpenXRBackendState g_state;
-
-bool CheckXr(XrResult result, const char* message, std::string* error_message) {
-  if (XR_SUCCEEDED(result)) {
-    return true;
-  }
-
-  SetError(error_message, std::string(message) + ": " + XrResultToString(g_state.instance, result));
-  return false;
-}
-
 void DestroySwapchain() {
   if (g_state.swapchain != XR_NULL_HANDLE) {
-    xrDestroySwapchain(g_state.swapchain);
+    DestroySwapchainHandle(g_state.swapchain);
     g_state.swapchain = XR_NULL_HANDLE;
   }
   g_state.swapchain_images.clear();
@@ -271,34 +751,39 @@ void ShutdownGraphicsObjects() {
 }
 
 void ResetState() {
+#if defined(__linux__)
   if (g_state.egl_display != EGL_NO_DISPLAY) {
     eglMakeCurrent(g_state.egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
   }
+#endif
 
+#if defined(__linux__)
   ShutdownGraphicsObjects();
+#endif
   DestroySwapchain();
 
   if (g_state.view_space != XR_NULL_HANDLE) {
-    xrDestroySpace(g_state.view_space);
+    DestroySpaceHandle(g_state.view_space);
     g_state.view_space = XR_NULL_HANDLE;
   }
   if (g_state.stage_space != XR_NULL_HANDLE) {
-    xrDestroySpace(g_state.stage_space);
+    DestroySpaceHandle(g_state.stage_space);
     g_state.stage_space = XR_NULL_HANDLE;
   }
   if (g_state.local_space != XR_NULL_HANDLE) {
-    xrDestroySpace(g_state.local_space);
+    DestroySpaceHandle(g_state.local_space);
     g_state.local_space = XR_NULL_HANDLE;
   }
   if (g_state.session != XR_NULL_HANDLE) {
-    xrDestroySession(g_state.session);
+    DestroySessionHandle(g_state.session);
     g_state.session = XR_NULL_HANDLE;
   }
   if (g_state.instance != XR_NULL_HANDLE) {
-    xrDestroyInstance(g_state.instance);
+    DestroyInstanceHandle(g_state.instance);
     g_state.instance = XR_NULL_HANDLE;
   }
 
+#if defined(__linux__)
   if (g_state.egl_context != EGL_NO_CONTEXT && g_state.egl_display != EGL_NO_DISPLAY) {
     eglDestroyContext(g_state.egl_display, g_state.egl_context);
     g_state.egl_context = EGL_NO_CONTEXT;
@@ -316,6 +801,38 @@ void ResetState() {
   g_state.egl_destroy_image_khr = nullptr;
   g_state.gl_egl_image_target_texture_2d_oes = nullptr;
   g_state.xr_get_opengl_graphics_requirements_khr = nullptr;
+#elif defined(_WIN32)
+  if (g_state.openxr_loader != nullptr) {
+    FreeLibrary(g_state.openxr_loader);
+    g_state.openxr_loader = nullptr;
+  }
+  g_state.xr_get_instance_proc_addr = nullptr;
+  g_state.xr_enumerate_instance_extension_properties = nullptr;
+  g_state.xr_create_instance = nullptr;
+  g_state.xr_destroy_instance = nullptr;
+  g_state.xr_get_system = nullptr;
+  g_state.xr_create_session = nullptr;
+  g_state.xr_destroy_session = nullptr;
+  g_state.xr_create_reference_space = nullptr;
+  g_state.xr_destroy_space = nullptr;
+  g_state.xr_enumerate_swapchain_formats = nullptr;
+  g_state.xr_create_swapchain = nullptr;
+  g_state.xr_destroy_swapchain = nullptr;
+  g_state.xr_enumerate_swapchain_images = nullptr;
+  g_state.xr_enumerate_environment_blend_modes = nullptr;
+  g_state.xr_poll_event = nullptr;
+  g_state.xr_begin_session = nullptr;
+  g_state.xr_end_session = nullptr;
+  g_state.xr_wait_frame = nullptr;
+  g_state.xr_begin_frame = nullptr;
+  g_state.xr_end_frame = nullptr;
+  g_state.xr_acquire_swapchain_image = nullptr;
+  g_state.xr_wait_swapchain_image = nullptr;
+  g_state.xr_release_swapchain_image = nullptr;
+  g_state.xr_result_to_string = nullptr;
+  g_state.xr_get_d3d11_graphics_requirements_khr = nullptr;
+  ReleaseD3DResources();
+#endif
   g_state.swapchain_format = 0;
   g_state.environment_blend_mode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
   g_state.session_state = XR_SESSION_STATE_UNKNOWN;
@@ -326,19 +843,52 @@ void ResetState() {
 
 bool SelectSwapchainFormat(std::string* error_message) {
   uint32_t format_count = 0;
-  if (!CheckXr(xrEnumerateSwapchainFormats(g_state.session, 0, &format_count, nullptr), "Failed to enumerate OpenXR swapchain format count", error_message)) {
+#if defined(_WIN32)
+  if (!CheckXr(
+        g_state.xr_enumerate_swapchain_formats(g_state.session, 0, &format_count, nullptr),
+        "Failed to enumerate OpenXR swapchain format count",
+        error_message)) {
     return false;
   }
+#else
+  if (!CheckXr(
+        xrEnumerateSwapchainFormats(g_state.session, 0, &format_count, nullptr),
+        "Failed to enumerate OpenXR swapchain format count",
+        error_message)) {
+    return false;
+  }
+#endif
 
   std::vector<int64_t> formats(format_count);
-  if (!CheckXr(xrEnumerateSwapchainFormats(g_state.session, format_count, &format_count, formats.data()), "Failed to enumerate OpenXR swapchain formats", error_message)) {
+#if defined(_WIN32)
+  if (!CheckXr(
+        g_state.xr_enumerate_swapchain_formats(g_state.session, format_count, &format_count, formats.data()),
+        "Failed to enumerate OpenXR swapchain formats",
+        error_message)) {
     return false;
   }
+#else
+  if (!CheckXr(
+        xrEnumerateSwapchainFormats(g_state.session, format_count, &format_count, formats.data()),
+        "Failed to enumerate OpenXR swapchain formats",
+        error_message)) {
+    return false;
+  }
+#endif
 
+#if defined(__linux__)
   static const int64_t kPreferredFormats[] = {
     GL_SRGB8_ALPHA8_EXT,
     GL_RGBA,
   };
+#elif defined(_WIN32)
+  static const int64_t kPreferredFormats[] = {
+    DXGI_FORMAT_B8G8R8A8_UNORM,
+    DXGI_FORMAT_R8G8B8A8_UNORM,
+    DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+    DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+  };
+#endif
 
   for (size_t index = 0; index < (sizeof(kPreferredFormats) / sizeof(kPreferredFormats[0])); ++index) {
     const int64_t preferred_format = kPreferredFormats[index];
@@ -359,6 +909,20 @@ bool SelectSwapchainFormat(std::string* error_message) {
 
 bool SelectEnvironmentBlendMode(std::string* error_message) {
   uint32_t blend_mode_count = 0;
+#if defined(_WIN32)
+  if (!CheckXr(
+        g_state.xr_enumerate_environment_blend_modes(
+          g_state.instance,
+          g_state.system_id,
+          XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+          0,
+          &blend_mode_count,
+          nullptr),
+        "Failed to enumerate OpenXR environment blend mode count",
+        error_message)) {
+    return false;
+  }
+#else
   if (!CheckXr(
         xrEnumerateEnvironmentBlendModes(
           g_state.instance,
@@ -371,8 +935,23 @@ bool SelectEnvironmentBlendMode(std::string* error_message) {
         error_message)) {
     return false;
   }
+#endif
 
   std::vector<XrEnvironmentBlendMode> blend_modes(blend_mode_count);
+#if defined(_WIN32)
+  if (!CheckXr(
+        g_state.xr_enumerate_environment_blend_modes(
+          g_state.instance,
+          g_state.system_id,
+          XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+          blend_mode_count,
+          &blend_mode_count,
+          blend_modes.data()),
+        "Failed to enumerate OpenXR environment blend modes",
+        error_message)) {
+    return false;
+  }
+#else
   if (!CheckXr(
         xrEnumerateEnvironmentBlendModes(
           g_state.instance,
@@ -385,6 +964,7 @@ bool SelectEnvironmentBlendMode(std::string* error_message) {
         error_message)) {
     return false;
   }
+#endif
 
   static const XrEnvironmentBlendMode kPreferredBlendModes[] = {
     XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND,
@@ -422,7 +1002,11 @@ bool BeginSessionIfNeeded(std::string* error_message) {
 
   auto begin_info = MakeXrStruct<XrSessionBeginInfo, XR_TYPE_SESSION_BEGIN_INFO>();
   begin_info.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+#if defined(_WIN32)
+  if (!CheckXr(g_state.xr_begin_session(g_state.session, &begin_info), "Failed to begin OpenXR session", error_message)) {
+#else
   if (!CheckXr(xrBeginSession(g_state.session, &begin_info), "Failed to begin OpenXR session", error_message)) {
+#endif
     return false;
   }
 
@@ -553,7 +1137,14 @@ bool InitializeGraphicsResources(std::string* error_message) {
 
 bool CreateInstance(std::string* error_message) {
   uint32_t extension_count = 0;
+#if defined(_WIN32)
+  if (!LoadOpenXRLoader(error_message)) {
+    return false;
+  }
+  if (!CheckXr(g_state.xr_enumerate_instance_extension_properties(nullptr, 0, &extension_count, nullptr), "Failed to enumerate OpenXR instance extensions", error_message)) {
+#else
   if (!CheckXr(xrEnumerateInstanceExtensionProperties(nullptr, 0, &extension_count, nullptr), "Failed to enumerate OpenXR instance extensions", error_message)) {
+#endif
     return false;
   }
 
@@ -563,7 +1154,11 @@ bool CreateInstance(std::string* error_message) {
     extension.next = nullptr;
   }
 
+#if defined(_WIN32)
+  if (!CheckXr(g_state.xr_enumerate_instance_extension_properties(nullptr, extension_count, &extension_count, extensions.data()), "Failed to enumerate OpenXR instance extensions", error_message)) {
+#else
   if (!CheckXr(xrEnumerateInstanceExtensionProperties(nullptr, extension_count, &extension_count, extensions.data()), "Failed to enumerate OpenXR instance extensions", error_message)) {
+#endif
     return false;
   }
 
@@ -571,6 +1166,8 @@ bool CreateInstance(std::string* error_message) {
     SetError(error_message, "OpenXR runtime does not expose XR_EXTX_overlay.");
     return false;
   }
+
+#if defined(__linux__)
   if (!HasExtension(extensions, XR_MNDX_EGL_ENABLE_EXTENSION_NAME)) {
     SetError(error_message, "OpenXR runtime does not expose XR_MNDX_egl_enable.");
     return false;
@@ -585,6 +1182,19 @@ bool CreateInstance(std::string* error_message) {
     XR_MNDX_EGL_ENABLE_EXTENSION_NAME,
     XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
   };
+  constexpr uint32_t enabled_extension_count = 3;
+#elif defined(_WIN32)
+  if (!HasExtension(extensions, XR_KHR_D3D11_ENABLE_EXTENSION_NAME)) {
+    SetError(error_message, "OpenXR runtime does not expose XR_KHR_D3D11_enable.");
+    return false;
+  }
+
+  const char* enabled_extensions[] = {
+    XR_EXTX_OVERLAY_EXTENSION_NAME,
+    XR_KHR_D3D11_ENABLE_EXTENSION_NAME,
+  };
+  constexpr uint32_t enabled_extension_count = 2;
+#endif
 
   auto create_info = MakeXrStruct<XrInstanceCreateInfo, XR_TYPE_INSTANCE_CREATE_INFO>();
   std::strncpy(create_info.applicationInfo.applicationName, "electron-vr", XR_MAX_APPLICATION_NAME_SIZE - 1);
@@ -592,12 +1202,18 @@ bool CreateInstance(std::string* error_message) {
   std::strncpy(create_info.applicationInfo.engineName, "electron-vr", XR_MAX_ENGINE_NAME_SIZE - 1);
   create_info.applicationInfo.engineVersion = 1;
   create_info.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
-  create_info.enabledExtensionCount = 3;
+  create_info.enabledExtensionCount = enabled_extension_count;
   create_info.enabledExtensionNames = enabled_extensions;
 
-  if (!CheckXr(xrCreateInstance(&create_info, &g_state.instance), "Failed to create OpenXR instance", error_message)) {
+  if (!CheckXr(CreateInstanceHandle(&create_info, &g_state.instance), "Failed to create OpenXR instance", error_message)) {
     return false;
   }
+
+#if defined(_WIN32)
+  if (!LoadInstanceOpenXRFunctions(error_message)) {
+    return false;
+  }
+#endif
 
   return true;
 }
@@ -605,10 +1221,11 @@ bool CreateInstance(std::string* error_message) {
 bool CreateSession(std::string* error_message) {
   auto system_get_info = MakeXrStruct<XrSystemGetInfo, XR_TYPE_SYSTEM_GET_INFO>();
   system_get_info.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
-  if (!CheckXr(xrGetSystem(g_state.instance, &system_get_info, &g_state.system_id), "Failed to acquire OpenXR system", error_message)) {
+  if (!CheckXr(GetSystemHandle(g_state.instance, &system_get_info, &g_state.system_id), "Failed to acquire OpenXR system", error_message)) {
     return false;
   }
 
+#if defined(__linux__)
   if (!CheckXr(xrGetInstanceProcAddr(
         g_state.instance,
         "xrGetOpenGLESGraphicsRequirementsKHR",
@@ -638,29 +1255,52 @@ bool CreateSession(std::string* error_message) {
   auto session_create_info = MakeXrStruct<XrSessionCreateInfo, XR_TYPE_SESSION_CREATE_INFO>();
   session_create_info.next = &graphics_binding;
   session_create_info.systemId = g_state.system_id;
+#elif defined(_WIN32)
+  if (!EnsureD3D11Device(error_message)) {
+    return false;
+  }
 
-  if (!CheckXr(xrCreateSession(g_state.instance, &session_create_info, &g_state.session), "Failed to create OpenXR overlay session", error_message)) {
+  auto graphics_requirements = MakeXrStruct<XrGraphicsRequirementsD3D11KHR, XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR>();
+  if (!CheckXr(g_state.xr_get_d3d11_graphics_requirements_khr(g_state.instance, g_state.system_id, &graphics_requirements), "Failed to query OpenXR D3D11 graphics requirements", error_message)) {
+    return false;
+  }
+
+  auto graphics_binding = MakeXrStruct<XrGraphicsBindingD3D11KHR, XR_TYPE_GRAPHICS_BINDING_D3D11_KHR>();
+  graphics_binding.device = g_state.d3d_device;
+
+  auto overlay_info = MakeXrStruct<XrSessionCreateInfoOverlayEXTX, XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX>();
+  overlay_info.createFlags = 0;
+  overlay_info.sessionLayersPlacement = UINT32_MAX;
+
+  graphics_binding.next = &overlay_info;
+
+  auto session_create_info = MakeXrStruct<XrSessionCreateInfo, XR_TYPE_SESSION_CREATE_INFO>();
+  session_create_info.next = &graphics_binding;
+  session_create_info.systemId = g_state.system_id;
+#endif
+
+  if (!CheckXr(CreateSessionHandle(g_state.instance, &session_create_info, &g_state.session), "Failed to create OpenXR overlay session", error_message)) {
     return false;
   }
 
   auto local_space_info = MakeXrStruct<XrReferenceSpaceCreateInfo, XR_TYPE_REFERENCE_SPACE_CREATE_INFO>();
   local_space_info.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
   local_space_info.poseInReferenceSpace.orientation.w = 1.0f;
-  if (!CheckXr(xrCreateReferenceSpace(g_state.session, &local_space_info, &g_state.local_space), "Failed to create OpenXR local reference space", error_message)) {
+  if (!CheckXr(CreateReferenceSpaceHandle(g_state.session, &local_space_info, &g_state.local_space), "Failed to create OpenXR local reference space", error_message)) {
     return false;
   }
 
   auto view_space_info = MakeXrStruct<XrReferenceSpaceCreateInfo, XR_TYPE_REFERENCE_SPACE_CREATE_INFO>();
   view_space_info.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
   view_space_info.poseInReferenceSpace.orientation.w = 1.0f;
-  if (!CheckXr(xrCreateReferenceSpace(g_state.session, &view_space_info, &g_state.view_space), "Failed to create OpenXR view reference space", error_message)) {
+  if (!CheckXr(CreateReferenceSpaceHandle(g_state.session, &view_space_info, &g_state.view_space), "Failed to create OpenXR view reference space", error_message)) {
     return false;
   }
 
   auto stage_space_info = MakeXrStruct<XrReferenceSpaceCreateInfo, XR_TYPE_REFERENCE_SPACE_CREATE_INFO>();
   stage_space_info.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
   stage_space_info.poseInReferenceSpace.orientation.w = 1.0f;
-  const XrResult stage_space_result = xrCreateReferenceSpace(g_state.session, &stage_space_info, &g_state.stage_space);
+  const XrResult stage_space_result = CreateReferenceSpaceHandle(g_state.session, &stage_space_info, &g_state.stage_space);
   if (XR_FAILED(stage_space_result)) {
     g_state.stage_space = XR_NULL_HANDLE;
   }
@@ -697,16 +1337,17 @@ bool CreateSwapchain(uint32_t width, uint32_t height, std::string* error_message
   swapchain_create_info.arraySize = 1;
   swapchain_create_info.mipCount = 1;
 
-  if (!CheckXr(xrCreateSwapchain(g_state.session, &swapchain_create_info, &g_state.swapchain), "Failed to create OpenXR swapchain", error_message)) {
+  if (!CheckXr(CreateSwapchainHandle(g_state.session, &swapchain_create_info, &g_state.swapchain), "Failed to create OpenXR swapchain", error_message)) {
     return false;
   }
 
   uint32_t image_count = 0;
-  if (!CheckXr(xrEnumerateSwapchainImages(g_state.swapchain, 0, &image_count, nullptr), "Failed to enumerate OpenXR swapchain image count", error_message)) {
+  if (!CheckXr(EnumerateSwapchainImagesHandle(g_state.swapchain, 0, &image_count, nullptr), "Failed to enumerate OpenXR swapchain image count", error_message)) {
     DestroySwapchain();
     return false;
   }
 
+#if defined(__linux__)
   g_state.swapchain_images.resize(image_count);
   for (XrSwapchainImageOpenGLESKHR& image : g_state.swapchain_images) {
     image.type = XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR;
@@ -715,7 +1356,7 @@ bool CreateSwapchain(uint32_t width, uint32_t height, std::string* error_message
   }
 
   if (!CheckXr(
-        xrEnumerateSwapchainImages(
+        EnumerateSwapchainImagesHandle(
           g_state.swapchain,
           image_count,
           &image_count,
@@ -725,6 +1366,26 @@ bool CreateSwapchain(uint32_t width, uint32_t height, std::string* error_message
     DestroySwapchain();
     return false;
   }
+#elif defined(_WIN32)
+  g_state.swapchain_images.resize(image_count);
+  for (XrSwapchainImageD3D11KHR& image : g_state.swapchain_images) {
+    image.type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
+    image.next = nullptr;
+    image.texture = nullptr;
+  }
+
+  if (!CheckXr(
+        EnumerateSwapchainImagesHandle(
+          g_state.swapchain,
+          image_count,
+          &image_count,
+          reinterpret_cast<XrSwapchainImageBaseHeader*>(g_state.swapchain_images.data())),
+        "Failed to enumerate OpenXR swapchain images",
+        error_message)) {
+    DestroySwapchain();
+    return false;
+  }
+#endif
 
   g_state.frame_width = width;
   g_state.frame_height = height;
@@ -843,7 +1504,7 @@ bool RenderImportedFrameToSwapchain(GLuint destination_texture, const LinuxTextu
 bool PollEvents(std::string* error_message) {
   auto event_buffer = MakeXrStruct<XrEventDataBuffer, XR_TYPE_EVENT_DATA_BUFFER>();
   while (true) {
-    const XrResult poll_result = xrPollEvent(g_state.instance, &event_buffer);
+    const XrResult poll_result = PollEventHandle(g_state.instance, &event_buffer);
     if (poll_result == XR_EVENT_UNAVAILABLE) {
       return true;
     }
@@ -863,7 +1524,7 @@ bool PollEvents(std::string* error_message) {
         }
       } else if (session_state->state == XR_SESSION_STATE_STOPPING) {
         if (g_state.session_running) {
-          if (!CheckXr(xrEndSession(g_state.session), "Failed to end OpenXR session", error_message)) {
+          if (!CheckXr(EndSessionHandle(g_state.session), "Failed to end OpenXR session", error_message)) {
             return false;
           }
           g_state.session_running = false;
@@ -913,12 +1574,12 @@ bool SubmitLayerForCurrentFrame(const LinuxTextureInfo& texture_info, std::strin
 
   auto frame_wait_info = MakeXrStruct<XrFrameWaitInfo, XR_TYPE_FRAME_WAIT_INFO>();
   auto frame_state = MakeXrStruct<XrFrameState, XR_TYPE_FRAME_STATE>();
-  if (!CheckXr(xrWaitFrame(g_state.session, &frame_wait_info, &frame_state), "Failed to wait for OpenXR frame", error_message)) {
+  if (!CheckXr(WaitFrameHandle(g_state.session, &frame_wait_info, &frame_state), "Failed to wait for OpenXR frame", error_message)) {
     return false;
   }
 
   auto frame_begin_info = MakeXrStruct<XrFrameBeginInfo, XR_TYPE_FRAME_BEGIN_INFO>();
-  if (!CheckXr(xrBeginFrame(g_state.session, &frame_begin_info), "Failed to begin OpenXR frame", error_message)) {
+  if (!CheckXr(BeginFrameHandle(g_state.session, &frame_begin_info), "Failed to begin OpenXR frame", error_message)) {
     return false;
   }
 
@@ -928,25 +1589,25 @@ bool SubmitLayerForCurrentFrame(const LinuxTextureInfo& texture_info, std::strin
   if (g_state.visible) {
     uint32_t image_index = 0;
     auto acquire_info = MakeXrStruct<XrSwapchainImageAcquireInfo, XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO>();
-    if (!CheckXr(xrAcquireSwapchainImage(g_state.swapchain, &acquire_info, &image_index), "Failed to acquire OpenXR swapchain image", error_message)) {
+    if (!CheckXr(AcquireSwapchainImageHandle(g_state.swapchain, &acquire_info, &image_index), "Failed to acquire OpenXR swapchain image", error_message)) {
       return false;
     }
 
     auto wait_info = MakeXrStruct<XrSwapchainImageWaitInfo, XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO>();
     wait_info.timeout = XR_INFINITE_DURATION;
-    if (!CheckXr(xrWaitSwapchainImage(g_state.swapchain, &wait_info), "Failed to wait for OpenXR swapchain image", error_message)) {
+    if (!CheckXr(WaitSwapchainImageHandle(g_state.swapchain, &wait_info), "Failed to wait for OpenXR swapchain image", error_message)) {
       return false;
     }
 
     const GLuint swapchain_texture = g_state.swapchain_images[image_index].image;
     if (!RenderImportedFrameToSwapchain(swapchain_texture, texture_info, error_message)) {
       auto release_info = MakeXrStruct<XrSwapchainImageReleaseInfo, XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO>();
-      xrReleaseSwapchainImage(g_state.swapchain, &release_info);
+      ReleaseSwapchainImageHandle(g_state.swapchain, &release_info);
       return false;
     }
 
     auto release_info = MakeXrStruct<XrSwapchainImageReleaseInfo, XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO>();
-    if (!CheckXr(xrReleaseSwapchainImage(g_state.swapchain, &release_info), "Failed to release OpenXR swapchain image", error_message)) {
+    if (!CheckXr(ReleaseSwapchainImageHandle(g_state.swapchain, &release_info), "Failed to release OpenXR swapchain image", error_message)) {
       return false;
     }
 
@@ -980,7 +1641,7 @@ bool SubmitLayerForCurrentFrame(const LinuxTextureInfo& texture_info, std::strin
   frame_end_info.layerCount = static_cast<uint32_t>(layers.size());
   frame_end_info.layers = layers.empty() ? nullptr : layers.data();
 
-  if (!CheckXr(xrEndFrame(g_state.session, &frame_end_info), "Failed to end OpenXR frame", error_message)) {
+  if (!CheckXr(EndFrameHandle(g_state.session, &frame_end_info), "Failed to end OpenXR frame", error_message)) {
     return false;
   }
 
@@ -990,6 +1651,127 @@ bool SubmitLayerForCurrentFrame(const LinuxTextureInfo& texture_info, std::strin
 #endif
 
 bool g_initialized = false;
+
+#if defined(_WIN32)
+bool EnsureSwapchainForWindowsFrame(uint32_t width, uint32_t height, std::string* error_message) {
+  if (width == 0 || height == 0) {
+    SetError(error_message, "Windows OpenXR texture submission requires non-zero width and height.");
+    return false;
+  }
+
+  if (g_state.swapchain == XR_NULL_HANDLE || g_state.frame_width != width || g_state.frame_height != height) {
+    if (!CreateSwapchain(width, height, error_message)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool SubmitLayerForCurrentFrameWindows(ID3D11Texture2D* source_texture, const D3D11_TEXTURE2D_DESC& source_desc, std::string* error_message) {
+  if (source_texture == nullptr) {
+    SetError(error_message, "Windows OpenXR frame submission requires a shared D3D11 texture.");
+    return false;
+  }
+
+  if (!PollEvents(error_message)) {
+    return false;
+  }
+
+  if (g_state.session_state == XR_SESSION_STATE_EXITING || g_state.session_state == XR_SESSION_STATE_LOSS_PENDING) {
+    SetError(error_message, "OpenXR session exited or was lost.");
+    return false;
+  }
+
+  if (!EnsureSwapchainForWindowsFrame(source_desc.Width, source_desc.Height, error_message)) {
+    return false;
+  }
+
+  if (!BeginSessionIfNeeded(error_message)) {
+    return false;
+  }
+
+  auto frame_wait_info = MakeXrStruct<XrFrameWaitInfo, XR_TYPE_FRAME_WAIT_INFO>();
+  auto frame_state = MakeXrStruct<XrFrameState, XR_TYPE_FRAME_STATE>();
+  if (!CheckXr(WaitFrameHandle(g_state.session, &frame_wait_info, &frame_state), "Failed to wait for OpenXR frame", error_message)) {
+    return false;
+  }
+
+  auto frame_begin_info = MakeXrStruct<XrFrameBeginInfo, XR_TYPE_FRAME_BEGIN_INFO>();
+  if (!CheckXr(BeginFrameHandle(g_state.session, &frame_begin_info), "Failed to begin OpenXR frame", error_message)) {
+    return false;
+  }
+
+  std::vector<XrCompositionLayerBaseHeader*> layers;
+  auto quad_layer = MakeXrStruct<XrCompositionLayerQuad, XR_TYPE_COMPOSITION_LAYER_QUAD>();
+
+  if (g_state.visible) {
+    uint32_t image_index = 0;
+    auto acquire_info = MakeXrStruct<XrSwapchainImageAcquireInfo, XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO>();
+    if (!CheckXr(AcquireSwapchainImageHandle(g_state.swapchain, &acquire_info, &image_index), "Failed to acquire OpenXR swapchain image", error_message)) {
+      return false;
+    }
+
+    auto wait_info = MakeXrStruct<XrSwapchainImageWaitInfo, XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO>();
+    wait_info.timeout = XR_INFINITE_DURATION;
+    if (!CheckXr(WaitSwapchainImageHandle(g_state.swapchain, &wait_info), "Failed to wait for OpenXR swapchain image", error_message)) {
+      return false;
+    }
+
+    ID3D11Texture2D* destination_texture = g_state.swapchain_images[image_index].texture;
+    if (destination_texture == nullptr) {
+      auto release_info = MakeXrStruct<XrSwapchainImageReleaseInfo, XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO>();
+      ReleaseSwapchainImageHandle(g_state.swapchain, &release_info);
+      SetError(error_message, "OpenXR swapchain returned a null D3D11 texture.");
+      return false;
+    }
+
+    g_state.d3d_context->CopyResource(destination_texture, source_texture);
+    g_state.d3d_context->Flush();
+
+    auto release_info = MakeXrStruct<XrSwapchainImageReleaseInfo, XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO>();
+    if (!CheckXr(ReleaseSwapchainImageHandle(g_state.swapchain, &release_info), "Failed to release OpenXR swapchain image", error_message)) {
+      return false;
+    }
+
+    quad_layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    quad_layer.space = GetLayerSpaceForPlacement(g_state.placement);
+    quad_layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    quad_layer.subImage.swapchain = g_state.swapchain;
+    quad_layer.subImage.imageRect.offset = {0, 0};
+    quad_layer.subImage.imageRect.extent = {static_cast<int32_t>(g_state.frame_width), static_cast<int32_t>(g_state.frame_height)};
+    quad_layer.subImage.imageArrayIndex = 0;
+    quad_layer.pose = ToXrPose(g_state.placement);
+    quad_layer.size.width = g_state.size_meters;
+    quad_layer.size.height = ComputeHeightMeters(g_state.frame_width, g_state.frame_height, g_state.size_meters);
+
+    layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad_layer));
+
+    if (!g_state.logged_first_frame_submission) {
+      g_state.logged_first_frame_submission = true;
+      std::cout << "OpenXR submitted first Windows quad layer: space="
+                << GetLayerSpaceNameForPlacement(g_state.placement)
+                << ", pose=(" << quad_layer.pose.position.x << ", " << quad_layer.pose.position.y << ", " << quad_layer.pose.position.z
+                << "), size=(" << quad_layer.size.width << "m x " << quad_layer.size.height << "m), frame="
+                << g_state.frame_width << "x" << g_state.frame_height
+                << ", format=" << DxgiFormatToString(source_desc.Format)
+                << std::endl;
+    }
+  }
+
+  auto frame_end_info = MakeXrStruct<XrFrameEndInfo, XR_TYPE_FRAME_END_INFO>();
+  frame_end_info.displayTime = frame_state.predictedDisplayTime;
+  frame_end_info.environmentBlendMode = g_state.environment_blend_mode;
+  frame_end_info.layerCount = static_cast<uint32_t>(layers.size());
+  frame_end_info.layers = layers.empty() ? nullptr : layers.data();
+
+  if (!CheckXr(EndFrameHandle(g_state.session, &frame_end_info), "Failed to end OpenXR frame", error_message)) {
+    return false;
+  }
+
+  return true;
+}
+#endif
 
 }  // namespace
 
@@ -1026,6 +1808,25 @@ bool InitializeOpenXRBackend(const InitializeOptions& options, std::string* erro
     error_message->clear();
   }
   return true;
+#elif defined(_WIN32)
+  ShutdownOpenXRBackend();
+
+  g_state.visible = options.visible;
+  g_state.size_meters = options.size_meters;
+  g_state.placement = options.placement;
+
+  if (!CreateInstance(error_message) ||
+      !CreateSession(error_message)) {
+    ShutdownOpenXRBackend();
+    return false;
+  }
+
+  g_state.initialized = true;
+  g_initialized = true;
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
 #else
   (void)options;
   SetError(error_message, "OpenXR backend is only implemented on Linux right now.");
@@ -1034,9 +1835,48 @@ bool InitializeOpenXRBackend(const InitializeOptions& options, std::string* erro
 }
 
 bool SubmitOpenXRFrameWindows(uint64_t shared_handle, std::string* error_message) {
+#if defined(_WIN32)
+  if (!g_state.initialized || !g_initialized) {
+    SetError(error_message, "OpenXR backend is not initialized.");
+    return false;
+  }
+
+  if (shared_handle == 0) {
+    SetError(error_message, "OpenXR backend received an invalid Windows shared handle.");
+    return false;
+  }
+
+  if (!OpenSharedTextureFromHandle(shared_handle, error_message)) {
+    return false;
+  }
+
+  D3D11_TEXTURE2D_DESC shared_desc = {};
+  g_state.shared_texture->GetDesc(&shared_desc);
+  if (shared_desc.Width == 0 || shared_desc.Height == 0) {
+    SetError(error_message, "Windows OpenXR texture submission requires non-zero width and height.");
+    return false;
+  }
+
+  if (!IsCompatibleOpenXRSwapchainFormat(shared_desc.Format)) {
+    SetError(
+      error_message,
+      "Windows OpenXR received unsupported shared texture format " + std::string(DxgiFormatToString(shared_desc.Format)) + ". Expected BGRA8 or RGBA8.");
+    return false;
+  }
+
+  if (!SubmitLayerForCurrentFrameWindows(g_state.shared_texture, shared_desc, error_message)) {
+    return false;
+  }
+
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+#else
   (void)shared_handle;
-  SetError(error_message, "OpenXR Windows frame submission is not implemented yet.");
+  SetError(error_message, "OpenXR Windows frame submission is only available on Windows builds.");
   return false;
+#endif
 }
 
 bool SubmitOpenXRFrameLinux(const LinuxTextureInfo& texture_info, std::string* error_message) {
@@ -1083,7 +1923,7 @@ bool SetOpenXRPlacement(const OverlayPlacement& placement, std::string* error_me
     return false;
   }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
   g_state.placement = placement;
   g_state.logged_first_frame_submission = false;
 #else
@@ -1102,7 +1942,7 @@ bool SetOpenXRVisible(bool visible, std::string* error_message) {
     return false;
   }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
   g_state.visible = visible;
 #else
   (void)visible;
@@ -1124,7 +1964,7 @@ bool SetOpenXRSizeMeters(float size_meters, std::string* error_message) {
     return false;
   }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
   g_state.size_meters = size_meters;
 #endif
 
@@ -1135,9 +1975,9 @@ bool SetOpenXRSizeMeters(float size_meters, std::string* error_message) {
 }
 
 void ShutdownOpenXRBackend() {
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
   if (g_state.session != XR_NULL_HANDLE) {
-    xrEndSession(g_state.session);
+    EndSessionHandle(g_state.session);
   }
   ResetState();
 #endif
