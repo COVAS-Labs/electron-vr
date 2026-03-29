@@ -37,6 +37,8 @@ app.on("ready", async () => {
 
   const runtimeInfo = overlay.getRuntimeInfo();
   console.log("VR runtime probe:", runtimeInfo);
+  console.log(`OpenXR overlay extension available: ${runtimeInfo.openxrOverlayExtensionAvailable}`);
+  console.log(`OpenXR Linux EGL binding available: ${runtimeInfo.openxrLinuxEglBindingAvailable}`);
   console.log(`OpenVR runtime installed: ${runtimeInfo.openvrRuntimeInstalled}`);
   if (runtimeInfo.openvrRuntimePath) {
     console.log(`OpenVR runtime path: ${runtimeInfo.openvrRuntimePath}`);

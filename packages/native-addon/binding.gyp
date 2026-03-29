@@ -41,14 +41,18 @@
         [
           "OS==\"linux\"",
           {
+            "defines": [
+              "XR_USE_PLATFORM_EGL",
+              "XR_USE_GRAPHICS_API_OPENGL_ES"
+            ],
             "ldflags": [
               "-Wl,-z,origin",
               "-Wl,-rpath,\\$$ORIGIN"
             ],
             "libraries": [
               "-L<(openvr_sdk_dir)/lib/linux64",
+              "-lopenxr_loader",
               "-lopenvr_api",
-              "-lX11",
               "-lEGL",
               "-lGLESv2",
               "-ldl"

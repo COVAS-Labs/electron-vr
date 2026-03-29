@@ -85,6 +85,8 @@ test("boots the demo app and exercises overlay API paths", async () => {
   try {
     try {
       await waitFor(() => combinedOutput.includes("VR runtime probe:"), 20000, "runtime probe logging");
+      await waitFor(() => combinedOutput.includes("OpenXR overlay extension available:"), 20000, "OpenXR overlay logging");
+      await waitFor(() => combinedOutput.includes("OpenXR Linux EGL binding available:"), 20000, "OpenXR EGL binding logging");
       await waitFor(() => combinedOutput.includes("OpenVR runtime installed:"), 20000, "OpenVR install logging");
       await waitFor(() => combinedOutput.includes("Overlay initialized with backend:"), 20000, "overlay initialization");
       await waitFor(() => combinedOutput.includes("Overlay head placement update: true"), 20000, "placement update logging");
@@ -95,12 +97,17 @@ test("boots the demo app and exercises overlay API paths", async () => {
     }
 
     assert.match(combinedOutput, /VR runtime probe:/);
+    assert.match(combinedOutput, /OpenXR overlay extension available:/);
+    assert.match(combinedOutput, /OpenXR Linux EGL binding available:/);
     assert.match(combinedOutput, /OpenVR runtime installed:/);
     assert.match(combinedOutput, /Overlay initialized with backend:/);
     assert.match(combinedOutput, /Overlay head placement update: true/);
     assert.match(combinedOutput, /Overlay size update: true/);
     assert.match(combinedOutput, /Overlay visibility update: true/);
     assert.doesNotMatch(combinedOutput, /Failed to initialize VR bridge/);
+    assert.doesNotMatch(combinedOutput, /OpenXR overlay placement is not implemented yet/);
+    assert.doesNotMatch(combinedOutput, /OpenXR overlay sizing is not implemented yet/);
+    assert.doesNotMatch(combinedOutput, /OpenXR overlay visibility control is not implemented yet/);
     assert.doesNotMatch(combinedOutput, /UnhandledPromiseRejection|uncaught exception|Error while forwarding frame to VR bridge/i);
   } finally {
     child.kill("SIGTERM");

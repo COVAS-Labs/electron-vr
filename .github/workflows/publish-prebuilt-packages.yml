@@ -80,7 +80,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev
+          sudo apt-get install -y libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libopenxr-dev
 
       - name: Set OpenVR SDK path
         shell: bash
@@ -166,7 +166,7 @@ jobs:
       - name: Install Linux runtime dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2 libegl1 libgles2
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2 libegl1 libgles2 libopenxr-loader1
 
       - name: Create temporary consumer app
         shell: bash
@@ -188,11 +188,33 @@ jobs:
           EOF
           cat > .tmp/consumer/smoke-electron.mjs <<'EOF'
           import { app } from "electron";
-          import { createVrBridge } from "@covas-labs/electron-vr";
+          import { VROverlay } from "@covas-labs/electron-vr";
 
-          app.whenReady().then(() => {
-            const bridge = createVrBridge();
-            console.log("Published package runtime info:", bridge.getRuntimeInfo());
+          app.whenReady().then(async () => {
+            const overlay = new VROverlay({
+              name: "CI_Linux_Smoke",
+              url: "about:blank",
+              sizeMeters: 1,
+              placement: {
+                mode: "head",
+                position: { x: 0, y: 0, z: -1.2 },
+                rotation: { x: 0, y: 0, z: 0, w: 1 }
+              }
+            });
+
+            console.log("Published package runtime info:", overlay.getRuntimeInfo());
+            const initialized = await overlay.init();
+            console.log("Published package overlay init:", initialized);
+            if (initialized) {
+              console.log("Published package placement update:", overlay.setPlacement({
+                mode: "world",
+                position: { x: 0, y: 1.5, z: -2 },
+                rotation: { x: 0, y: 0, z: 0, w: 1 }
+              }));
+              console.log("Published package size update:", overlay.setSizeMeters(1.1));
+              console.log("Published package visibility update:", overlay.setVisible(true));
+              overlay.destroy();
+            }
             app.quit();
           });
           EOF

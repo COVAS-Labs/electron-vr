@@ -2,6 +2,7 @@ import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { copyBundledOpenXRRuntimeLibraries } from "./openxr-runtime.mjs";
 import { copyOpenVRRuntimeLibrary, getOpenVRRuntimeLibraryName } from "./openvr-runtime.mjs";
 
 function parseArgs(argv) {
@@ -41,8 +42,13 @@ const runtimeLibrary = await copyOpenVRRuntimeLibrary({
   platform,
   arch
 });
+const bundledOpenxrLibraries = await copyBundledOpenXRRuntimeLibraries({
+  destinationDirectory: packageDir,
+  platform
+});
 
 const runtimeLibraryName = getOpenVRRuntimeLibraryName(platform);
+const bundledRuntimeLibraries = [runtimeLibraryName, ...bundledOpenxrLibraries.map((library) => library.fileName)];
 
 const metadata = {
   packageName,
@@ -51,7 +57,7 @@ const metadata = {
   platform,
   arch,
   backends: ["openxr", "openvr", "mock"],
-  bundledRuntimeLibraries: [runtimeLibraryName]
+  bundledRuntimeLibraries
 };
 
 await writeFile(
@@ -84,7 +90,7 @@ await writeFile(
     main: "index.js",
     os: [platform],
     cpu: [arch],
-    files: ["index.js", "metadata.json", "README.md", "vr_bridge.node", runtimeLibraryName],
+    files: ["index.js", "metadata.json", "README.md", "vr_bridge.node", ...bundledRuntimeLibraries],
     publishConfig: {
       registry: "https://npm.pkg.github.com"
     }
@@ -92,4 +98,4 @@ await writeFile(
   "utf8"
 );
 
-console.log(`Prepared ${packageName} in ${packageDir} with ${runtimeLibrary.fileName}`);
+console.log(`Prepared ${packageName} in ${packageDir} with ${bundledRuntimeLibraries.join(", ")}`);

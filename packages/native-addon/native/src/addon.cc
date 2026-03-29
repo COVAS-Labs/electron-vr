@@ -224,6 +224,7 @@ Napi::Object RuntimeInfoToObject(Napi::Env env, const RuntimeInfo& info) {
   result.Set("probeMode", info.probe_mode);
   result.Set("openxrAvailable", info.openxr_available);
   result.Set("openxrOverlayExtensionAvailable", info.openxr_overlay_extension_available);
+  result.Set("openxrLinuxEglBindingAvailable", info.openxr_linux_egl_binding_available);
   result.Set("openvrAvailable", info.openvr_available);
   result.Set("openvrRuntimeInstalled", info.openvr_runtime_installed);
   result.Set("openvrRuntimePath", info.openvr_runtime_path);

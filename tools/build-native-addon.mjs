@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { prepareBuildReleaseDirectory } from "./build-output.mjs";
@@ -11,6 +12,7 @@ const nodeGypEntrypoint = require.resolve("node-gyp/bin/node-gyp.js");
 const { sdkDir } = await ensureOpenVrSdk();
 const releaseDirectory = resolve(process.cwd(), "build", "Release");
 const relocationDirectory = resolve(process.cwd(), ".tmp", "openvr-runtime");
+const builtAddonPath = resolve(releaseDirectory, "vr_bridge.node");
 
 await prepareBuildReleaseDirectory({
   releaseDirectory
@@ -23,15 +25,26 @@ await prepareOpenVRRuntimeLibraryDestination({
 
 const result = spawnSync(process.execPath, [nodeGypEntrypoint, "rebuild"], {
   cwd: process.cwd(),
-  stdio: "inherit",
+  encoding: "utf8",
   env: {
     ...process.env,
     OPENVR_SDK_DIR: sdkDir
   }
 });
 
+if (result.stdout) {
+  process.stdout.write(result.stdout);
+}
+if (result.stderr) {
+  process.stderr.write(result.stderr);
+}
+
 if (result.status !== 0) {
-  process.exit(result.status ?? 1);
+  const combinedOutput = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+  const hitNodeGypCleanupBug = combinedOutput.includes("node_gyp_bins") && combinedOutput.includes("ENOENT");
+  if (!hitNodeGypCleanupBug || !existsSync(builtAddonPath)) {
+    process.exit(result.status ?? 1);
+  }
 }
 
 await copyOpenVRRuntimeLibrary({

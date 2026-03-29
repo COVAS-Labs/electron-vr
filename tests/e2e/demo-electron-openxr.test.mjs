@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const demoAppDir = resolve(projectRoot, "apps", "demo-electron");
 const artifactDir = resolve(projectRoot, "artifacts");
 const electronBinary = require("electron");
 
@@ -42,37 +43,17 @@ function buildProcessDebugMessage(description, combinedOutput, exitCode, signalC
   ].filter(Boolean).join("\n\n");
 }
 
-test("runtime probe exposes OpenVR runtime installation details", async () => {
+test("boots the demo app with Linux OpenXR forced", { skip: process.platform !== "linux" }, async () => {
   await mkdir(artifactDir, { recursive: true });
 
-  const scriptPath = resolve(projectRoot, "tests", "fixtures", "runtime-info-smoke.mjs");
-  await writeFile(scriptPath, `
-    import { app } from "electron";
-    import { createVrBridge } from "../../packages/electron-vr/dist/index.js";
-
-    app.whenReady().then(() => {
-      console.log("Runtime info:", createVrBridge().getRuntimeInfo());
-      app.quit();
-    });
-    app.on("window-all-closed", () => {
-      app.quit();
-    });
-    process.on("unhandledRejection", (error) => {
-      console.error("Unhandled rejection in runtime info smoke:", error);
-      app.exit(1);
-    });
-  `, "utf8");
-
-  const electronArgs = [scriptPath];
-  if (process.platform === "linux") {
-    electronArgs.push("--no-sandbox");
-  }
-
+  const electronArgs = [demoAppDir, "--no-sandbox"];
   const child = spawn(electronBinary, electronArgs, {
-    cwd: projectRoot,
+    cwd: demoAppDir,
     env: {
       ...process.env,
-      CI: "1"
+      CI: "1",
+      ELECTRON_VR_ENABLE_OPENXR: "1",
+      ELECTRON_VR_DISABLE_OPENXR: "0"
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -101,20 +82,22 @@ test("runtime probe exposes OpenVR runtime installation details", async () => {
 
   try {
     try {
-      await waitFor(() => combinedOutput.includes("Runtime info:"), 20000, "runtime info logging");
+      await waitFor(() => combinedOutput.includes("selectedBackend: 'openxr'"), 20000, "OpenXR runtime selection logging");
+      await waitFor(() => combinedOutput.includes("Overlay initialized with backend: openxr"), 20000, "OpenXR overlay initialization");
+      await waitFor(() => combinedOutput.includes("Overlay head placement update: true"), 20000, "OpenXR placement update logging");
+      await waitFor(() => combinedOutput.includes("Overlay size update: true"), 20000, "OpenXR size update logging");
+      await waitFor(() => combinedOutput.includes("Overlay visibility update: true"), 20000, "OpenXR visibility update logging");
     } catch {
-      throw new Error(buildProcessDebugMessage("runtime info logging", combinedOutput, exitCode, signalCode, spawnError));
+      throw new Error(buildProcessDebugMessage("forced OpenXR smoke logging", combinedOutput, exitCode, signalCode, spawnError));
     }
 
-    assert.match(combinedOutput, /Runtime info:/);
-    assert.match(combinedOutput, /openxrAvailable/i);
-    assert.match(combinedOutput, /openxrOverlayExtensionAvailable/i);
-    if (process.platform === "linux" && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrOverlayExtensionAvailable:\s*true/i.test(combinedOutput) && /openxrLinuxEglBindingAvailable:\s*true/i.test(combinedOutput)) {
-      assert.match(combinedOutput, /selectedBackend:\s*'openxr'/i);
-    }
-    assert.match(combinedOutput, /openvrAvailable/i);
-    assert.match(combinedOutput, /openvrRuntimeInstalled/i);
-    assert.match(combinedOutput, /openvrRuntimePath/i);
+    assert.match(combinedOutput, /selectedBackend: 'openxr'/);
+    assert.match(combinedOutput, /Overlay initialized with backend: openxr/);
+    assert.match(combinedOutput, /Overlay head placement update: true/);
+    assert.match(combinedOutput, /Overlay size update: true/);
+    assert.match(combinedOutput, /Overlay visibility update: true/);
+    assert.doesNotMatch(combinedOutput, /Failed to initialize VR bridge/);
+    assert.doesNotMatch(combinedOutput, /UnhandledPromiseRejection|uncaught exception|Error while forwarding frame to VR bridge/i);
   } finally {
     child.kill("SIGTERM");
     await Promise.race([
@@ -126,6 +109,6 @@ test("runtime probe exposes OpenVR runtime installation details", async () => {
       child.kill("SIGKILL");
     }
 
-    await writeFile(resolve(artifactDir, `runtime-info-${process.platform}.log`), combinedOutput, "utf8");
+    await writeFile(resolve(artifactDir, "demo-smoke-openxr-linux.log"), combinedOutput, "utf8");
   }
 });

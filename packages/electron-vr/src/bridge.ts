@@ -11,6 +11,7 @@ export interface RuntimeInfo {
   probeMode: string;
   openxrAvailable: boolean;
   openxrOverlayExtensionAvailable: boolean;
+  openxrLinuxEglBindingAvailable: boolean;
   openvrAvailable: boolean;
   openvrRuntimeInstalled: boolean;
   openvrRuntimePath: string;
@@ -283,6 +284,25 @@ function releaseTexture(texture: SharedTexturePayload | null): void {
   }
 }
 
+function cloneLinuxTextureInfo(textureInfo: SharedTextureInfo): SharedTextureInfo {
+  return {
+    codedSize: textureInfo.codedSize
+      ? {
+          width: textureInfo.codedSize.width,
+          height: textureInfo.codedSize.height
+        }
+      : undefined,
+    pixelFormat: textureInfo.pixelFormat,
+    modifier: textureInfo.modifier,
+    planes: textureInfo.planes?.map((plane) => ({
+      fd: plane.fd,
+      stride: plane.stride,
+      offset: plane.offset,
+      size: plane.size
+    }))
+  };
+}
+
 export class VrBridge {
   private readonly addon = loadVrBridgeAddon();
   private attachedWindow: BrowserWindow | null = null;
@@ -507,7 +527,9 @@ export class VrBridge {
 
       if (process.platform === "linux") {
         if (textureInfo?.planes?.length) {
-          const submitted = this.addon.submitSharedTexture(textureInfo);
+          const textureInfoSnapshot = cloneLinuxTextureInfo(textureInfo);
+
+          const submitted = this.addon.submitSharedTexture(textureInfoSnapshot);
           if (!submitted) {
             console.error("Failed to submit Linux frame to VR bridge:", this.addon.getLastError());
           }

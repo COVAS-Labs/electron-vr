@@ -30,7 +30,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev
+          sudo apt-get install -y libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libopenxr-dev
 
       - name: Set OpenVR SDK path
         shell: bash
@@ -77,7 +77,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2
+          sudo apt-get install -y xvfb libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libopenxr-dev libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2
 
       - name: Set OpenVR SDK path
         shell: bash
@@ -124,7 +124,7 @@ jobs:
       - name: Install Linux runtime dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb x11-utils libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2
+          sudo apt-get install -y xvfb x11-utils libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libopenxr-dev libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2
 
       - name: Set OpenVR SDK path
         shell: bash

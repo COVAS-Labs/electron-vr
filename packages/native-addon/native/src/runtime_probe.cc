@@ -3,10 +3,24 @@
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
+#include <vector>
+
 #if defined(_WIN32)
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#endif
+
+#if defined(__linux__)
+#ifndef XR_USE_PLATFORM_EGL
+#define XR_USE_PLATFORM_EGL
+#endif
+#ifndef XR_USE_GRAPHICS_API_OPENGL
+#define XR_USE_GRAPHICS_API_OPENGL
+#endif
+#include <EGL/egl.h>
+#include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
 #endif
 
 namespace vrbridge {
@@ -63,6 +77,16 @@ std::string DetectPlatform() {
 #else
   return "unknown";
 #endif
+}
+
+bool IsTruthyEnvVar(const char* name) {
+  const char* value = std::getenv(name);
+  if (value == nullptr || value[0] == '\0') {
+    return false;
+  }
+
+  const std::string normalized(value);
+  return normalized == "1" || normalized == "true" || normalized == "TRUE" || normalized == "yes" || normalized == "YES" || normalized == "on" || normalized == "ON";
 }
 
 std::string ReadTextFile(const std::string& path) {
@@ -207,6 +231,53 @@ std::string DetectOpenVRRuntimePath(bool* installed) {
   return runtime_path;
 }
 
+#if defined(__linux__)
+bool HasExtension(const std::vector<XrExtensionProperties>& extensions, const char* name) {
+  for (const XrExtensionProperties& extension : extensions) {
+    if (std::string(extension.extensionName) == name) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool QueryOpenXRExtensions(RuntimeInfo* info) {
+  if (info == nullptr) {
+    return false;
+  }
+
+  uint32_t extension_count = 0;
+  const XrResult enumerate_count_result = xrEnumerateInstanceExtensionProperties(nullptr, 0, &extension_count, nullptr);
+  if (XR_FAILED(enumerate_count_result)) {
+    info->probe_mode = "openxr-loader-enumerate-failed";
+    return false;
+  }
+
+  std::vector<XrExtensionProperties> extensions(extension_count);
+  for (XrExtensionProperties& extension : extensions) {
+    extension.type = XR_TYPE_EXTENSION_PROPERTIES;
+    extension.next = nullptr;
+  }
+
+  const XrResult enumerate_result = xrEnumerateInstanceExtensionProperties(
+    nullptr,
+    extension_count,
+    &extension_count,
+    extensions.data());
+  if (XR_FAILED(enumerate_result)) {
+    info->probe_mode = "openxr-loader-enumerate-failed";
+    return false;
+  }
+
+  info->openxr_available = true;
+  info->openxr_overlay_extension_available = HasExtension(extensions, XR_EXTX_OVERLAY_EXTENSION_NAME);
+  info->openxr_linux_egl_binding_available = HasExtension(extensions, XR_MNDX_EGL_ENABLE_EXTENSION_NAME);
+  info->probe_mode = "openxr-extension-enumeration";
+  return true;
+}
+#endif
+
 }  // namespace
 
 RuntimeInfo ProbeRuntime() {
@@ -222,14 +293,47 @@ RuntimeInfo ProbeRuntime() {
   info.openvr_available = LibraryExists("libopenvr_api.so", "openvr_api.so");
 #endif
 
-  info.openxr_overlay_extension_available = false;
   info.openvr_runtime_path = DetectOpenVRRuntimePath(&info.openvr_runtime_installed);
+
+#if defined(__linux__)
+  if (info.openxr_available) {
+    const bool queried_extensions = QueryOpenXRExtensions(&info);
+    if (!queried_extensions) {
+      info.openxr_available = false;
+      info.openxr_overlay_extension_available = false;
+      info.openxr_linux_egl_binding_available = false;
+    }
+  }
+
+  const bool openxr_ready = info.openxr_available && info.openxr_overlay_extension_available && info.openxr_linux_egl_binding_available;
+  const bool openxr_enabled = openxr_ready && !IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
+
+  if (openxr_enabled) {
+    info.selected_backend = BackendKind::kOpenXR;
+  } else if (info.openvr_available && info.openvr_runtime_installed) {
+    info.selected_backend = BackendKind::kOpenVR;
+  } else {
+    info.selected_backend = BackendKind::kMock;
+  }
+#elif defined(_WIN32)
+  info.openxr_overlay_extension_available = false;
+  info.openxr_linux_egl_binding_available = false;
 
   if (info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
   } else {
     info.selected_backend = BackendKind::kMock;
   }
+#else
+  info.openxr_overlay_extension_available = false;
+  info.openxr_linux_egl_binding_available = false;
+
+  if (info.openvr_available && info.openvr_runtime_installed) {
+    info.selected_backend = BackendKind::kOpenVR;
+  } else {
+    info.selected_backend = BackendKind::kMock;
+  }
+#endif
 
   return info;
 }
