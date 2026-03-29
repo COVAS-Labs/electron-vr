@@ -85,9 +85,11 @@ test("boots the demo app and exercises overlay API paths", async () => {
   try {
     try {
       await waitFor(() => combinedOutput.includes("VR runtime probe:"), 20000, "runtime probe logging");
-      await waitFor(() => combinedOutput.includes("OpenXR overlay extension available:"), 20000, "OpenXR overlay logging");
-      await waitFor(() => combinedOutput.includes("OpenXR Linux EGL binding available:"), 20000, "OpenXR EGL binding logging");
-      await waitFor(() => combinedOutput.includes("OpenVR runtime installed:"), 20000, "OpenVR install logging");
+      await waitFor(() => combinedOutput.includes("openxrOverlayExtensionAvailable:"), 20000, "OpenXR overlay logging");
+      await waitFor(() => combinedOutput.includes("openxrLinuxEglBindingAvailable:"), 20000, "OpenXR EGL binding logging");
+      await waitFor(() => combinedOutput.includes("openxrRuntimeName:"), 20000, "OpenXR runtime name logging");
+      await waitFor(() => combinedOutput.includes("openxrLoaderPath:"), 20000, "OpenXR loader path logging");
+      await waitFor(() => combinedOutput.includes("openvrRuntimeInstalled:"), 20000, "OpenVR install logging");
       await waitFor(() => combinedOutput.includes("Overlay initialized with backend:"), 20000, "overlay initialization");
       await waitFor(() => combinedOutput.includes("Overlay head placement update: true"), 20000, "placement update logging");
       await waitFor(() => combinedOutput.includes("Overlay size update: true"), 20000, "size update logging");
@@ -97,9 +99,11 @@ test("boots the demo app and exercises overlay API paths", async () => {
     }
 
     assert.match(combinedOutput, /VR runtime probe:/);
-    assert.match(combinedOutput, /OpenXR overlay extension available:/);
-    assert.match(combinedOutput, /OpenXR Linux EGL binding available:/);
-    assert.match(combinedOutput, /OpenVR runtime installed:/);
+    assert.match(combinedOutput, /openxrOverlayExtensionAvailable:/);
+    assert.match(combinedOutput, /openxrLinuxEglBindingAvailable:/);
+    assert.match(combinedOutput, /openxrRuntimeName:/);
+    assert.match(combinedOutput, /openxrLoaderPath:/);
+    assert.match(combinedOutput, /openvrRuntimeInstalled:/);
     assert.match(combinedOutput, /Overlay initialized with backend:/);
     assert.match(combinedOutput, /Overlay head placement update: true/);
     assert.match(combinedOutput, /Overlay size update: true/);
