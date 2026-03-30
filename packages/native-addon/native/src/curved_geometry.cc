@@ -164,17 +164,42 @@ CurvedQuadSegment BuildSegment(
   float width_meters,
   float height_meters,
   const OverlayCurvature& curvature) {
-  const float xc = 0.5f * (x0 + x1);
-  const float yc = 0.5f * (y0 + y1);
+  const SurfaceSample bottom_left = SampleSurface(x0, y0, curvature, width_meters, height_meters);
+  const SurfaceSample bottom_right = SampleSurface(x1, y0, curvature, width_meters, height_meters);
+  const SurfaceSample top_left = SampleSurface(x0, y1, curvature, width_meters, height_meters);
+  const SurfaceSample top_right = SampleSurface(x1, y1, curvature, width_meters, height_meters);
 
-  const SurfaceSample center = SampleSurface(xc, yc, curvature, width_meters, height_meters);
-  const SurfaceSample left = SampleSurface(x0, yc, curvature, width_meters, height_meters);
-  const SurfaceSample right = SampleSurface(x1, yc, curvature, width_meters, height_meters);
-  const SurfaceSample bottom = SampleSurface(xc, y0, curvature, width_meters, height_meters);
-  const SurfaceSample top = SampleSurface(xc, y1, curvature, width_meters, height_meters);
+  Vector3 top_edge = {
+    top_right.position.x - top_left.position.x,
+    top_right.position.y - top_left.position.y,
+    top_right.position.z - top_left.position.z,
+  };
+  Vector3 bottom_edge = {
+    bottom_right.position.x - bottom_left.position.x,
+    bottom_right.position.y - bottom_left.position.y,
+    bottom_right.position.z - bottom_left.position.z,
+  };
+  Vector3 left_edge = {
+    top_left.position.x - bottom_left.position.x,
+    top_left.position.y - bottom_left.position.y,
+    top_left.position.z - bottom_left.position.z,
+  };
+  Vector3 right_edge = {
+    top_right.position.x - bottom_right.position.x,
+    top_right.position.y - bottom_right.position.y,
+    top_right.position.z - bottom_right.position.z,
+  };
 
-  Vector3 right_axis = NormalizeVector(center.tangent_x);
-  Vector3 up_axis = NormalizeVector(center.tangent_y);
+  Vector3 right_axis = NormalizeVector({
+    top_edge.x + bottom_edge.x,
+    top_edge.y + bottom_edge.y,
+    top_edge.z + bottom_edge.z,
+  });
+  Vector3 up_axis = NormalizeVector({
+    left_edge.x + right_edge.x,
+    left_edge.y + right_edge.y,
+    left_edge.z + right_edge.z,
+  });
   Vector3 forward_axis = NormalizeVector(Cross(right_axis, up_axis));
   if (Dot(forward_axis, forward_axis) <= 0.0f) {
     forward_axis = {0.0f, 0.0f, 1.0f};
@@ -182,16 +207,18 @@ CurvedQuadSegment BuildSegment(
   up_axis = NormalizeVector(Cross(forward_axis, right_axis));
 
   CurvedQuadSegment segment;
-  segment.position = center.position;
+  segment.position = {
+    0.25f * (bottom_left.position.x + bottom_right.position.x + top_left.position.x + top_right.position.x),
+    0.25f * (bottom_left.position.y + bottom_right.position.y + top_left.position.y + top_right.position.y),
+    0.25f * (bottom_left.position.z + bottom_right.position.z + top_left.position.z + top_right.position.z),
+  };
   segment.rotation = QuaternionFromBasis(right_axis, up_axis, forward_axis);
-  segment.width_meters = std::sqrt(
-    (right.position.x - left.position.x) * (right.position.x - left.position.x) +
-    (right.position.y - left.position.y) * (right.position.y - left.position.y) +
-    (right.position.z - left.position.z) * (right.position.z - left.position.z));
-  segment.height_meters = std::sqrt(
-    (top.position.x - bottom.position.x) * (top.position.x - bottom.position.x) +
-    (top.position.y - bottom.position.y) * (top.position.y - bottom.position.y) +
-    (top.position.z - bottom.position.z) * (top.position.z - bottom.position.z));
+  segment.width_meters = 0.5f * (
+    std::sqrt(top_edge.x * top_edge.x + top_edge.y * top_edge.y + top_edge.z * top_edge.z) +
+    std::sqrt(bottom_edge.x * bottom_edge.x + bottom_edge.y * bottom_edge.y + bottom_edge.z * bottom_edge.z));
+  segment.height_meters = 0.5f * (
+    std::sqrt(left_edge.x * left_edge.x + left_edge.y * left_edge.y + left_edge.z * left_edge.z) +
+    std::sqrt(right_edge.x * right_edge.x + right_edge.y * right_edge.y + right_edge.z * right_edge.z));
   segment.u_min = u0;
   segment.u_max = u1;
   segment.v_min = v0;
