@@ -1,5 +1,7 @@
 #include "openvr_backend.h"
 
+#include "curved_geometry.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -48,6 +50,13 @@ struct OpenVRState {
   bool logged_shared_texture_desc = false;
 #endif
   bool initialized = false;
+  float size_meters = 1.0f;
+  OverlayPlacement placement;
+  OverlayCurvature curvature;
+  uint32_t frame_width = 0;
+  uint32_t frame_height = 0;
+  std::string overlay_name;
+  std::vector<vr::VROverlayHandle_t> segment_handles;
 };
 
 OpenVRState g_state;
@@ -566,17 +575,107 @@ bool ApplyPlacement(const OverlayPlacement& placement, std::string* error_messag
     error_message);
 }
 
+vr::HmdMatrix34_t MultiplyMatrices(const vr::HmdMatrix34_t& left, const vr::HmdMatrix34_t& right) {
+  vr::HmdMatrix34_t result = {};
+  for (int row = 0; row < 3; ++row) {
+    for (int column = 0; column < 3; ++column) {
+      result.m[row][column] = left.m[row][0] * right.m[0][column] +
+                              left.m[row][1] * right.m[1][column] +
+                              left.m[row][2] * right.m[2][column];
+    }
+    result.m[row][3] = left.m[row][0] * right.m[0][3] +
+                       left.m[row][1] * right.m[1][3] +
+                       left.m[row][2] * right.m[2][3] +
+                       left.m[row][3];
+  }
+  return result;
+}
+
+bool ApplySegmentedOverlayConfig(
+  vr::VROverlayHandle_t overlay_handle,
+  const CurvedQuadSegment& segment,
+  uint32_t sort_order,
+  std::string* error_message) {
+  const vr::HmdMatrix34_t base_transform = ToHmdMatrix34(g_state.placement);
+  OverlayPlacement segment_placement;
+  segment_placement.mode = g_state.placement.mode;
+  segment_placement.position = segment.position;
+  segment_placement.rotation = segment.rotation;
+  const vr::HmdMatrix34_t local_transform = ToHmdMatrix34(segment_placement);
+  const vr::HmdMatrix34_t final_transform = MultiplyMatrices(base_transform, local_transform);
+
+  if (!CheckOverlayError(
+        g_state.overlay->SetOverlayWidthInMeters(overlay_handle, segment.width_meters),
+        "Failed to set OpenVR segment width",
+        error_message)) {
+    return false;
+  }
+
+  const float segment_aspect = segment.width_meters > 0.0f ? (segment.height_meters / segment.width_meters) : 1.0f;
+  if (!CheckOverlayError(
+        g_state.overlay->SetOverlayTexelAspect(overlay_handle, segment_aspect),
+        "Failed to set OpenVR segment texel aspect",
+        error_message)) {
+    return false;
+  }
+
+  vr::VRTextureBounds_t bounds = {};
+  bounds.uMin = segment.u_min;
+  bounds.uMax = segment.u_max;
+  bounds.vMin = segment.v_min;
+  bounds.vMax = segment.v_max;
+  if (!CheckOverlayError(
+        g_state.overlay->SetOverlayTextureBounds(overlay_handle, &bounds),
+        "Failed to set OpenVR segment texture bounds",
+        error_message)) {
+    return false;
+  }
+
+  if (!CheckOverlayError(
+        g_state.overlay->SetOverlaySortOrder(overlay_handle, sort_order),
+        "Failed to set OpenVR segment sort order",
+        error_message)) {
+    return false;
+  }
+
+  if (g_state.placement.mode == OverlayPlacementMode::kHead) {
+    return CheckOverlayError(
+      g_state.overlay->SetOverlayTransformTrackedDeviceRelative(overlay_handle, vr::k_unTrackedDeviceIndex_Hmd, &final_transform),
+      "Failed to set head-locked OpenVR segment transform",
+      error_message);
+  }
+
+  return CheckOverlayError(
+    g_state.overlay->SetOverlayTransformAbsolute(overlay_handle, vr::TrackingUniverseStanding, &final_transform),
+    "Failed to set world-locked OpenVR segment transform",
+    error_message);
+}
+
 bool ApplyVisible(bool visible, std::string* error_message) {
   if (!g_state.initialized || g_state.overlay == nullptr || g_state.overlay_handle == vr::k_ulOverlayHandleInvalid) {
     SetError(error_message, "OpenVR backend is not initialized.");
     return false;
   }
 
-  return CheckOverlayError(
-    visible ? g_state.overlay->ShowOverlay(g_state.overlay_handle)
-            : g_state.overlay->HideOverlay(g_state.overlay_handle),
-    visible ? "Failed to show OpenVR overlay" : "Failed to hide OpenVR overlay",
-    error_message);
+  auto apply_to_handle = [&](vr::VROverlayHandle_t handle) {
+    return CheckOverlayError(
+      visible ? g_state.overlay->ShowOverlay(handle)
+              : g_state.overlay->HideOverlay(handle),
+      visible ? "Failed to show OpenVR overlay" : "Failed to hide OpenVR overlay",
+      error_message);
+  };
+
+  if (!apply_to_handle(g_state.overlay_handle)) {
+    return false;
+  }
+
+  for (vr::VROverlayHandle_t handle : g_state.segment_handles) {
+    if (!apply_to_handle(handle)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 bool ApplySizeMeters(float size_meters, std::string* error_message) {
@@ -589,6 +688,49 @@ bool ApplySizeMeters(float size_meters, std::string* error_message) {
     g_state.overlay->SetOverlayWidthInMeters(g_state.overlay_handle, size_meters),
     "Failed to set OpenVR overlay width",
     error_message);
+}
+
+bool EnsureOverlaySegmentCount(size_t desired_count, std::string* error_message) {
+  if (!g_state.initialized || g_state.overlay == nullptr || g_state.overlay_handle == vr::k_ulOverlayHandleInvalid) {
+    SetError(error_message, "OpenVR backend is not initialized.");
+    return false;
+  }
+
+  while (g_state.segment_handles.size() < desired_count) {
+    const size_t segment_index = g_state.segment_handles.size();
+    const std::string segment_key = BuildOverlayKey(g_state.overlay_name + ".segment." + std::to_string(segment_index));
+    const std::string segment_name = g_state.overlay_name + " Segment " + std::to_string(segment_index + 1);
+    vr::VROverlayHandle_t handle = vr::k_ulOverlayHandleInvalid;
+    vr::EVROverlayError create_error = vr::VROverlayError_None;
+    if (!CreateOverlayHandle(g_state.overlay, segment_key.c_str(), segment_name.c_str(), &handle, &create_error)) {
+      SetError(error_message, "OpenVR segment overlay creation triggered a structured exception on Windows.");
+      return false;
+    }
+    if (!CheckOverlayError(create_error, "Failed to create OpenVR segment overlay", error_message)) {
+      return false;
+    }
+
+    vr::EVROverlayError flag_error = vr::VROverlayError_None;
+    if (!SetPremultipliedOverlayFlag(g_state.overlay, handle, true, &flag_error)) {
+      SetError(error_message, "OpenVR segment overlay configuration triggered a structured exception on Windows.");
+      return false;
+    }
+    if (!CheckOverlayError(flag_error, "Failed to configure OpenVR segment alpha mode", error_message)) {
+      return false;
+    }
+
+    g_state.segment_handles.push_back(handle);
+  }
+
+  while (g_state.segment_handles.size() > desired_count) {
+    const vr::VROverlayHandle_t handle = g_state.segment_handles.back();
+    g_state.segment_handles.pop_back();
+    if (!CheckOverlayError(g_state.overlay->DestroyOverlay(handle), "Failed to destroy OpenVR segment overlay", error_message)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 #if defined(__linux__)
@@ -669,6 +811,13 @@ void ResetState() {
   g_state.system = nullptr;
   g_state.overlay = nullptr;
   g_state.overlay_handle = vr::k_ulOverlayHandleInvalid;
+  g_state.segment_handles.clear();
+  g_state.overlay_name.clear();
+  g_state.size_meters = 1.0f;
+  g_state.placement = OverlayPlacement{};
+  g_state.curvature = OverlayCurvature{};
+  g_state.frame_width = 0;
+  g_state.frame_height = 0;
   g_state.initialized = false;
 }
 
@@ -730,6 +879,10 @@ bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* erro
   }
 
   g_state.initialized = true;
+  g_state.overlay_name = options.name;
+  g_state.size_meters = options.size_meters;
+  g_state.placement = options.placement;
+  g_state.curvature = options.curvature;
 
   vr::EVROverlayError flag_error = vr::VROverlayError_None;
   if (!SetPremultipliedOverlayFlag(
@@ -778,6 +931,8 @@ bool SubmitOpenVRFrameWindows(uint64_t shared_handle, std::string* error_message
 
   D3D11_TEXTURE2D_DESC shared_desc = {};
   g_state.shared_texture->GetDesc(&shared_desc);
+  g_state.frame_width = shared_desc.Width;
+  g_state.frame_height = shared_desc.Height;
 
   if (!EnsureSubmitTexture(shared_desc, error_message)) {
     return false;
@@ -795,11 +950,33 @@ bool SubmitOpenVRFrameWindows(uint64_t shared_handle, std::string* error_message
     return false;
   }
 
+  const CurvedQuadLayout layout = BuildCurvedQuadLayout(g_state.frame_width, g_state.frame_height, g_state.size_meters, g_state.curvature);
+  if (!EnsureOverlaySegmentCount(layout.segments.size() > 0 ? layout.segments.size() - 1U : 0U, error_message)) {
+    return false;
+  }
+
   if (!CheckOverlayError(
         g_state.overlay->SetOverlayTexture(g_state.overlay_handle, &texture),
         "Failed to submit Windows texture to OpenVR overlay",
         error_message)) {
     return false;
+  }
+
+  if (!ApplySegmentedOverlayConfig(g_state.overlay_handle, layout.segments.front(), 0, error_message)) {
+    return false;
+  }
+
+  for (size_t index = 1; index < layout.segments.size(); ++index) {
+    const vr::VROverlayHandle_t handle = g_state.segment_handles[index - 1U];
+    if (!CheckOverlayError(
+          g_state.overlay->SetOverlayTexture(handle, &texture),
+          "Failed to submit Windows texture to OpenVR segment overlay",
+          error_message)) {
+      return false;
+    }
+    if (!ApplySegmentedOverlayConfig(handle, layout.segments[index], static_cast<uint32_t>(index), error_message)) {
+      return false;
+    }
   }
 
   g_state.d3d_context->Flush();
@@ -836,6 +1013,8 @@ bool SubmitOpenVRFrameLinux(const LinuxTextureInfo& texture_info, std::string* e
     SetError(error_message, "Linux OpenVR texture submission requires non-zero width and height.");
     return false;
   }
+  g_state.frame_width = texture_info.width;
+  g_state.frame_height = texture_info.height;
 
   if (texture_info.planes.size() != 1) {
     SetError(
@@ -899,13 +1078,34 @@ bool SubmitOpenVRFrameLinux(const LinuxTextureInfo& texture_info, std::string* e
   texture.eType = vr::TextureType_SharedTextureHandle;
   texture.eColorSpace = vr::ColorSpace_Auto;
 
+  const CurvedQuadLayout layout = BuildCurvedQuadLayout(g_state.frame_width, g_state.frame_height, g_state.size_meters, g_state.curvature);
+  if (!EnsureOverlaySegmentCount(layout.segments.size() > 0 ? layout.segments.size() - 1U : 0U, error_message)) {
+    g_state.ipc->UnrefResource(imported_texture);
+    return false;
+  }
+
   const bool submitted = CheckOverlayError(
     g_state.overlay->SetOverlayTexture(g_state.overlay_handle, &texture),
     "Failed to submit Linux texture to OpenVR overlay",
     error_message);
 
+  bool configured = submitted;
+  if (configured) {
+    configured = ApplySegmentedOverlayConfig(g_state.overlay_handle, layout.segments.front(), 0, error_message);
+  }
+  for (size_t index = 1; configured && index < layout.segments.size(); ++index) {
+    const vr::VROverlayHandle_t handle = g_state.segment_handles[index - 1U];
+    configured = CheckOverlayError(
+      g_state.overlay->SetOverlayTexture(handle, &texture),
+      "Failed to submit Linux texture to OpenVR segment overlay",
+      error_message);
+    if (configured) {
+      configured = ApplySegmentedOverlayConfig(handle, layout.segments[index], static_cast<uint32_t>(index), error_message);
+    }
+  }
+
   g_state.ipc->UnrefResource(imported_texture);
-  return submitted;
+  return submitted && configured;
 #else
   (void)texture_info;
   SetError(error_message, "OpenVR Linux frame submission is only available on Linux builds.");
@@ -930,6 +1130,14 @@ bool SubmitOpenVRSoftwareFrame(const SoftwareFrameInfo& frame_info, std::string*
     return false;
   }
 
+  g_state.frame_width = frame_info.width;
+  g_state.frame_height = frame_info.height;
+
+  const CurvedQuadLayout layout = BuildCurvedQuadLayout(g_state.frame_width, g_state.frame_height, g_state.size_meters, g_state.curvature);
+  if (!EnsureOverlaySegmentCount(layout.segments.size() > 0 ? layout.segments.size() - 1U : 0U, error_message)) {
+    return false;
+  }
+
   if (!CheckOverlayError(
         g_state.overlay->SetOverlayRaw(
           g_state.overlay_handle,
@@ -942,6 +1150,28 @@ bool SubmitOpenVRSoftwareFrame(const SoftwareFrameInfo& frame_info, std::string*
     return false;
   }
 
+  if (!ApplySegmentedOverlayConfig(g_state.overlay_handle, layout.segments.front(), 0, error_message)) {
+    return false;
+  }
+
+  for (size_t index = 1; index < layout.segments.size(); ++index) {
+    const vr::VROverlayHandle_t handle = g_state.segment_handles[index - 1U];
+    if (!CheckOverlayError(
+          g_state.overlay->SetOverlayRaw(
+            handle,
+            const_cast<uint8_t*>(frame_info.rgba_pixels.data()),
+            frame_info.width,
+            frame_info.height,
+            4),
+          "Failed to submit software frame to OpenVR segment overlay",
+          error_message)) {
+      return false;
+    }
+    if (!ApplySegmentedOverlayConfig(handle, layout.segments[index], static_cast<uint32_t>(index), error_message)) {
+      return false;
+    }
+  }
+
   if (error_message != nullptr) {
     error_message->clear();
   }
@@ -949,7 +1179,21 @@ bool SubmitOpenVRSoftwareFrame(const SoftwareFrameInfo& frame_info, std::string*
 }
 
 bool SetOpenVRPlacement(const OverlayPlacement& placement, std::string* error_message) {
+  g_state.placement = placement;
   return ApplyPlacement(placement, error_message);
+}
+
+bool SetOpenVRCurvature(const OverlayCurvature& curvature, std::string* error_message) {
+  if (!g_state.initialized) {
+    SetError(error_message, "OpenVR backend is not initialized.");
+    return false;
+  }
+
+  g_state.curvature = curvature;
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
 }
 
 bool SetOpenVRVisible(bool visible, std::string* error_message) {
@@ -962,10 +1206,17 @@ bool SetOpenVRSizeMeters(float size_meters, std::string* error_message) {
     return false;
   }
 
+  g_state.size_meters = size_meters;
   return ApplySizeMeters(size_meters, error_message);
 }
 
 void ShutdownOpenVRBackend() {
+  for (vr::VROverlayHandle_t handle : g_state.segment_handles) {
+    if (g_state.overlay != nullptr && handle != vr::k_ulOverlayHandleInvalid) {
+      g_state.overlay->DestroyOverlay(handle);
+    }
+  }
+
   if (g_state.overlay != nullptr && g_state.overlay_handle != vr::k_ulOverlayHandleInvalid) {
     g_state.overlay->DestroyOverlay(g_state.overlay_handle);
   }

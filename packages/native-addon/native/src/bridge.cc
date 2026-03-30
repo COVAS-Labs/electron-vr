@@ -1,5 +1,6 @@
 #include "bridge.h"
 
+#include <cmath>
 #include <utility>
 
 #include "mock_backend.h"
@@ -223,6 +224,42 @@ bool BridgeState::SetOverlayPlacement(const OverlayPlacement& placement) {
 
   if (success) {
     options_.placement = placement;
+  }
+
+  return success;
+}
+
+bool BridgeState::SetOverlayCurvature(const OverlayCurvature& curvature) {
+  if (!initialized_) {
+    SetLastError("Bridge is not initialized.");
+    return false;
+  }
+
+  if ((curvature.has_horizontal && curvature.horizontal <= 0.0f) ||
+      (curvature.has_vertical && curvature.vertical <= 0.0f)) {
+    SetLastError("Overlay curvature radii must be greater than zero.");
+    return false;
+  }
+
+  bool success = false;
+  switch (runtime_info_.selected_backend) {
+    case BackendKind::kOpenXR:
+      success = SetOpenXRCurvature(curvature, &last_error_);
+      break;
+    case BackendKind::kOpenVR:
+      success = SetOpenVRCurvature(curvature, &last_error_);
+      break;
+    case BackendKind::kMock:
+      success = SetMockCurvature(curvature, &last_error_);
+      break;
+    case BackendKind::kNone:
+    default:
+      SetLastError("No backend selected for overlay curvature.");
+      return false;
+  }
+
+  if (success) {
+    options_.curvature = curvature;
   }
 
   return success;

@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -58,6 +59,41 @@ OverlayPlacement ReadOverlayPlacement(const Napi::Value& value) {
   placement.position = ReadVector3(object.Get("position"), "placement.position");
   placement.rotation = ReadQuaternion(object.Get("rotation"), "placement.rotation");
   return placement;
+}
+
+OverlayCurvature ReadOverlayCurvature(const Napi::Value& value) {
+  if (!value.IsObject()) {
+    throw Napi::TypeError::New(value.Env(), "curvature must be an object.");
+  }
+
+  const Napi::Object object = value.As<Napi::Object>();
+  OverlayCurvature curvature;
+
+  const Napi::Value horizontal_value = object.Get("horizontal");
+  if (!horizontal_value.IsUndefined() && !horizontal_value.IsNull()) {
+    if (!horizontal_value.IsNumber()) {
+      throw Napi::TypeError::New(value.Env(), "curvature.horizontal must be a number.");
+    }
+    curvature.horizontal = horizontal_value.As<Napi::Number>().FloatValue();
+    if (!std::isfinite(curvature.horizontal) || curvature.horizontal <= 0.0f) {
+      throw Napi::RangeError::New(value.Env(), "curvature.horizontal must be greater than zero.");
+    }
+    curvature.has_horizontal = true;
+  }
+
+  const Napi::Value vertical_value = object.Get("vertical");
+  if (!vertical_value.IsUndefined() && !vertical_value.IsNull()) {
+    if (!vertical_value.IsNumber()) {
+      throw Napi::TypeError::New(value.Env(), "curvature.vertical must be a number.");
+    }
+    curvature.vertical = vertical_value.As<Napi::Number>().FloatValue();
+    if (!std::isfinite(curvature.vertical) || curvature.vertical <= 0.0f) {
+      throw Napi::RangeError::New(value.Env(), "curvature.vertical must be greater than zero.");
+    }
+    curvature.has_vertical = true;
+  }
+
+  return curvature;
 }
 
 #if defined(_WIN32)
@@ -257,10 +293,11 @@ Napi::Value InitializeVRWrapped(const Napi::CallbackInfo& info) {
   const Napi::Value size_meters_value = options.Get("sizeMeters");
   const Napi::Value visible_value = options.Get("visible");
   const Napi::Value placement_value = options.Get("placement");
+  const Napi::Value curvature_value = options.Get("curvature");
 
   if (!name_value.IsString() || !width_value.IsNumber() || !height_value.IsNumber() ||
-      !size_meters_value.IsNumber() || !visible_value.IsBoolean() || !placement_value.IsObject()) {
-    throw Napi::TypeError::New(info.Env(), "initializeVR options must include name, width, height, sizeMeters, visible, and placement.");
+      !size_meters_value.IsNumber() || !visible_value.IsBoolean() || !placement_value.IsObject() || !curvature_value.IsObject()) {
+    throw Napi::TypeError::New(info.Env(), "initializeVR options must include name, width, height, sizeMeters, visible, placement, and curvature.");
   }
 
   native_options.name = name_value.As<Napi::String>().Utf8Value();
@@ -269,6 +306,7 @@ Napi::Value InitializeVRWrapped(const Napi::CallbackInfo& info) {
   native_options.size_meters = size_meters_value.As<Napi::Number>().FloatValue();
   native_options.visible = visible_value.As<Napi::Boolean>().Value();
   native_options.placement = ReadOverlayPlacement(placement_value);
+  native_options.curvature = ReadOverlayCurvature(curvature_value);
 
   return Napi::Boolean::New(info.Env(), GetBridgeState().Initialize(native_options));
 }
@@ -301,6 +339,14 @@ Napi::Value SetOverlayPlacementWrapped(const Napi::CallbackInfo& info) {
   }
 
   return Napi::Boolean::New(info.Env(), GetBridgeState().SetOverlayPlacement(ReadOverlayPlacement(info[0])));
+}
+
+Napi::Value SetOverlayCurvatureWrapped(const Napi::CallbackInfo& info) {
+  if (info.Length() != 1 || !info[0].IsObject()) {
+    throw Napi::TypeError::New(info.Env(), "setOverlayCurvature expects one object argument.");
+  }
+
+  return Napi::Boolean::New(info.Env(), GetBridgeState().SetOverlayCurvature(ReadOverlayCurvature(info[0])));
 }
 
 Napi::Value SetOverlayVisibleWrapped(const Napi::CallbackInfo& info) {
@@ -338,6 +384,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("submitSharedTexture", Napi::Function::New(env, SubmitSharedTextureWrapped));
   exports.Set("submitSoftwareFrame", Napi::Function::New(env, SubmitSoftwareFrameWrapped));
   exports.Set("setOverlayPlacement", Napi::Function::New(env, SetOverlayPlacementWrapped));
+  exports.Set("setOverlayCurvature", Napi::Function::New(env, SetOverlayCurvatureWrapped));
   exports.Set("setOverlayVisible", Napi::Function::New(env, SetOverlayVisibleWrapped));
   exports.Set("setOverlaySizeMeters", Napi::Function::New(env, SetOverlaySizeMetersWrapped));
   exports.Set("shutdownVR", Napi::Function::New(env, ShutdownVRWrapped));

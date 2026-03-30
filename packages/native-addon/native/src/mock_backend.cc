@@ -1,5 +1,7 @@
 #include "mock_backend.h"
 
+#include "bridge.h"
+
 #include <array>
 #include <cstdio>
 #include <sstream>
@@ -658,6 +660,21 @@ bool SubmitMockSoftwareFrame(const SoftwareFrameInfo& frame_info, std::string* e
 
 bool SetMockPlacement(const OverlayPlacement& placement, std::string* error_message) {
   (void)placement;
+  if (!g_initialized) {
+    if (error_message != nullptr) {
+      *error_message = "Mock backend is not initialized.";
+    }
+    return false;
+  }
+
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool SetMockCurvature(const OverlayCurvature& curvature, std::string* error_message) {
+  (void)curvature;
   if (!g_initialized) {
     if (error_message != nullptr) {
       *error_message = "Mock backend is not initialized.";

@@ -62,9 +62,9 @@ app.on("ready", async () => {
 });
 ```
 
-You can also reposition the overlay later with `overlay.setPlacement(...)`, toggle it with `overlay.setVisible(...)`, and resize it in meters with `overlay.setSizeMeters(...)`.
+You can also reposition the overlay later with `overlay.setPlacement(...)`, toggle it with `overlay.setVisible(...)`, resize it in meters with `overlay.setSizeMeters(...)`, and curve it with `overlay.setCurvature({ horizontal, vertical })`.
 
-`sizeMeters` must be greater than zero, and placement values should be finite numbers.
+`sizeMeters` must be greater than zero, placement values should be finite numbers, and curvature values are optional radii in meters greater than zero.
 
 On Linux, runtime selection prefers `openxr`, then falls back to `openvr`, then to `mock`. Linux OpenVR is treated as a best-effort alternate backend when a compatible OpenVR runtime is installed but the OpenXR overlay path is unavailable or disabled. It is not currently validated end to end on the main development machine or in CI.
 

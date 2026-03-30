@@ -44,6 +44,11 @@ export interface OverlayPlacement {
   rotation: Quat;
 }
 
+export interface OverlayCurvature {
+  horizontal?: number;
+  vertical?: number;
+}
+
 export interface InitializeVROptions {
   name: string;
   width: number;
@@ -51,6 +56,7 @@ export interface InitializeVROptions {
   sizeMeters: number;
   visible: boolean;
   placement: OverlayPlacement;
+  curvature: OverlayCurvature;
 }
 
 export interface LinuxTexturePlane {
@@ -111,6 +117,7 @@ interface VrBridgeAddon {
   submitSharedTexture(texture: Buffer | bigint | LinuxTextureInfo | number): boolean;
   submitSoftwareFrame(frameInfo: SoftwareFrameInfo): boolean;
   setOverlayPlacement(placement: OverlayPlacement): boolean;
+  setOverlayCurvature(curvature: OverlayCurvature): boolean;
   setOverlayVisible(visible: boolean): boolean;
   setOverlaySizeMeters(sizeMeters: number): boolean;
   shutdownVR(): void;
@@ -339,6 +346,10 @@ export class VrBridge {
 
   setOverlayPlacement(placement: OverlayPlacement): boolean {
     return this.addon.setOverlayPlacement(placement);
+  }
+
+  setOverlayCurvature(curvature: OverlayCurvature): boolean {
+    return this.addon.setOverlayCurvature(curvature);
   }
 
   setOverlayVisible(visible: boolean): boolean {
