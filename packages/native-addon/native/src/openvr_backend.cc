@@ -614,7 +614,9 @@ bool ApplySegmentedOverlayConfig(
 
   const float segment_aspect = segment.width_meters > 0.0f ? (segment.height_meters / segment.width_meters) : 1.0f;
   if (!CheckOverlayError(
-        g_state.overlay->SetOverlayTexelAspect(overlay_handle, segment_aspect),
+        g_state.overlay->SetOverlayTexelAspect(overlay_handle, segment.width_meters > 0.0f && segment.height_meters > 0.0f
+          ? (segment.width_meters / segment.height_meters)
+          : 1.0f),
         "Failed to set OpenVR segment texel aspect",
         error_message)) {
     return false;
@@ -623,8 +625,8 @@ bool ApplySegmentedOverlayConfig(
   vr::VRTextureBounds_t bounds = {};
   bounds.uMin = segment.u_min;
   bounds.uMax = segment.u_max;
-  bounds.vMin = segment.v_min;
-  bounds.vMax = segment.v_max;
+  bounds.vMin = 1.0f - segment.v_max;
+  bounds.vMax = 1.0f - segment.v_min;
   if (!CheckOverlayError(
         g_state.overlay->SetOverlayTextureBounds(overlay_handle, &bounds),
         "Failed to set OpenVR segment texture bounds",
