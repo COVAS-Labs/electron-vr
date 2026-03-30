@@ -50,6 +50,7 @@ struct OpenVRState {
   bool logged_shared_texture_desc = false;
 #endif
   bool initialized = false;
+  bool visible = true;
   float size_meters = 1.0f;
   OverlayPlacement placement;
   OverlayCurvature curvature;
@@ -596,13 +597,11 @@ bool ApplySegmentedOverlayConfig(
   const CurvedQuadSegment& segment,
   uint32_t sort_order,
   std::string* error_message) {
-  const vr::HmdMatrix34_t base_transform = ToHmdMatrix34(g_state.placement);
   OverlayPlacement segment_placement;
-  segment_placement.mode = g_state.placement.mode;
+  segment_placement.mode = OverlayPlacementMode::kHead;
   segment_placement.position = segment.position;
   segment_placement.rotation = segment.rotation;
-  const vr::HmdMatrix34_t local_transform = ToHmdMatrix34(segment_placement);
-  const vr::HmdMatrix34_t final_transform = MultiplyMatrices(base_transform, local_transform);
+  const vr::HmdMatrix34_t final_transform = ToHmdMatrix34(segment_placement);
 
   if (!CheckOverlayError(
         g_state.overlay->SetOverlayWidthInMeters(overlay_handle, segment.width_meters),
@@ -719,6 +718,15 @@ bool EnsureOverlaySegmentCount(size_t desired_count, std::string* error_message)
       return false;
     }
 
+    if (!CheckOverlayError(
+          g_state.visible ? g_state.overlay->ShowOverlay(handle)
+                          : g_state.overlay->HideOverlay(handle),
+          g_state.visible ? "Failed to show OpenVR segment overlay"
+                          : "Failed to hide OpenVR segment overlay",
+          error_message)) {
+      return false;
+    }
+
     g_state.segment_handles.push_back(handle);
   }
 
@@ -818,6 +826,7 @@ void ResetState() {
   g_state.curvature = OverlayCurvature{};
   g_state.frame_width = 0;
   g_state.frame_height = 0;
+  g_state.visible = true;
   g_state.initialized = false;
 }
 
@@ -880,6 +889,7 @@ bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* erro
 
   g_state.initialized = true;
   g_state.overlay_name = options.name;
+  g_state.visible = options.visible;
   g_state.size_meters = options.size_meters;
   g_state.placement = options.placement;
   g_state.curvature = options.curvature;
@@ -1197,6 +1207,7 @@ bool SetOpenVRCurvature(const OverlayCurvature& curvature, std::string* error_me
 }
 
 bool SetOpenVRVisible(bool visible, std::string* error_message) {
+  g_state.visible = visible;
   return ApplyVisible(visible, error_message);
 }
 
