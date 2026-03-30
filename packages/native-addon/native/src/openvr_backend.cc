@@ -597,11 +597,13 @@ bool ApplySegmentedOverlayConfig(
   const CurvedQuadSegment& segment,
   uint32_t sort_order,
   std::string* error_message) {
+  const vr::HmdMatrix34_t base_transform = ToHmdMatrix34(g_state.placement);
   OverlayPlacement segment_placement;
-  segment_placement.mode = OverlayPlacementMode::kHead;
+  segment_placement.mode = g_state.placement.mode;
   segment_placement.position = segment.position;
   segment_placement.rotation = segment.rotation;
-  const vr::HmdMatrix34_t final_transform = ToHmdMatrix34(segment_placement);
+  const vr::HmdMatrix34_t local_transform = ToHmdMatrix34(segment_placement);
+  const vr::HmdMatrix34_t final_transform = MultiplyMatrices(base_transform, local_transform);
 
   if (!CheckOverlayError(
         g_state.overlay->SetOverlayWidthInMeters(overlay_handle, segment.width_meters),
