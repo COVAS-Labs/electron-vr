@@ -1427,21 +1427,6 @@ const char* GetLayerSpaceNameForPlacement(const OverlayPlacement& placement) {
   return "local";
 }
 
-std::vector<int32_t> BuildPixelBoundaries(uint32_t extent, uint32_t segments) {
-  std::vector<int32_t> boundaries;
-  boundaries.reserve(static_cast<size_t>(segments) + 1U);
-  for (uint32_t index = 0; index <= segments; ++index) {
-    const double fraction = segments == 0 ? 0.0 : static_cast<double>(index) / static_cast<double>(segments);
-    boundaries.push_back(static_cast<int32_t>(std::lround(fraction * static_cast<double>(extent))));
-  }
-
-  if (!boundaries.empty()) {
-    boundaries.front() = 0;
-    boundaries.back() = static_cast<int32_t>(extent);
-  }
-  return boundaries;
-}
-
 XrQuaternionf ToXrQuaternion(const Quaternion& rotation) {
   XrQuaternionf quaternion{};
   quaternion.x = rotation.x;
@@ -1661,24 +1646,19 @@ bool SubmitLayerForCurrentFrame(const LinuxTextureInfo& texture_info, std::strin
     const CurvedQuadLayout layout = BuildCurvedQuadLayout(g_state.frame_width, g_state.frame_height, g_state.size_meters, g_state.curvature);
     quad_layers.reserve(layout.segments.size());
     layers.reserve(layout.segments.size());
-    const std::vector<int32_t> x_boundaries = BuildPixelBoundaries(g_state.frame_width, layout.horizontal_segments);
-    const std::vector<int32_t> y_boundaries = BuildPixelBoundaries(g_state.frame_height, layout.vertical_segments);
-    for (size_t index = 0; index < layout.segments.size(); ++index) {
-      const CurvedQuadSegment& segment = layout.segments[index];
-      const uint32_t x_index = static_cast<uint32_t>(index % layout.horizontal_segments);
-      const uint32_t y_index = static_cast<uint32_t>(index / layout.horizontal_segments);
+    for (const CurvedQuadSegment& segment : layout.segments) {
       auto quad_layer = MakeXrStruct<XrCompositionLayerQuad, XR_TYPE_COMPOSITION_LAYER_QUAD>();
       quad_layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
       quad_layer.space = GetLayerSpaceForPlacement(g_state.placement);
       quad_layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
       quad_layer.subImage.swapchain = g_state.swapchain;
       quad_layer.subImage.imageRect.offset = {
-        x_boundaries[x_index],
-        y_boundaries[y_index]
+        static_cast<int32_t>(std::lround(segment.u_min * static_cast<float>(g_state.frame_width))),
+        static_cast<int32_t>(std::lround(segment.v_min * static_cast<float>(g_state.frame_height)))
       };
       quad_layer.subImage.imageRect.extent = {
-        std::max(1, x_boundaries[x_index + 1U] - x_boundaries[x_index]),
-        std::max(1, y_boundaries[y_index + 1U] - y_boundaries[y_index])
+        std::max(1, static_cast<int32_t>(std::lround((segment.u_max - segment.u_min) * static_cast<float>(g_state.frame_width)))),
+        std::max(1, static_cast<int32_t>(std::lround((segment.v_max - segment.v_min) * static_cast<float>(g_state.frame_height))))
       };
       quad_layer.subImage.imageArrayIndex = 0;
       quad_layer.pose = ComposePose(g_state.placement, segment);
@@ -1803,24 +1783,19 @@ bool SubmitLayerForCurrentFrameWindows(ID3D11Texture2D* source_texture, const D3
     const CurvedQuadLayout layout = BuildCurvedQuadLayout(g_state.frame_width, g_state.frame_height, g_state.size_meters, g_state.curvature);
     quad_layers.reserve(layout.segments.size());
     layers.reserve(layout.segments.size());
-    const std::vector<int32_t> x_boundaries = BuildPixelBoundaries(g_state.frame_width, layout.horizontal_segments);
-    const std::vector<int32_t> y_boundaries = BuildPixelBoundaries(g_state.frame_height, layout.vertical_segments);
-    for (size_t index = 0; index < layout.segments.size(); ++index) {
-      const CurvedQuadSegment& segment = layout.segments[index];
-      const uint32_t x_index = static_cast<uint32_t>(index % layout.horizontal_segments);
-      const uint32_t y_index = static_cast<uint32_t>(index / layout.horizontal_segments);
+    for (const CurvedQuadSegment& segment : layout.segments) {
       auto quad_layer = MakeXrStruct<XrCompositionLayerQuad, XR_TYPE_COMPOSITION_LAYER_QUAD>();
       quad_layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
       quad_layer.space = GetLayerSpaceForPlacement(g_state.placement);
       quad_layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
       quad_layer.subImage.swapchain = g_state.swapchain;
       quad_layer.subImage.imageRect.offset = {
-        x_boundaries[x_index],
-        y_boundaries[y_index]
+        static_cast<int32_t>(std::lround(segment.u_min * static_cast<float>(g_state.frame_width))),
+        static_cast<int32_t>(std::lround(segment.v_min * static_cast<float>(g_state.frame_height)))
       };
       quad_layer.subImage.imageRect.extent = {
-        std::max(1, x_boundaries[x_index + 1U] - x_boundaries[x_index]),
-        std::max(1, y_boundaries[y_index + 1U] - y_boundaries[y_index])
+        std::max(1, static_cast<int32_t>(std::lround((segment.u_max - segment.u_min) * static_cast<float>(g_state.frame_width)))),
+        std::max(1, static_cast<int32_t>(std::lround((segment.v_max - segment.v_min) * static_cast<float>(g_state.frame_height))))
       };
       quad_layer.subImage.imageArrayIndex = 0;
       quad_layer.pose = ComposePose(g_state.placement, segment);

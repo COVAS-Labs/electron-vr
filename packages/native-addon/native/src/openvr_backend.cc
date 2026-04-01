@@ -612,8 +612,11 @@ bool ApplySegmentedOverlayConfig(
     return false;
   }
 
+  const float segment_aspect = segment.width_meters > 0.0f ? (segment.height_meters / segment.width_meters) : 1.0f;
   if (!CheckOverlayError(
-        g_state.overlay->SetOverlayTexelAspect(overlay_handle, 1.0f),
+        g_state.overlay->SetOverlayTexelAspect(overlay_handle, segment.width_meters > 0.0f && segment.height_meters > 0.0f
+          ? (segment.width_meters / segment.height_meters)
+          : 1.0f),
         "Failed to set OpenVR segment texel aspect",
         error_message)) {
     return false;
