@@ -592,32 +592,17 @@ vr::HmdMatrix34_t MultiplyMatrices(const vr::HmdMatrix34_t& left, const vr::HmdM
   return result;
 }
 
-vr::HmdMatrix34_t BuildSegmentLocalMatrix(const CurvedQuadSegment& segment) {
-  vr::HmdMatrix34_t matrix = {};
-  matrix.m[0][0] = segment.right_axis.x;
-  matrix.m[0][1] = segment.up_axis.x;
-  matrix.m[0][2] = segment.forward_axis.x;
-  matrix.m[0][3] = segment.position.x;
-
-  matrix.m[1][0] = segment.right_axis.y;
-  matrix.m[1][1] = segment.up_axis.y;
-  matrix.m[1][2] = segment.forward_axis.y;
-  matrix.m[1][3] = segment.position.y;
-
-  matrix.m[2][0] = segment.right_axis.z;
-  matrix.m[2][1] = segment.up_axis.z;
-  matrix.m[2][2] = segment.forward_axis.z;
-  matrix.m[2][3] = segment.position.z;
-  return matrix;
-}
-
 bool ApplySegmentedOverlayConfig(
   vr::VROverlayHandle_t overlay_handle,
   const CurvedQuadSegment& segment,
   uint32_t sort_order,
   std::string* error_message) {
   const vr::HmdMatrix34_t base_transform = ToHmdMatrix34(g_state.placement);
-  const vr::HmdMatrix34_t local_transform = BuildSegmentLocalMatrix(segment);
+  OverlayPlacement segment_placement;
+  segment_placement.mode = g_state.placement.mode;
+  segment_placement.position = segment.position;
+  segment_placement.rotation = segment.rotation;
+  const vr::HmdMatrix34_t local_transform = ToHmdMatrix34(segment_placement);
   const vr::HmdMatrix34_t final_transform = MultiplyMatrices(base_transform, local_transform);
 
   if (!CheckOverlayError(
@@ -981,17 +966,6 @@ bool SubmitOpenVRFrameWindows(uint64_t shared_handle, std::string* error_message
     return false;
   }
 
-  if (!layout.segments.empty()) {
-    const CurvedQuadSegment& first_segment = layout.segments.front();
-    const CurvedQuadSegment& last_segment = layout.segments.back();
-    std::cout << "OpenVR curved layout: segments=" << layout.horizontal_segments << "x" << layout.vertical_segments
-              << ", curvature=(h=" << (g_state.curvature.has_horizontal ? std::to_string(g_state.curvature.horizontal) : std::string("flat"))
-              << ", v=" << (g_state.curvature.has_vertical ? std::to_string(g_state.curvature.vertical) : std::string("flat"))
-              << "), first.z=" << first_segment.position.z
-              << ", last.z=" << last_segment.position.z
-              << std::endl;
-  }
-
   if (!CheckOverlayError(
         g_state.overlay->SetOverlayTexture(g_state.overlay_handle, &texture),
         "Failed to submit Windows texture to OpenVR overlay",
@@ -1121,17 +1095,6 @@ bool SubmitOpenVRFrameLinux(const LinuxTextureInfo& texture_info, std::string* e
     return false;
   }
 
-  if (!layout.segments.empty()) {
-    const CurvedQuadSegment& first_segment = layout.segments.front();
-    const CurvedQuadSegment& last_segment = layout.segments.back();
-    std::cout << "OpenVR curved layout: segments=" << layout.horizontal_segments << "x" << layout.vertical_segments
-              << ", curvature=(h=" << (g_state.curvature.has_horizontal ? std::to_string(g_state.curvature.horizontal) : std::string("flat"))
-              << ", v=" << (g_state.curvature.has_vertical ? std::to_string(g_state.curvature.vertical) : std::string("flat"))
-              << "), first.z=" << first_segment.position.z
-              << ", last.z=" << last_segment.position.z
-              << std::endl;
-  }
-
   const bool submitted = CheckOverlayError(
     g_state.overlay->SetOverlayTexture(g_state.overlay_handle, &texture),
     "Failed to submit Linux texture to OpenVR overlay",
@@ -1184,17 +1147,6 @@ bool SubmitOpenVRSoftwareFrame(const SoftwareFrameInfo& frame_info, std::string*
   const CurvedQuadLayout layout = BuildCurvedQuadLayout(g_state.frame_width, g_state.frame_height, g_state.size_meters, g_state.curvature);
   if (!EnsureOverlaySegmentCount(layout.segments.size() > 0 ? layout.segments.size() - 1U : 0U, error_message)) {
     return false;
-  }
-
-  if (!layout.segments.empty()) {
-    const CurvedQuadSegment& first_segment = layout.segments.front();
-    const CurvedQuadSegment& last_segment = layout.segments.back();
-    std::cout << "OpenVR curved layout: segments=" << layout.horizontal_segments << "x" << layout.vertical_segments
-              << ", curvature=(h=" << (g_state.curvature.has_horizontal ? std::to_string(g_state.curvature.horizontal) : std::string("flat"))
-              << ", v=" << (g_state.curvature.has_vertical ? std::to_string(g_state.curvature.vertical) : std::string("flat"))
-              << "), first.z=" << first_segment.position.z
-              << ", last.z=" << last_segment.position.z
-              << std::endl;
   }
 
   if (!CheckOverlayError(

@@ -10,9 +10,6 @@ namespace vrbridge {
 struct CurvedQuadSegment {
   Vector3 position;
   Quaternion rotation;
-  Vector3 right_axis;
-  Vector3 up_axis;
-  Vector3 forward_axis;
   float width_meters = 0.0f;
   float height_meters = 0.0f;
   float u_min = 0.0f;

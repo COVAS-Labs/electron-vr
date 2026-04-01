@@ -212,9 +212,6 @@ CurvedQuadSegment BuildSegment(
     0.25f * (bottom_left.position.y + bottom_right.position.y + top_left.position.y + top_right.position.y),
     0.25f * (bottom_left.position.z + bottom_right.position.z + top_left.position.z + top_right.position.z),
   };
-  segment.right_axis = right_axis;
-  segment.up_axis = up_axis;
-  segment.forward_axis = forward_axis;
   segment.rotation = QuaternionFromBasis(right_axis, up_axis, forward_axis);
   segment.width_meters = 0.5f * (
     std::sqrt(top_edge.x * top_edge.x + top_edge.y * top_edge.y + top_edge.z * top_edge.z) +
