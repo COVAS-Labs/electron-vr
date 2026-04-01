@@ -23,8 +23,8 @@ app.on("ready", async () => {
     url: overlayUrl,
     sizeMeters: 1.1,
     placement: {
-      mode: "head",
-      position: { x: 0, y: 0, z: -0.8 },
+      mode: "world",
+      position: { x: 0, y: 1, z: -1.6 },
       rotation: { x: 0, y: 0, z: 0, w: 1 },
     },
     windowOptions: {

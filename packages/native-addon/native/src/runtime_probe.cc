@@ -2,10 +2,13 @@
 
 #include "openxr_loader_win.h"
 
+#include <array>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <vector>
+
+#include "openvr.h"
 
 #if defined(_WIN32)
 #ifndef XR_USE_PLATFORM_WIN32
@@ -112,6 +115,125 @@ bool IsTruthyEnvVar(const char* name) {
 
   const std::string normalized(value);
   return normalized == "1" || normalized == "true" || normalized == "TRUE" || normalized == "yes" || normalized == "YES" || normalized == "on" || normalized == "ON";
+}
+
+#if defined(_WIN32)
+bool InitializeOpenVRProbe(vr::IVRSystem** system, vr::EVRInitError* init_error) {
+  __try {
+    *system = vr::VR_Init(init_error, vr::VRApplication_Background);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    if (system != nullptr) {
+      *system = nullptr;
+    }
+    if (init_error != nullptr) {
+      *init_error = vr::VRInitError_Init_Internal;
+    }
+    return false;
+  }
+}
+
+bool AcquireOpenVRApplications(vr::IVRApplications** applications) {
+  __try {
+    *applications = vr::VRApplications();
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    if (applications != nullptr) {
+      *applications = nullptr;
+    }
+    return false;
+  }
+}
+#else
+bool InitializeOpenVRProbe(vr::IVRSystem** system, vr::EVRInitError* init_error) {
+  *system = vr::VR_Init(init_error, vr::VRApplication_Background);
+  return true;
+}
+
+bool AcquireOpenVRApplications(vr::IVRApplications** applications) {
+  *applications = vr::VRApplications();
+  return true;
+}
+#endif
+
+std::string ReadOpenVRApplicationPropertyString(
+  vr::IVRApplications* applications,
+  const std::string& application_key,
+  vr::EVRApplicationProperty property) {
+  if (applications == nullptr || application_key.empty()) {
+    return std::string();
+  }
+
+  std::vector<char> buffer(256, '\0');
+  vr::EVRApplicationError application_error = vr::VRApplicationError_None;
+  uint32_t required_size = applications->GetApplicationPropertyString(
+    application_key.c_str(),
+    property,
+    buffer.data(),
+    static_cast<uint32_t>(buffer.size()),
+    &application_error);
+  if (application_error == vr::VRApplicationError_BufferTooSmall && required_size > buffer.size()) {
+    buffer.assign(required_size, '\0');
+    application_error = vr::VRApplicationError_None;
+    required_size = applications->GetApplicationPropertyString(
+      application_key.c_str(),
+      property,
+      buffer.data(),
+      static_cast<uint32_t>(buffer.size()),
+      &application_error);
+  }
+
+  if (application_error != vr::VRApplicationError_None || required_size == 0) {
+    return std::string();
+  }
+
+  return std::string(buffer.data());
+}
+
+void QueryOpenVRSceneApplication(RuntimeInfo* info) {
+  if (info == nullptr || !info->openvr_available || !info->openvr_runtime_installed) {
+    return;
+  }
+
+  vr::EVRInitError init_error = vr::VRInitError_None;
+  vr::IVRSystem* system = nullptr;
+  if (!InitializeOpenVRProbe(&system, &init_error) || init_error != vr::VRInitError_None || system == nullptr) {
+    return;
+  }
+
+  vr::IVRApplications* applications = nullptr;
+  if (!AcquireOpenVRApplications(&applications) || applications == nullptr) {
+    vr::VR_Shutdown();
+    return;
+  }
+
+  const vr::EVRSceneApplicationState scene_state = applications->GetSceneApplicationState();
+  const char* scene_state_name = applications->GetSceneApplicationStateNameFromEnum(scene_state);
+  if (scene_state_name != nullptr) {
+    info->openvr_scene_application_state = scene_state_name;
+  }
+
+  info->openvr_scene_process_id = applications->GetCurrentSceneProcessId();
+  if (info->openvr_scene_process_id != 0) {
+    std::array<char, vr::k_unMaxApplicationKeyLength> application_key_buffer = {};
+    const vr::EVRApplicationError application_key_error = applications->GetApplicationKeyByProcessId(
+      info->openvr_scene_process_id,
+      application_key_buffer.data(),
+      static_cast<uint32_t>(application_key_buffer.size()));
+    if (application_key_error == vr::VRApplicationError_None) {
+      info->openvr_scene_application_key = application_key_buffer.data();
+      info->openvr_scene_application_name = ReadOpenVRApplicationPropertyString(
+        applications,
+        info->openvr_scene_application_key,
+        vr::VRApplicationProperty_Name_String);
+      info->openvr_scene_application_binary_path = ReadOpenVRApplicationPropertyString(
+        applications,
+        info->openvr_scene_application_key,
+        vr::VRApplicationProperty_BinaryPath_String);
+    }
+  }
+
+  vr::VR_Shutdown();
 }
 
 std::string ReadTextFile(const std::string& path) {
@@ -371,6 +493,7 @@ RuntimeInfo ProbeRuntime() {
 #endif
 
   info.openvr_runtime_path = DetectOpenVRRuntimePath(&info.openvr_runtime_installed);
+  QueryOpenVRSceneApplication(&info);
 
 #if defined(__linux__)
   if (info.openxr_available) {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace vrbridge {
@@ -21,9 +22,16 @@ struct RuntimeInfo {
   std::string openxr_runtime_manifest_path;
   std::string openxr_runtime_library_path;
   std::string openxr_loader_path;
+  std::string openxr_session_state = "unknown";
+  bool openxr_session_running = false;
   bool openvr_available = false;
   bool openvr_runtime_installed = false;
   std::string openvr_runtime_path;
+  std::string openvr_scene_application_state;
+  uint32_t openvr_scene_process_id = 0;
+  std::string openvr_scene_application_key;
+  std::string openvr_scene_application_name;
+  std::string openvr_scene_application_binary_path;
   BackendKind selected_backend = BackendKind::kNone;
   std::string probe_mode = "stub";
 };

@@ -230,9 +230,16 @@ Napi::Object RuntimeInfoToObject(Napi::Env env, const RuntimeInfo& info) {
   result.Set("openxrRuntimeManifestPath", info.openxr_runtime_manifest_path);
   result.Set("openxrRuntimeLibraryPath", info.openxr_runtime_library_path);
   result.Set("openxrLoaderPath", info.openxr_loader_path);
+  result.Set("openxrSessionState", info.openxr_session_state);
+  result.Set("openxrSessionRunning", info.openxr_session_running);
   result.Set("openvrAvailable", info.openvr_available);
   result.Set("openvrRuntimeInstalled", info.openvr_runtime_installed);
   result.Set("openvrRuntimePath", info.openvr_runtime_path);
+  result.Set("openvrSceneApplicationState", info.openvr_scene_application_state);
+  result.Set("openvrSceneProcessId", info.openvr_scene_process_id);
+  result.Set("openvrSceneApplicationKey", info.openvr_scene_application_key);
+  result.Set("openvrSceneApplicationName", info.openvr_scene_application_name);
+  result.Set("openvrSceneApplicationBinaryPath", info.openvr_scene_application_binary_path);
   result.Set("selectedBackend", BackendKindToString(info.selected_backend));
   return result;
 }

@@ -14,6 +14,7 @@ bool SubmitOpenVRSoftwareFrame(const SoftwareFrameInfo& frame_info, std::string*
 bool SetOpenVRPlacement(const OverlayPlacement& placement, std::string* error_message);
 bool SetOpenVRVisible(bool visible, std::string* error_message);
 bool SetOpenVRSizeMeters(float size_meters, std::string* error_message);
+void PopulateOpenVRRuntimeInfo(RuntimeInfo* runtime_info);
 void ShutdownOpenVRBackend();
 
 }  // namespace vrbridge

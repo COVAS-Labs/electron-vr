@@ -66,6 +66,81 @@ bool EnsureSubmitTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, st
 bool ConfigureOverlayTextureFromSubmitTexture(vr::Texture_t* texture, std::string* error_message);
 #endif
 
+std::string ReadOpenVRApplicationPropertyString(
+  vr::IVRApplications* applications,
+  const std::string& application_key,
+  vr::EVRApplicationProperty property) {
+  if (applications == nullptr || application_key.empty()) {
+    return std::string();
+  }
+
+  std::vector<char> buffer(256, '\0');
+  vr::EVRApplicationError application_error = vr::VRApplicationError_None;
+  uint32_t required_size = applications->GetApplicationPropertyString(
+    application_key.c_str(),
+    property,
+    buffer.data(),
+    static_cast<uint32_t>(buffer.size()),
+    &application_error);
+  if (application_error == vr::VRApplicationError_BufferTooSmall && required_size > buffer.size()) {
+    buffer.assign(required_size, '\0');
+    application_error = vr::VRApplicationError_None;
+    required_size = applications->GetApplicationPropertyString(
+      application_key.c_str(),
+      property,
+      buffer.data(),
+      static_cast<uint32_t>(buffer.size()),
+      &application_error);
+  }
+
+  if (application_error != vr::VRApplicationError_None || required_size == 0) {
+    return std::string();
+  }
+
+  return std::string(buffer.data());
+}
+
+void PopulateOpenVRSceneApplication(RuntimeInfo* runtime_info) {
+  if (runtime_info == nullptr || g_state.system == nullptr) {
+    return;
+  }
+
+  vr::IVRApplications* applications = vr::VRApplications();
+  if (applications == nullptr) {
+    return;
+  }
+
+  const vr::EVRSceneApplicationState scene_state = applications->GetSceneApplicationState();
+  const char* scene_state_name = applications->GetSceneApplicationStateNameFromEnum(scene_state);
+  if (scene_state_name != nullptr) {
+    runtime_info->openvr_scene_application_state = scene_state_name;
+  }
+
+  runtime_info->openvr_scene_process_id = applications->GetCurrentSceneProcessId();
+  if (runtime_info->openvr_scene_process_id == 0) {
+    return;
+  }
+
+  std::vector<char> application_key_buffer(vr::k_unMaxApplicationKeyLength, '\0');
+  const vr::EVRApplicationError application_key_error = applications->GetApplicationKeyByProcessId(
+    runtime_info->openvr_scene_process_id,
+    application_key_buffer.data(),
+    static_cast<uint32_t>(application_key_buffer.size()));
+  if (application_key_error != vr::VRApplicationError_None) {
+    return;
+  }
+
+  runtime_info->openvr_scene_application_key = application_key_buffer.data();
+  runtime_info->openvr_scene_application_name = ReadOpenVRApplicationPropertyString(
+    applications,
+    runtime_info->openvr_scene_application_key,
+    vr::VRApplicationProperty_Name_String);
+  runtime_info->openvr_scene_application_binary_path = ReadOpenVRApplicationPropertyString(
+    applications,
+    runtime_info->openvr_scene_application_key,
+    vr::VRApplicationProperty_BinaryPath_String);
+}
+
 std::string BuildOverlayKey(const std::string& overlay_name) {
   const uint64_t instance_id = g_overlay_key_counter.fetch_add(1, std::memory_order_relaxed);
   const uint64_t timestamp = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -963,6 +1038,10 @@ bool SetOpenVRSizeMeters(float size_meters, std::string* error_message) {
   }
 
   return ApplySizeMeters(size_meters, error_message);
+}
+
+void PopulateOpenVRRuntimeInfo(RuntimeInfo* runtime_info) {
+  PopulateOpenVRSceneApplication(runtime_info);
 }
 
 void ShutdownOpenVRBackend() {

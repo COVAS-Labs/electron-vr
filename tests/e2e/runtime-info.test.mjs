@@ -134,9 +134,15 @@ test("runtime probe exposes OpenVR runtime installation details", async () => {
     if (process.platform === "win32" && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrOverlayExtensionAvailable:\s*true/i.test(combinedOutput) && /openxrWindowsD3D11BindingAvailable:\s*true/i.test(combinedOutput)) {
       assert.match(combinedOutput, /selectedBackend:\s*'(openvr|mock)'/i);
     }
+    assert.match(combinedOutput, /openxrSessionState/i);
+    assert.match(combinedOutput, /openxrSessionRunning/i);
     assert.match(combinedOutput, /openvrAvailable/i);
     assert.match(combinedOutput, /openvrRuntimeInstalled/i);
     assert.match(combinedOutput, /openvrRuntimePath/i);
+    assert.match(combinedOutput, /openvrSceneApplicationState/i);
+    assert.match(combinedOutput, /openvrSceneProcessId/i);
+    assert.match(combinedOutput, /openvrSceneApplicationKey/i);
+    assert.match(combinedOutput, /openvrSceneApplicationName/i);
   } finally {
     await writeFile(resolve(artifactDir, `runtime-info-${process.platform}.log`), combinedOutput, "utf8");
   }

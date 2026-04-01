@@ -82,7 +82,26 @@ BridgeState& GetBridgeState() {
 }
 
 RuntimeInfo BridgeState::GetRuntimeInfo() const {
-  return runtime_info_;
+  return GetLiveRuntimeInfo();
+}
+
+RuntimeInfo BridgeState::GetLiveRuntimeInfo() const {
+  RuntimeInfo runtime_info = runtime_info_;
+
+  switch (runtime_info.selected_backend) {
+    case BackendKind::kOpenXR:
+      PopulateOpenXRRuntimeInfo(&runtime_info);
+      break;
+    case BackendKind::kOpenVR:
+      PopulateOpenVRRuntimeInfo(&runtime_info);
+      break;
+    case BackendKind::kMock:
+    case BackendKind::kNone:
+    default:
+      break;
+  }
+
+  return runtime_info;
 }
 
 bool BridgeState::Initialize(const InitializeOptions& options) {

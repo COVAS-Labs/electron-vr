@@ -17,9 +17,16 @@ export interface RuntimeInfo {
   openxrRuntimeManifestPath: string;
   openxrRuntimeLibraryPath: string;
   openxrLoaderPath: string;
+  openxrSessionState: string;
+  openxrSessionRunning: boolean;
   openvrAvailable: boolean;
   openvrRuntimeInstalled: boolean;
   openvrRuntimePath: string;
+  openvrSceneApplicationState: string;
+  openvrSceneProcessId: number;
+  openvrSceneApplicationKey: string;
+  openvrSceneApplicationName: string;
+  openvrSceneApplicationBinaryPath: string;
   selectedBackend: BackendKind;
 }
 
@@ -236,7 +243,16 @@ function loadVrBridgeAddon(): VrBridgeAddon {
 }
 
 function sanitizeRuntimeInfo(runtimeInfo: RuntimeInfo): RuntimeInfo {
-  return runtimeInfo;
+  return {
+    ...runtimeInfo,
+    openxrSessionState: runtimeInfo.openxrSessionState ?? "unknown",
+    openxrSessionRunning: runtimeInfo.openxrSessionRunning ?? false,
+    openvrSceneApplicationState: runtimeInfo.openvrSceneApplicationState ?? "",
+    openvrSceneProcessId: runtimeInfo.openvrSceneProcessId ?? 0,
+    openvrSceneApplicationKey: runtimeInfo.openvrSceneApplicationKey ?? "",
+    openvrSceneApplicationName: runtimeInfo.openvrSceneApplicationName ?? "",
+    openvrSceneApplicationBinaryPath: runtimeInfo.openvrSceneApplicationBinaryPath ?? ""
+  };
 }
 
 function isSharedTexturePayload(value: unknown): value is SharedTexturePayload {

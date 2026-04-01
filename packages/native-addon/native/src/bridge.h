@@ -82,6 +82,7 @@ class BridgeState {
 
  private:
   void SetLastError(std::string message);
+  RuntimeInfo GetLiveRuntimeInfo() const;
 
   RuntimeInfo runtime_info_ = ProbeRuntime();
   InitializeOptions options_;

@@ -13,6 +13,7 @@ bool SubmitOpenXRFrameLinux(const LinuxTextureInfo& texture_info, std::string* e
 bool SetOpenXRPlacement(const OverlayPlacement& placement, std::string* error_message);
 bool SetOpenXRVisible(bool visible, std::string* error_message);
 bool SetOpenXRSizeMeters(float size_meters, std::string* error_message);
+void PopulateOpenXRRuntimeInfo(RuntimeInfo* runtime_info);
 void ShutdownOpenXRBackend();
 
 }  // namespace vrbridge

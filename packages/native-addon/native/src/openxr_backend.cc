@@ -63,6 +63,30 @@ std::string ToString(XrResult result) {
   return stream.str();
 }
 
+const char* SessionStateToString(XrSessionState state) {
+  switch (state) {
+    case XR_SESSION_STATE_IDLE:
+      return "idle";
+    case XR_SESSION_STATE_READY:
+      return "ready";
+    case XR_SESSION_STATE_SYNCHRONIZED:
+      return "synchronized";
+    case XR_SESSION_STATE_VISIBLE:
+      return "visible";
+    case XR_SESSION_STATE_FOCUSED:
+      return "focused";
+    case XR_SESSION_STATE_STOPPING:
+      return "stopping";
+    case XR_SESSION_STATE_LOSS_PENDING:
+      return "loss-pending";
+    case XR_SESSION_STATE_EXITING:
+      return "exiting";
+    case XR_SESSION_STATE_UNKNOWN:
+    default:
+      return "unknown";
+  }
+}
+
 std::string XrResultToString(XrInstance instance, XrResult result) {
 #if !defined(_WIN32)
   if (instance != XR_NULL_HANDLE) {
@@ -1983,6 +2007,15 @@ bool SetOpenXRSizeMeters(float size_meters, std::string* error_message) {
     error_message->clear();
   }
   return true;
+}
+
+void PopulateOpenXRRuntimeInfo(RuntimeInfo* runtime_info) {
+  if (runtime_info == nullptr) {
+    return;
+  }
+
+  runtime_info->openxr_session_state = SessionStateToString(g_state.session_state);
+  runtime_info->openxr_session_running = g_state.session_running;
 }
 
 void ShutdownOpenXRBackend() {
