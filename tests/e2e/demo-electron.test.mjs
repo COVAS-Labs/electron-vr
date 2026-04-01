@@ -89,7 +89,6 @@ test("renders the native mock preview fallback", { skip: process.platform !== "l
     assert.match(combinedOutput, /using software bitmap upload for mock preview/);
     assert.match(combinedOutput, /Overlay head placement update: true/);
     assert.match(combinedOutput, /Overlay size update: true/);
-    assert.match(combinedOutput, /Overlay curvature update: true/);
     assert.match(combinedOutput, /Overlay visibility update: true/);
   } finally {
     child.kill("SIGTERM");

@@ -96,13 +96,10 @@ overlay.setPlacement({
 });
 
 overlay.setSizeMeters(1.2);
-overlay.setCurvature({ horizontal: 2.5, vertical: 4.0 });
 overlay.setVisible(true);
 ```
 
 `sizeMeters` must be greater than zero, and placement vectors/quaternions must use finite numeric values.
-
-`curvature` is optional and uses radii in meters. Omit an axis to keep it flat on that axis. Larger radii produce a flatter surface.
 
 `getRuntimeInfo()` reports OpenXR loader and overlay capability details as well as whether an OpenVR runtime is installed by reading the OpenVR paths file, avoiding OpenVR initialization during simple availability checks. `probeMode` now also carries the backend-selection decision path, which helps explain whether Linux fell back because OpenXR was disabled or because the required overlay or EGL extensions were missing, and on Windows whether OpenXR was available but intentionally not selected by default. For Linux OpenVR specifically, treat this as diagnostic support rather than proof that overlay initialization will succeed on a given runtime.
 

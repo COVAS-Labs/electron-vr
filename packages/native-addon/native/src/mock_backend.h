@@ -12,7 +12,6 @@ bool SubmitMockFrameWindows(uint64_t shared_handle, std::string* error_message);
 bool SubmitMockFrameLinux(const LinuxTextureInfo& texture_info, std::string* error_message);
 bool SubmitMockSoftwareFrame(const SoftwareFrameInfo& frame_info, std::string* error_message);
 bool SetMockPlacement(const OverlayPlacement& placement, std::string* error_message);
-bool SetMockCurvature(const OverlayCurvature& curvature, std::string* error_message);
 bool SetMockVisible(bool visible, std::string* error_message);
 bool SetMockSizeMeters(float size_meters, std::string* error_message);
 void ShutdownMockBackend();

@@ -22,10 +22,6 @@ app.on("ready", async () => {
     height: 720,
     url: overlayUrl,
     sizeMeters: 1.1,
-    curvature: {
-      horizontal: 2.5,
-      vertical: 4.0,
-    },
     placement: {
       mode: "head",
       position: { x: 0, y: 0, z: -0.8 },
@@ -63,12 +59,6 @@ app.on("ready", async () => {
 
   const resized = overlay.setSizeMeters(1.1);
   console.log(`Overlay size update: ${resized}`);
-
-  const curved = overlay.setCurvature({
-    horizontal: 2.0,
-    vertical: 3.5,
-  });
-  console.log(`Overlay curvature update: ${curved}`);
 
   const visible = overlay.setVisible(true);
   console.log(`Overlay visibility update: ${visible}`);

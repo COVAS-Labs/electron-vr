@@ -1,6 +1,5 @@
 #include "openxr_backend.h"
 
-#include "curved_geometry.h"
 #include "openxr_loader_win.h"
 
 #include <algorithm>
@@ -164,7 +163,6 @@ struct OpenXRBackendState {
   bool visible = true;
   float size_meters = 1.0f;
   OverlayPlacement placement;
-  OverlayCurvature curvature;
   uint32_t frame_width = 0;
   uint32_t frame_height = 0;
   XrInstance instance = XR_NULL_HANDLE;
@@ -1427,24 +1425,6 @@ const char* GetLayerSpaceNameForPlacement(const OverlayPlacement& placement) {
   return "local";
 }
 
-XrQuaternionf ToXrQuaternion(const Quaternion& rotation) {
-  XrQuaternionf quaternion{};
-  quaternion.x = rotation.x;
-  quaternion.y = rotation.y;
-  quaternion.z = rotation.z;
-  quaternion.w = rotation.w;
-  return quaternion;
-}
-
-XrPosef ComposePose(const OverlayPlacement& placement, const CurvedQuadSegment& segment) {
-  XrPosef pose = ToXrPose(placement);
-  pose.position.x += segment.position.x;
-  pose.position.y += segment.position.y;
-  pose.position.z += segment.position.z;
-  pose.orientation = ToXrQuaternion(segment.rotation);
-  return pose;
-}
-
 #if defined(__linux__)
 bool RenderImportedFrameToSwapchain(GLuint destination_texture, const LinuxTextureInfo& texture_info, std::string* error_message) {
   if (texture_info.planes.empty()) {
@@ -1616,7 +1596,7 @@ bool SubmitLayerForCurrentFrame(const LinuxTextureInfo& texture_info, std::strin
   }
 
   std::vector<XrCompositionLayerBaseHeader*> layers;
-  std::vector<XrCompositionLayerQuad> quad_layers;
+  auto quad_layer = MakeXrStruct<XrCompositionLayerQuad, XR_TYPE_COMPOSITION_LAYER_QUAD>();
 
   if (g_state.visible) {
     uint32_t image_index = 0;
@@ -1643,40 +1623,25 @@ bool SubmitLayerForCurrentFrame(const LinuxTextureInfo& texture_info, std::strin
       return false;
     }
 
-    const CurvedQuadLayout layout = BuildCurvedQuadLayout(g_state.frame_width, g_state.frame_height, g_state.size_meters, g_state.curvature);
-    quad_layers.reserve(layout.segments.size());
-    layers.reserve(layout.segments.size());
-    for (const CurvedQuadSegment& segment : layout.segments) {
-      auto quad_layer = MakeXrStruct<XrCompositionLayerQuad, XR_TYPE_COMPOSITION_LAYER_QUAD>();
-      quad_layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-      quad_layer.space = GetLayerSpaceForPlacement(g_state.placement);
-      quad_layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-      quad_layer.subImage.swapchain = g_state.swapchain;
-      quad_layer.subImage.imageRect.offset = {
-        static_cast<int32_t>(std::lround(segment.u_min * static_cast<float>(g_state.frame_width))),
-        static_cast<int32_t>(std::lround(segment.v_min * static_cast<float>(g_state.frame_height)))
-      };
-      quad_layer.subImage.imageRect.extent = {
-        std::max(1, static_cast<int32_t>(std::lround((segment.u_max - segment.u_min) * static_cast<float>(g_state.frame_width)))),
-        std::max(1, static_cast<int32_t>(std::lround((segment.v_max - segment.v_min) * static_cast<float>(g_state.frame_height))))
-      };
-      quad_layer.subImage.imageArrayIndex = 0;
-      quad_layer.pose = ComposePose(g_state.placement, segment);
-      quad_layer.size.width = segment.width_meters;
-      quad_layer.size.height = segment.height_meters;
-      quad_layers.push_back(quad_layer);
-    }
+    quad_layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    quad_layer.space = GetLayerSpaceForPlacement(g_state.placement);
+    quad_layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    quad_layer.subImage.swapchain = g_state.swapchain;
+    quad_layer.subImage.imageRect.offset = {0, 0};
+    quad_layer.subImage.imageRect.extent = {static_cast<int32_t>(g_state.frame_width), static_cast<int32_t>(g_state.frame_height)};
+    quad_layer.subImage.imageArrayIndex = 0;
+    quad_layer.pose = ToXrPose(g_state.placement);
+    quad_layer.size.width = g_state.size_meters;
+    quad_layer.size.height = ComputeHeightMeters(g_state.frame_width, g_state.frame_height, g_state.size_meters);
 
-    for (XrCompositionLayerQuad& quad_layer : quad_layers) {
-      layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad_layer));
-    }
+    layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad_layer));
 
     if (!g_state.logged_first_frame_submission) {
       g_state.logged_first_frame_submission = true;
       std::cout << "OpenXR submitted first quad layer: space="
                 << GetLayerSpaceNameForPlacement(g_state.placement)
-                << ", segments=" << layout.horizontal_segments << "x" << layout.vertical_segments
-                << ", frame="
+                << ", pose=(" << quad_layer.pose.position.x << ", " << quad_layer.pose.position.y << ", " << quad_layer.pose.position.z
+                << "), size=(" << quad_layer.size.width << "m x " << quad_layer.size.height << "m), frame="
                 << g_state.frame_width << "x" << g_state.frame_height
                 << std::endl;
     }
@@ -1749,7 +1714,7 @@ bool SubmitLayerForCurrentFrameWindows(ID3D11Texture2D* source_texture, const D3
   }
 
   std::vector<XrCompositionLayerBaseHeader*> layers;
-  std::vector<XrCompositionLayerQuad> quad_layers;
+  auto quad_layer = MakeXrStruct<XrCompositionLayerQuad, XR_TYPE_COMPOSITION_LAYER_QUAD>();
 
   if (g_state.visible) {
     uint32_t image_index = 0;
@@ -1780,40 +1745,25 @@ bool SubmitLayerForCurrentFrameWindows(ID3D11Texture2D* source_texture, const D3
       return false;
     }
 
-    const CurvedQuadLayout layout = BuildCurvedQuadLayout(g_state.frame_width, g_state.frame_height, g_state.size_meters, g_state.curvature);
-    quad_layers.reserve(layout.segments.size());
-    layers.reserve(layout.segments.size());
-    for (const CurvedQuadSegment& segment : layout.segments) {
-      auto quad_layer = MakeXrStruct<XrCompositionLayerQuad, XR_TYPE_COMPOSITION_LAYER_QUAD>();
-      quad_layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-      quad_layer.space = GetLayerSpaceForPlacement(g_state.placement);
-      quad_layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-      quad_layer.subImage.swapchain = g_state.swapchain;
-      quad_layer.subImage.imageRect.offset = {
-        static_cast<int32_t>(std::lround(segment.u_min * static_cast<float>(g_state.frame_width))),
-        static_cast<int32_t>(std::lround(segment.v_min * static_cast<float>(g_state.frame_height)))
-      };
-      quad_layer.subImage.imageRect.extent = {
-        std::max(1, static_cast<int32_t>(std::lround((segment.u_max - segment.u_min) * static_cast<float>(g_state.frame_width)))),
-        std::max(1, static_cast<int32_t>(std::lround((segment.v_max - segment.v_min) * static_cast<float>(g_state.frame_height))))
-      };
-      quad_layer.subImage.imageArrayIndex = 0;
-      quad_layer.pose = ComposePose(g_state.placement, segment);
-      quad_layer.size.width = segment.width_meters;
-      quad_layer.size.height = segment.height_meters;
-      quad_layers.push_back(quad_layer);
-    }
+    quad_layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    quad_layer.space = GetLayerSpaceForPlacement(g_state.placement);
+    quad_layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    quad_layer.subImage.swapchain = g_state.swapchain;
+    quad_layer.subImage.imageRect.offset = {0, 0};
+    quad_layer.subImage.imageRect.extent = {static_cast<int32_t>(g_state.frame_width), static_cast<int32_t>(g_state.frame_height)};
+    quad_layer.subImage.imageArrayIndex = 0;
+    quad_layer.pose = ToXrPose(g_state.placement);
+    quad_layer.size.width = g_state.size_meters;
+    quad_layer.size.height = ComputeHeightMeters(g_state.frame_width, g_state.frame_height, g_state.size_meters);
 
-    for (XrCompositionLayerQuad& quad_layer : quad_layers) {
-      layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad_layer));
-    }
+    layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad_layer));
 
     if (!g_state.logged_first_frame_submission) {
       g_state.logged_first_frame_submission = true;
       std::cout << "OpenXR submitted first Windows quad layer: space="
                 << GetLayerSpaceNameForPlacement(g_state.placement)
-                << ", segments=" << layout.horizontal_segments << "x" << layout.vertical_segments
-                << ", frame="
+                << ", pose=(" << quad_layer.pose.position.x << ", " << quad_layer.pose.position.y << ", " << quad_layer.pose.position.z
+                << "), size=(" << quad_layer.size.width << "m x " << quad_layer.size.height << "m), frame="
                 << g_state.frame_width << "x" << g_state.frame_height
                 << ", format=" << DxgiFormatToString(source_desc.Format)
                 << std::endl;
@@ -1848,7 +1798,6 @@ bool InitializeOpenXRBackend(const InitializeOptions& options, std::string* erro
   g_state.visible = options.visible;
   g_state.size_meters = options.size_meters;
   g_state.placement = options.placement;
-  g_state.curvature = options.curvature;
 
   if (!InitializeEgl(error_message) ||
       !InitializeGraphicsResources(error_message) ||
@@ -1876,7 +1825,6 @@ bool InitializeOpenXRBackend(const InitializeOptions& options, std::string* erro
   g_state.visible = options.visible;
   g_state.size_meters = options.size_meters;
   g_state.placement = options.placement;
-  g_state.curvature = options.curvature;
 
   if (!CreateInstance(error_message) ||
       !CreateSession(error_message)) {
@@ -1991,25 +1939,6 @@ bool SetOpenXRPlacement(const OverlayPlacement& placement, std::string* error_me
   g_state.logged_first_frame_submission = false;
 #else
   (void)placement;
-#endif
-
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
-  return true;
-}
-
-bool SetOpenXRCurvature(const OverlayCurvature& curvature, std::string* error_message) {
-  if (!g_initialized) {
-    SetError(error_message, "OpenXR backend is not initialized.");
-    return false;
-  }
-
-#if defined(__linux__) || defined(_WIN32)
-  g_state.curvature = curvature;
-  g_state.logged_first_frame_submission = false;
-#else
-  (void)curvature;
 #endif
 
   if (error_message != nullptr) {

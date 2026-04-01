@@ -1,8 +1,8 @@
 import { app, BrowserWindow } from "electron";
 import type { BrowserWindowConstructorOptions } from "electron";
 
-import { createVrBridge, type BackendKind, type OverlayCurvature, type OverlayPlacement, type RuntimeInfo, type Quat, type Vec3 } from "./bridge.js";
-import { assertSizeMeters, normalizeCurvature, normalizePlacement } from "./overlayOptions.js";
+import { createVrBridge, type BackendKind, type OverlayPlacement, type RuntimeInfo, type Quat, type Vec3 } from "./bridge.js";
+import { assertSizeMeters, normalizePlacement } from "./overlayOptions.js";
 
 type OverlayWindowOptions = Omit<BrowserWindowConstructorOptions, "width" | "height" | "webPreferences"> & {
   webPreferences?: BrowserWindowConstructorOptions["webPreferences"];
@@ -17,7 +17,6 @@ export interface VROverlayOptions {
   windowOptions?: OverlayWindowOptions;
   sizeMeters?: number;
   visible?: boolean;
-  curvature?: OverlayCurvature;
   placement?: {
     mode: "head" | "world";
     position?: Vec3;
@@ -30,7 +29,6 @@ export interface ExistingWindowVROverlayOptions {
   frameRate?: number;
   sizeMeters?: number;
   visible?: boolean;
-  curvature?: VROverlayOptions["curvature"];
   placement?: VROverlayOptions["placement"];
 }
 
@@ -80,7 +78,6 @@ export class VROverlay {
   readonly windowOptions?: VROverlayOptions["windowOptions"];
   private sizeMeters: number;
   private visible: boolean;
-  private curvature: OverlayCurvature;
   private placement: OverlayPlacement;
 
   private readonly vrBridge = createVrBridge();
@@ -98,7 +95,6 @@ export class VROverlay {
     this.sizeMeters = options.sizeMeters ?? 1.0;
     assertSizeMeters(this.sizeMeters);
     this.visible = options.visible ?? true;
-    this.curvature = normalizeCurvature(options.curvature);
     this.placement = normalizePlacement(options.placement);
   }
 
@@ -126,7 +122,6 @@ export class VROverlay {
       frameRate: options.frameRate,
       sizeMeters: options.sizeMeters,
       visible: options.visible,
-      curvature: options.curvature,
       placement: options.placement
     });
 
@@ -231,21 +226,6 @@ export class VROverlay {
     return success;
   }
 
-  setCurvature(curvature: VROverlayOptions["curvature"]): boolean {
-    const normalizedCurvature = normalizeCurvature(curvature);
-    this.curvature = normalizedCurvature;
-
-    if (!this.isInitialized()) {
-      return true;
-    }
-
-    const success = this.vrBridge.setOverlayCurvature(normalizedCurvature);
-    if (!success) {
-      console.error("Failed to update VR overlay curvature:", this.vrBridge.getLastError());
-    }
-    return success;
-  }
-
   setVisible(visible: boolean): boolean {
     this.visible = visible;
     if (!this.isInitialized()) {
@@ -280,7 +260,6 @@ export class VROverlay {
       height,
       sizeMeters: this.sizeMeters,
       visible: this.visible,
-      curvature: this.curvature,
       placement: this.placement
     });
 

@@ -93,7 +93,6 @@ test("boots the demo app and exercises overlay API paths", async () => {
       await waitFor(() => combinedOutput.includes("Overlay initialized with backend:"), 20000, "overlay initialization");
       await waitFor(() => combinedOutput.includes("Overlay head placement update: true"), 20000, "placement update logging");
       await waitFor(() => combinedOutput.includes("Overlay size update: true"), 20000, "size update logging");
-      await waitFor(() => combinedOutput.includes("Overlay curvature update: true"), 20000, "curvature update logging");
       await waitFor(() => combinedOutput.includes("Overlay visibility update: true"), 20000, "visibility update logging");
     } catch {
       throw new Error(buildProcessDebugMessage("demo smoke logging", combinedOutput, exitCode, signalCode, spawnError));
@@ -108,7 +107,6 @@ test("boots the demo app and exercises overlay API paths", async () => {
     assert.match(combinedOutput, /Overlay initialized with backend:/);
     assert.match(combinedOutput, /Overlay head placement update: true/);
     assert.match(combinedOutput, /Overlay size update: true/);
-    assert.match(combinedOutput, /Overlay curvature update: true/);
     assert.match(combinedOutput, /Overlay visibility update: true/);
     assert.doesNotMatch(combinedOutput, /Failed to initialize VR bridge/);
     assert.doesNotMatch(combinedOutput, /OpenXR overlay placement is not implemented yet/);

@@ -4,7 +4,6 @@ export {
   type AttachWindowOptions,
   type BackendKind,
   type InitializeVROptions,
-  type OverlayCurvature,
   type OverlayPlacement,
   type Quat,
   type RuntimeInfo,

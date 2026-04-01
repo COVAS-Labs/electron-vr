@@ -9,7 +9,6 @@
       "sources": [
         "native/src/addon.cc",
         "native/src/bridge.cc",
-        "native/src/curved_geometry.cc",
         "native/src/runtime_probe.cc",
         "native/src/mock_backend.cc",
         "native/src/openxr_backend.cc",

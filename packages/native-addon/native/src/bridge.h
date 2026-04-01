@@ -32,13 +32,6 @@ struct OverlayPlacement {
   Quaternion rotation;
 };
 
-struct OverlayCurvature {
-  bool has_horizontal = false;
-  float horizontal = 0.0f;
-  bool has_vertical = false;
-  float vertical = 0.0f;
-};
-
 struct InitializeOptions {
   std::string name;
   uint32_t width = 0;
@@ -46,7 +39,6 @@ struct InitializeOptions {
   float size_meters = 1.0f;
   bool visible = true;
   OverlayPlacement placement;
-  OverlayCurvature curvature;
 };
 
 struct LinuxPlaneInfo {
@@ -82,7 +74,6 @@ class BridgeState {
   bool SubmitSharedTexture(const SharedTextureSubmission& texture_submission);
   bool SubmitSoftwareFrame(const SoftwareFrameInfo& frame_info);
   bool SetOverlayPlacement(const OverlayPlacement& placement);
-  bool SetOverlayCurvature(const OverlayCurvature& curvature);
   bool SetOverlayVisible(bool visible);
   bool SetOverlaySizeMeters(float size_meters);
   void Shutdown();
