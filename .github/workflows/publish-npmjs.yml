@@ -1,0 +1,290 @@
+name: Publish To npmjs
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  version:
+    name: Validate Release Version
+    runs-on: ubuntu-latest
+    outputs:
+      package_version: ${{ steps.validate.outputs.package_version }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - id: validate
+        shell: bash
+        run: |
+          package_version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must use stable semver tags like v1.2.3" >&2
+            exit 1
+          fi
+
+          source_version=$(node -p "require('./packages/electron-vr/package.json').version")
+          if [[ "$source_version" != "$package_version" ]]; then
+            echo "Tag version $package_version does not match packages/electron-vr/package.json version $source_version" >&2
+            exit 1
+          fi
+
+          echo "package_version=${package_version}" >> "$GITHUB_OUTPUT"
+
+  publish-prebuilt:
+    name: Publish Prebuilt (${{ matrix.platform_id }})
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform_id: linux-x64
+          - os: windows-latest
+            platform_id: win32-x64
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libopenxr-dev
+
+      - name: Set OpenVR SDK path
+        shell: bash
+        run: |
+          echo "OPENVR_SDK_DIR=${GITHUB_WORKSPACE}/.openvr-sdk" >> "$GITHUB_ENV"
+
+      - name: Fetch OpenVR SDK
+        shell: bash
+        run: |
+          git clone --depth=1 https://github.com/ValveSoftware/openvr.git "$OPENVR_SDK_DIR"
+
+      - run: npm ci
+      - run: npm run rebuild:electron
+
+      - name: Prepare prebuilt package
+        run: node ./tools/prepare-prebuilt-package.mjs --owner-scope=covas-labs --package-version=${{ needs.version.outputs.package_version }} --registry=https://registry.npmjs.org --access=public
+
+      - name: Publish prebuilt package
+        working-directory: artifacts/publish/prebuilt-${{ matrix.platform_id }}/package
+        run: npm publish --provenance --access public
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-prebuilt-${{ matrix.platform_id }}
+          path: artifacts/publish/prebuilt-${{ matrix.platform_id }}/package/**
+          if-no-files-found: error
+
+  publish-public:
+    name: Publish Public Package
+    needs:
+      - version
+      - publish-prebuilt
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: npm run build --workspace @covas-labs/electron-vr
+
+      - name: Prepare public package
+        run: node ./tools/prepare-public-package.mjs --owner-scope=covas-labs --package-version=${{ needs.version.outputs.package_version }} --registry=https://registry.npmjs.org --access=public
+
+      - name: Publish public package
+        working-directory: artifacts/publish/public/package
+        run: npm publish --provenance --access public
+
+      - name: Upload public package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-electron-vr-public-package
+          path: artifacts/publish/public/package/**
+          if-no-files-found: error
+
+  smoke-consumer:
+    name: Smoke Published Package
+    needs:
+      - version
+      - publish-public
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install Linux runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2t64 libgbm1 libatk-bridge2.0-0 libxrandr2 libegl1 libgles2 libopenxr-loader1
+
+      - name: Create temporary consumer app
+        shell: bash
+        run: |
+          mkdir -p .tmp/consumer
+          cat > .tmp/consumer/package.json <<'EOF'
+          {
+            "name": "electron-vr-smoke-consumer",
+            "private": true,
+            "type": "module",
+            "scripts": {
+              "smoke": "electron --no-sandbox ./smoke-electron.mjs"
+            },
+            "dependencies": {
+              "@covas-labs/electron-vr": "${{ needs.version.outputs.package_version }}",
+              "electron": "^37.6.0"
+            }
+          }
+          EOF
+          cat > .tmp/consumer/smoke-electron.mjs <<'EOF'
+          import { app } from "electron";
+          import { VROverlay } from "@covas-labs/electron-vr";
+
+          app.whenReady().then(async () => {
+            const overlay = new VROverlay({
+              name: "CI_Linux_Smoke",
+              url: "about:blank",
+              sizeMeters: 1,
+              placement: {
+                mode: "head",
+                position: { x: 0, y: 0, z: -1.2 },
+                rotation: { x: 0, y: 0, z: 0, w: 1 }
+              }
+            });
+
+            const runtimeInfo = overlay.getRuntimeInfo();
+            console.log("Published package runtime info:", runtimeInfo);
+            console.log("Published package selected backend:", overlay.getSelectedBackend());
+            console.log("Published package OpenVR runtime installed:", runtimeInfo.openvrRuntimeInstalled);
+            const initialized = await overlay.init();
+            console.log("Published package overlay init:", initialized);
+            if (initialized) {
+              console.log("Published package placement update:", overlay.setPlacement({
+                mode: "world",
+                position: { x: 0, y: 1.5, z: -2 },
+                rotation: { x: 0, y: 0, z: 0, w: 1 }
+              }));
+              console.log("Published package size update:", overlay.setSizeMeters(1.1));
+              console.log("Published package visibility update:", overlay.setVisible(true));
+              overlay.destroy();
+            }
+            app.quit();
+          });
+          EOF
+
+      - name: Install consumer dependencies
+        working-directory: .tmp/consumer
+        run: npm install
+
+      - name: Run Electron smoke test
+        working-directory: .tmp/consumer
+        run: xvfb-run -a npm run smoke
+
+  smoke-consumer-windows:
+    name: Smoke Published Package (Windows)
+    needs:
+      - version
+      - publish-public
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Create temporary consumer app
+        shell: bash
+        run: |
+          mkdir -p .tmp/consumer
+          cat > .tmp/consumer/package.json <<'EOF'
+          {
+            "name": "electron-vr-smoke-consumer",
+            "private": true,
+            "type": "module",
+            "scripts": {
+              "smoke": "electron ./smoke-electron.mjs"
+            },
+            "dependencies": {
+              "@covas-labs/electron-vr": "${{ needs.version.outputs.package_version }}",
+              "electron": "^37.6.0"
+            }
+          }
+          EOF
+          cat > .tmp/consumer/smoke-electron.mjs <<'EOF'
+          import { app } from "electron";
+          import { VROverlay } from "@covas-labs/electron-vr";
+
+          app.whenReady().then(async () => {
+            const overlay = new VROverlay({
+              name: "CI_Windows_Smoke",
+              url: "about:blank",
+              sizeMeters: 1,
+              placement: {
+                mode: "head",
+                position: { x: 0, y: 0, z: -1.2 },
+                rotation: { x: 0, y: 0, z: 0, w: 1 }
+              }
+            });
+
+            const runtimeInfo = overlay.getRuntimeInfo();
+            console.log("Published package runtime info:", runtimeInfo);
+            console.log("Published package selected backend:", overlay.getSelectedBackend());
+            console.log("Published package OpenVR runtime installed:", runtimeInfo.openvrRuntimeInstalled);
+            const initialized = await overlay.init();
+            console.log("Published package overlay init:", initialized);
+            if (initialized) {
+              console.log("Published package placement update:", overlay.setPlacement({
+                mode: "world",
+                position: { x: 0, y: 1.5, z: -2 },
+                rotation: { x: 0, y: 0, z: 0, w: 1 }
+              }));
+              console.log("Published package size update:", overlay.setSizeMeters(1.1));
+              console.log("Published package visibility update:", overlay.setVisible(true));
+              overlay.destroy();
+            }
+            app.quit();
+          });
+          EOF
+
+      - name: Install consumer dependencies
+        working-directory: .tmp/consumer
+        run: npm install
+
+      - name: Run Electron smoke test
+        working-directory: .tmp/consumer
+        run: npm run smoke

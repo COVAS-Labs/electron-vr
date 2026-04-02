@@ -18,6 +18,8 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2));
 const ownerScope = (args["owner-scope"] ?? "covas-labs").toLowerCase();
 const packageVersion = args["package-version"];
+const registry = args.registry ?? "https://npm.pkg.github.com";
+const access = args.access;
 
 if (!packageVersion) {
   throw new Error("Expected --package-version.");
@@ -43,7 +45,8 @@ const publishManifest = {
     [`@${ownerScope}/electron-vr-prebuilt-win32-x64`]: packageVersion
   },
   publishConfig: {
-    registry: "https://npm.pkg.github.com"
+    registry,
+    ...(access ? { access } : {})
   }
 };
 

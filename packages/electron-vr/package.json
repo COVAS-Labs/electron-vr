@@ -1,7 +1,11 @@
 {
   "name": "@covas-labs/electron-vr",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Electron VR overlay bridge with OpenXR, OpenVR, and mock fallback backends.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/COVAS-Labs/electron-vr.git"
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

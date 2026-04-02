@@ -21,6 +21,8 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2));
 const ownerScope = (args["owner-scope"] ?? "covas-labs").toLowerCase();
 const packageVersion = args["package-version"];
+const registry = args.registry ?? "https://npm.pkg.github.com";
+const access = args.access;
 
 if (!packageVersion) {
   throw new Error("Expected --package-version.");
@@ -87,14 +89,19 @@ await writeFile(
     version: packageVersion,
     private: false,
     description: `Internal Electron prebuilt addon for ${platform}-${arch}.`,
+    repository: {
+      type: "git",
+      url: "git+https://github.com/COVAS-Labs/electron-vr.git"
+    },
     main: "index.js",
     os: [platform],
     cpu: [arch],
     files: ["index.js", "metadata.json", "README.md", "vr_bridge.node", ...bundledRuntimeLibraries],
-    publishConfig: {
-      registry: "https://npm.pkg.github.com"
-    }
-  }, null, 2)}\n`,
+     publishConfig: {
+       registry,
+       ...(access ? { access } : {})
+     }
+   }, null, 2)}\n`,
   "utf8"
 );
 

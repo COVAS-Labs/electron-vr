@@ -9,6 +9,6 @@
     "start:no-sandbox": "node ../../tools/run-demo-electron.mjs --no-sandbox"
   },
   "dependencies": {
-    "@covas-labs/electron-vr": "0.2.0"
+    "@covas-labs/electron-vr": "0.3.0"
   }
 }
