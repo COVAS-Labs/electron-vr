@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assertSizeMeters, normalizePlacement } from "../../packages/electron-vr/dist/overlayOptions.js";
+import { assertCurvature, assertSizeMeters, normalizePlacement } from "../../packages/electron-vr/dist/overlayOptions.js";
 
 test("overlay placement defaults to a head-locked transform", () => {
   const placement = normalizePlacement();
@@ -18,6 +18,15 @@ test("overlay size validation rejects invalid values", () => {
   assert.throws(() => assertSizeMeters(Number.NaN), /sizeMeters/);
   assert.throws(() => assertSizeMeters(-1), /sizeMeters/);
   assert.throws(() => assertSizeMeters(0), /sizeMeters/);
+});
+
+test("overlay curvature validation rejects invalid values", () => {
+  assert.doesNotThrow(() => assertCurvature(0));
+  assert.doesNotThrow(() => assertCurvature(0.5));
+  assert.doesNotThrow(() => assertCurvature(1));
+  assert.throws(() => assertCurvature(Number.NaN), /curvature/);
+  assert.throws(() => assertCurvature(-0.1), /curvature/);
+  assert.throws(() => assertCurvature(1.1), /curvature/);
 });
 
 test("overlay placement validation rejects bad mode and coordinates", () => {

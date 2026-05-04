@@ -14,6 +14,7 @@ bool SubmitMockSoftwareFrame(const SoftwareFrameInfo& frame_info, std::string* e
 bool SetMockPlacement(const OverlayPlacement& placement, std::string* error_message);
 bool SetMockVisible(bool visible, std::string* error_message);
 bool SetMockSizeMeters(float size_meters, std::string* error_message);
+bool SetMockCurvature(float curvature, std::string* error_message);
 void ShutdownMockBackend();
 
 }  // namespace vrbridge

@@ -701,6 +701,21 @@ bool SetMockSizeMeters(float size_meters, std::string* error_message) {
   return true;
 }
 
+bool SetMockCurvature(float curvature, std::string* error_message) {
+  (void)curvature;
+  if (!g_initialized) {
+    if (error_message != nullptr) {
+      *error_message = "Mock backend is not initialized.";
+    }
+    return false;
+  }
+
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
 void ShutdownMockBackend() {
 #if defined(__linux__)
   g_linux_mock_preview.Shutdown();

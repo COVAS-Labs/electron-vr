@@ -28,6 +28,12 @@ export function assertSizeMeters(sizeMeters: number): void {
   }
 }
 
+export function assertCurvature(curvature: number): void {
+  if (!isFiniteNumber(curvature) || curvature < 0 || curvature > 1) {
+    throw new RangeError("curvature must be a finite number between 0 and 1.");
+  }
+}
+
 export function normalizePlacement(placement?: OverlayPlacementInput): OverlayPlacement {
   const mode = placement?.mode ?? "head";
   if (mode !== "head" && mode !== "world") {

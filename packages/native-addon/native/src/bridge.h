@@ -37,6 +37,7 @@ struct InitializeOptions {
   uint32_t width = 0;
   uint32_t height = 0;
   float size_meters = 1.0f;
+  float curvature = 0.0f;
   bool visible = true;
   OverlayPlacement placement;
 };
@@ -76,6 +77,7 @@ class BridgeState {
   bool SetOverlayPlacement(const OverlayPlacement& placement);
   bool SetOverlayVisible(bool visible);
   bool SetOverlaySizeMeters(float size_meters);
+  bool SetOverlayCurvature(float curvature);
   void Shutdown();
   bool IsInitialized() const;
   std::string GetLastError() const;

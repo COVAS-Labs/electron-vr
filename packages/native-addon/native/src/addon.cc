@@ -262,6 +262,7 @@ Napi::Value InitializeVRWrapped(const Napi::CallbackInfo& info) {
   const Napi::Value width_value = options.Get("width");
   const Napi::Value height_value = options.Get("height");
   const Napi::Value size_meters_value = options.Get("sizeMeters");
+  const Napi::Value curvature_value = options.Get("curvature");
   const Napi::Value visible_value = options.Get("visible");
   const Napi::Value placement_value = options.Get("placement");
 
@@ -274,6 +275,9 @@ Napi::Value InitializeVRWrapped(const Napi::CallbackInfo& info) {
   native_options.width = width_value.As<Napi::Number>().Uint32Value();
   native_options.height = height_value.As<Napi::Number>().Uint32Value();
   native_options.size_meters = size_meters_value.As<Napi::Number>().FloatValue();
+  native_options.curvature = curvature_value.IsNumber()
+    ? curvature_value.As<Napi::Number>().FloatValue()
+    : 0.0f;
   native_options.visible = visible_value.As<Napi::Boolean>().Value();
   native_options.placement = ReadOverlayPlacement(placement_value);
 
@@ -326,6 +330,14 @@ Napi::Value SetOverlaySizeMetersWrapped(const Napi::CallbackInfo& info) {
   return Napi::Boolean::New(info.Env(), GetBridgeState().SetOverlaySizeMeters(info[0].As<Napi::Number>().FloatValue()));
 }
 
+Napi::Value SetOverlayCurvatureWrapped(const Napi::CallbackInfo& info) {
+  if (info.Length() != 1 || !info[0].IsNumber()) {
+    throw Napi::TypeError::New(info.Env(), "setOverlayCurvature expects a number.");
+  }
+
+  return Napi::Boolean::New(info.Env(), GetBridgeState().SetOverlayCurvature(info[0].As<Napi::Number>().FloatValue()));
+}
+
 Napi::Value IsInitializedWrapped(const Napi::CallbackInfo& info) {
   return Napi::Boolean::New(info.Env(), GetBridgeState().IsInitialized());
 }
@@ -347,6 +359,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("setOverlayPlacement", Napi::Function::New(env, SetOverlayPlacementWrapped));
   exports.Set("setOverlayVisible", Napi::Function::New(env, SetOverlayVisibleWrapped));
   exports.Set("setOverlaySizeMeters", Napi::Function::New(env, SetOverlaySizeMetersWrapped));
+  exports.Set("setOverlayCurvature", Napi::Function::New(env, SetOverlayCurvatureWrapped));
   exports.Set("shutdownVR", Napi::Function::New(env, ShutdownVRWrapped));
   exports.Set("isInitialized", Napi::Function::New(env, IsInitializedWrapped));
   exports.Set("getLastError", Napi::Function::New(env, GetLastErrorWrapped));

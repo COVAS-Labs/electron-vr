@@ -666,6 +666,23 @@ bool ApplySizeMeters(float size_meters, std::string* error_message) {
     error_message);
 }
 
+bool ApplyCurvature(float curvature, std::string* error_message) {
+  if (!g_state.initialized || g_state.overlay == nullptr || g_state.overlay_handle == vr::k_ulOverlayHandleInvalid) {
+    SetError(error_message, "OpenVR backend is not initialized.");
+    return false;
+  }
+
+  if (curvature < 0.0f || curvature > 1.0f || !std::isfinite(curvature)) {
+    SetError(error_message, "OpenVR overlay curvature must be between 0 and 1.");
+    return false;
+  }
+
+  return CheckOverlayError(
+    g_state.overlay->SetOverlayCurvature(g_state.overlay_handle, curvature),
+    "Failed to set OpenVR overlay curvature",
+    error_message);
+}
+
 #if defined(__linux__)
 bool ParseInteger(const std::string& value, uint64_t* result) {
   if (value.empty() || result == nullptr) {
@@ -823,6 +840,7 @@ bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* erro
   }
 
   if (!ApplySizeMeters(options.size_meters, error_message) ||
+      (options.curvature > 0.0f && !ApplyCurvature(options.curvature, error_message)) ||
       !ApplyPlacement(options.placement, error_message) ||
       !ApplyVisible(options.visible, error_message)) {
     ShutdownOpenVRBackend();
@@ -1038,6 +1056,10 @@ bool SetOpenVRSizeMeters(float size_meters, std::string* error_message) {
   }
 
   return ApplySizeMeters(size_meters, error_message);
+}
+
+bool SetOpenVRCurvature(float curvature, std::string* error_message) {
+  return ApplyCurvature(curvature, error_message);
 }
 
 void PopulateOpenVRRuntimeInfo(RuntimeInfo* runtime_info) {
