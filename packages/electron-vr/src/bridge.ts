@@ -56,6 +56,7 @@ export interface InitializeVROptions {
   width: number;
   height: number;
   sizeMeters: number;
+  curvature?: number;
   visible: boolean;
   placement: OverlayPlacement;
 }
@@ -120,6 +121,7 @@ interface VrBridgeAddon {
   setOverlayPlacement(placement: OverlayPlacement): boolean;
   setOverlayVisible(visible: boolean): boolean;
   setOverlaySizeMeters(sizeMeters: number): boolean;
+  setOverlayCurvature(curvature: number): boolean;
   shutdownVR(): void;
   isInitialized(): boolean;
   getLastError(): string | null;
@@ -363,6 +365,10 @@ export class VrBridge {
 
   setOverlaySizeMeters(sizeMeters: number): boolean {
     return this.addon.setOverlaySizeMeters(sizeMeters);
+  }
+
+  setOverlayCurvature(curvature: number): boolean {
+    return this.addon.setOverlayCurvature(curvature);
   }
 
   shutdown(): void {

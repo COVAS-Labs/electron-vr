@@ -51,6 +51,11 @@ namespace vrbridge {
 
 namespace {
 
+constexpr float kTwoPi = 6.28318530717958647692f;
+constexpr float kMinimumCurvedOverlayCurvature = 0.0001f;
+
+XrSpace GetLayerSpaceForPlacement(const OverlayPlacement& placement);
+
 void SetError(std::string* error_message, const std::string& message) {
   if (error_message != nullptr) {
     *error_message = message;
@@ -186,6 +191,8 @@ struct OpenXRBackendState {
   bool initialized = false;
   bool visible = true;
   float size_meters = 1.0f;
+  float curvature = 0.0f;
+  bool cylinder_layer_extension_enabled = false;
   OverlayPlacement placement;
   uint32_t frame_width = 0;
   uint32_t frame_height = 0;
@@ -253,6 +260,49 @@ struct OpenXRBackendState {
 };
 
 OpenXRBackendState g_state;
+
+float ComputeAspectRatio(uint32_t width, uint32_t height) {
+  if (width == 0 || height == 0) {
+    return 1.0f;
+  }
+
+  return static_cast<float>(width) / static_cast<float>(height);
+}
+
+bool ShouldUseCylinderLayer() {
+  return g_state.cylinder_layer_extension_enabled && g_state.curvature >= kMinimumCurvedOverlayCurvature;
+}
+
+void ConfigureLayerSubImage(XrSwapchainSubImage* sub_image) {
+  sub_image->swapchain = g_state.swapchain;
+  sub_image->imageRect.offset = {0, 0};
+  sub_image->imageRect.extent = {static_cast<int32_t>(g_state.frame_width), static_cast<int32_t>(g_state.frame_height)};
+  sub_image->imageArrayIndex = 0;
+}
+
+void ConfigureQuadLayer(XrCompositionLayerQuad* quad_layer) {
+  quad_layer->layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+  quad_layer->space = GetLayerSpaceForPlacement(g_state.placement);
+  quad_layer->eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+  ConfigureLayerSubImage(&quad_layer->subImage);
+  quad_layer->pose = ToXrPose(g_state.placement);
+  quad_layer->size.width = g_state.size_meters;
+  quad_layer->size.height = ComputeHeightMeters(g_state.frame_width, g_state.frame_height, g_state.size_meters);
+}
+
+void ConfigureCylinderLayer(XrCompositionLayerCylinderKHR* cylinder_layer) {
+  const float curvature = std::min(std::max(g_state.curvature, kMinimumCurvedOverlayCurvature), 1.0f);
+  const float central_angle = std::min(kTwoPi * curvature, std::nextafter(kTwoPi, 0.0f));
+
+  cylinder_layer->layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+  cylinder_layer->space = GetLayerSpaceForPlacement(g_state.placement);
+  cylinder_layer->eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+  ConfigureLayerSubImage(&cylinder_layer->subImage);
+  cylinder_layer->pose = ToXrPose(g_state.placement);
+  cylinder_layer->radius = g_state.size_meters / central_angle;
+  cylinder_layer->centralAngle = central_angle;
+  cylinder_layer->aspectRatio = ComputeAspectRatio(g_state.frame_width, g_state.frame_height);
+}
 
 bool CheckXr(XrResult result, const char* message, std::string* error_message) {
   if (XR_SUCCEEDED(result)) {
@@ -1200,6 +1250,12 @@ bool CreateInstance(std::string* error_message) {
     return false;
   }
 
+  g_state.cylinder_layer_extension_enabled = HasExtension(extensions, XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME);
+  if (g_state.curvature > 0.0f && !g_state.cylinder_layer_extension_enabled) {
+    SetError(error_message, "OpenXR runtime does not expose XR_KHR_composition_layer_cylinder.");
+    return false;
+  }
+
 #if defined(__linux__)
   if (!HasExtension(extensions, XR_MNDX_EGL_ENABLE_EXTENSION_NAME)) {
     SetError(error_message, "OpenXR runtime does not expose XR_MNDX_egl_enable.");
@@ -1214,8 +1270,9 @@ bool CreateInstance(std::string* error_message) {
     XR_EXTX_OVERLAY_EXTENSION_NAME,
     XR_MNDX_EGL_ENABLE_EXTENSION_NAME,
     XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
+    XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME,
   };
-  constexpr uint32_t enabled_extension_count = 3;
+  const uint32_t enabled_extension_count = g_state.cylinder_layer_extension_enabled ? 4 : 3;
 #elif defined(_WIN32)
   if (!HasExtension(extensions, XR_KHR_D3D11_ENABLE_EXTENSION_NAME)) {
     SetError(error_message, "OpenXR runtime does not expose XR_KHR_D3D11_enable.");
@@ -1225,8 +1282,9 @@ bool CreateInstance(std::string* error_message) {
   const char* enabled_extensions[] = {
     XR_EXTX_OVERLAY_EXTENSION_NAME,
     XR_KHR_D3D11_ENABLE_EXTENSION_NAME,
+    XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME,
   };
-  constexpr uint32_t enabled_extension_count = 2;
+  const uint32_t enabled_extension_count = g_state.cylinder_layer_extension_enabled ? 3 : 2;
 #endif
 
   auto create_info = MakeXrStruct<XrInstanceCreateInfo, XR_TYPE_INSTANCE_CREATE_INFO>();
@@ -1621,6 +1679,7 @@ bool SubmitLayerForCurrentFrame(const LinuxTextureInfo& texture_info, std::strin
 
   std::vector<XrCompositionLayerBaseHeader*> layers;
   auto quad_layer = MakeXrStruct<XrCompositionLayerQuad, XR_TYPE_COMPOSITION_LAYER_QUAD>();
+  auto cylinder_layer = MakeXrStruct<XrCompositionLayerCylinderKHR, XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR>();
 
   if (g_state.visible) {
     uint32_t image_index = 0;
@@ -1647,25 +1706,24 @@ bool SubmitLayerForCurrentFrame(const LinuxTextureInfo& texture_info, std::strin
       return false;
     }
 
-    quad_layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-    quad_layer.space = GetLayerSpaceForPlacement(g_state.placement);
-    quad_layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-    quad_layer.subImage.swapchain = g_state.swapchain;
-    quad_layer.subImage.imageRect.offset = {0, 0};
-    quad_layer.subImage.imageRect.extent = {static_cast<int32_t>(g_state.frame_width), static_cast<int32_t>(g_state.frame_height)};
-    quad_layer.subImage.imageArrayIndex = 0;
-    quad_layer.pose = ToXrPose(g_state.placement);
-    quad_layer.size.width = g_state.size_meters;
-    quad_layer.size.height = ComputeHeightMeters(g_state.frame_width, g_state.frame_height, g_state.size_meters);
-
-    layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad_layer));
+    if (ShouldUseCylinderLayer()) {
+      ConfigureCylinderLayer(&cylinder_layer);
+      layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&cylinder_layer));
+    } else {
+      ConfigureQuadLayer(&quad_layer);
+      layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad_layer));
+    }
 
     if (!g_state.logged_first_frame_submission) {
       g_state.logged_first_frame_submission = true;
-      std::cout << "OpenXR submitted first quad layer: space="
+      std::cout << "OpenXR submitted first "
+                << (ShouldUseCylinderLayer() ? "cylinder" : "quad")
+                << " layer: space="
                 << GetLayerSpaceNameForPlacement(g_state.placement)
-                << ", pose=(" << quad_layer.pose.position.x << ", " << quad_layer.pose.position.y << ", " << quad_layer.pose.position.z
-                << "), size=(" << quad_layer.size.width << "m x " << quad_layer.size.height << "m), frame="
+                << ", pose=(" << g_state.placement.position.x << ", " << g_state.placement.position.y << ", " << g_state.placement.position.z
+                << "), size=(" << g_state.size_meters << "m x " << ComputeHeightMeters(g_state.frame_width, g_state.frame_height, g_state.size_meters)
+                << "m), curvature=" << g_state.curvature
+                << ", frame="
                 << g_state.frame_width << "x" << g_state.frame_height
                 << std::endl;
     }
@@ -1739,6 +1797,7 @@ bool SubmitLayerForCurrentFrameWindows(ID3D11Texture2D* source_texture, const D3
 
   std::vector<XrCompositionLayerBaseHeader*> layers;
   auto quad_layer = MakeXrStruct<XrCompositionLayerQuad, XR_TYPE_COMPOSITION_LAYER_QUAD>();
+  auto cylinder_layer = MakeXrStruct<XrCompositionLayerCylinderKHR, XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR>();
 
   if (g_state.visible) {
     uint32_t image_index = 0;
@@ -1769,25 +1828,24 @@ bool SubmitLayerForCurrentFrameWindows(ID3D11Texture2D* source_texture, const D3
       return false;
     }
 
-    quad_layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-    quad_layer.space = GetLayerSpaceForPlacement(g_state.placement);
-    quad_layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-    quad_layer.subImage.swapchain = g_state.swapchain;
-    quad_layer.subImage.imageRect.offset = {0, 0};
-    quad_layer.subImage.imageRect.extent = {static_cast<int32_t>(g_state.frame_width), static_cast<int32_t>(g_state.frame_height)};
-    quad_layer.subImage.imageArrayIndex = 0;
-    quad_layer.pose = ToXrPose(g_state.placement);
-    quad_layer.size.width = g_state.size_meters;
-    quad_layer.size.height = ComputeHeightMeters(g_state.frame_width, g_state.frame_height, g_state.size_meters);
-
-    layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad_layer));
+    if (ShouldUseCylinderLayer()) {
+      ConfigureCylinderLayer(&cylinder_layer);
+      layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&cylinder_layer));
+    } else {
+      ConfigureQuadLayer(&quad_layer);
+      layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&quad_layer));
+    }
 
     if (!g_state.logged_first_frame_submission) {
       g_state.logged_first_frame_submission = true;
-      std::cout << "OpenXR submitted first Windows quad layer: space="
+      std::cout << "OpenXR submitted first Windows "
+                << (ShouldUseCylinderLayer() ? "cylinder" : "quad")
+                << " layer: space="
                 << GetLayerSpaceNameForPlacement(g_state.placement)
-                << ", pose=(" << quad_layer.pose.position.x << ", " << quad_layer.pose.position.y << ", " << quad_layer.pose.position.z
-                << "), size=(" << quad_layer.size.width << "m x " << quad_layer.size.height << "m), frame="
+                << ", pose=(" << g_state.placement.position.x << ", " << g_state.placement.position.y << ", " << g_state.placement.position.z
+                << "), size=(" << g_state.size_meters << "m x " << ComputeHeightMeters(g_state.frame_width, g_state.frame_height, g_state.size_meters)
+                << "m), curvature=" << g_state.curvature
+                << ", frame="
                 << g_state.frame_width << "x" << g_state.frame_height
                 << ", format=" << DxgiFormatToString(source_desc.Format)
                 << std::endl;
@@ -1821,6 +1879,7 @@ bool InitializeOpenXRBackend(const InitializeOptions& options, std::string* erro
 
   g_state.visible = options.visible;
   g_state.size_meters = options.size_meters;
+  g_state.curvature = options.curvature;
   g_state.placement = options.placement;
 
   if (!InitializeEgl(error_message) ||
@@ -1848,6 +1907,7 @@ bool InitializeOpenXRBackend(const InitializeOptions& options, std::string* erro
 
   g_state.visible = options.visible;
   g_state.size_meters = options.size_meters;
+  g_state.curvature = options.curvature;
   g_state.placement = options.placement;
 
   if (!CreateInstance(error_message) ||
@@ -2001,6 +2061,30 @@ bool SetOpenXRSizeMeters(float size_meters, std::string* error_message) {
 
 #if defined(__linux__) || defined(_WIN32)
   g_state.size_meters = size_meters;
+#endif
+
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool SetOpenXRCurvature(float curvature, std::string* error_message) {
+  if (!g_initialized) {
+    SetError(error_message, "OpenXR backend is not initialized.");
+    return false;
+  }
+  if (!std::isfinite(curvature) || curvature < 0.0f || curvature > 1.0f) {
+    SetError(error_message, "OpenXR overlay curvature must be between 0 and 1.");
+    return false;
+  }
+  if (curvature > 0.0f && !g_state.cylinder_layer_extension_enabled) {
+    SetError(error_message, "OpenXR runtime does not expose XR_KHR_composition_layer_cylinder.");
+    return false;
+  }
+
+#if defined(__linux__) || defined(_WIN32)
+  g_state.curvature = curvature;
 #endif
 
   if (error_message != nullptr) {

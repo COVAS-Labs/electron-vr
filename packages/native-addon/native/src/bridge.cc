@@ -1,5 +1,6 @@
 #include "bridge.h"
 
+#include <cmath>
 #include <utility>
 
 #include "mock_backend.h"
@@ -124,6 +125,12 @@ bool BridgeState::Initialize(const InitializeOptions& options) {
 
   if (options.size_meters <= 0.0f) {
     SetLastError("Overlay sizeMeters must be greater than zero.");
+    initialized_ = false;
+    return false;
+  }
+
+  if (!std::isfinite(options.curvature) || options.curvature < 0.0f || options.curvature > 1.0f) {
+    SetLastError("Overlay curvature must be between 0 and 1.");
     initialized_ = false;
     return false;
   }
@@ -307,6 +314,41 @@ bool BridgeState::SetOverlaySizeMeters(float size_meters) {
 
   if (success) {
     options_.size_meters = size_meters;
+  }
+
+  return success;
+}
+
+bool BridgeState::SetOverlayCurvature(float curvature) {
+  if (!initialized_) {
+    SetLastError("Bridge is not initialized.");
+    return false;
+  }
+
+  if (!std::isfinite(curvature) || curvature < 0.0f || curvature > 1.0f) {
+    SetLastError("Overlay curvature must be between 0 and 1.");
+    return false;
+  }
+
+  bool success = false;
+  switch (runtime_info_.selected_backend) {
+    case BackendKind::kOpenXR:
+      success = SetOpenXRCurvature(curvature, &last_error_);
+      break;
+    case BackendKind::kOpenVR:
+      success = SetOpenVRCurvature(curvature, &last_error_);
+      break;
+    case BackendKind::kMock:
+      success = SetMockCurvature(curvature, &last_error_);
+      break;
+    case BackendKind::kNone:
+    default:
+      SetLastError("No backend selected for overlay curvature.");
+      return false;
+  }
+
+  if (success) {
+    options_.curvature = curvature;
   }
 
   return success;

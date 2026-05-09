@@ -53,6 +53,7 @@ app.on("ready", async () => {
   overlay = await VROverlay.openWindow(window, {
     name: "Status_HUD",
     sizeMeters: 1,
+    curvature: 0,
     placement: {
       mode: "head",
       position: { x: 0, y: 0, z: -1.2 },
@@ -62,9 +63,9 @@ app.on("ready", async () => {
 });
 ```
 
-You can also reposition the overlay later with `overlay.setPlacement(...)`, toggle it with `overlay.setVisible(...)`, and resize it in meters with `overlay.setSizeMeters(...)`.
+You can also reposition the overlay later with `overlay.setPlacement(...)`, toggle it with `overlay.setVisible(...)`, resize it in meters with `overlay.setSizeMeters(...)`, and curve it with `overlay.setCurvature(...)`.
 
-`sizeMeters` must be greater than zero, and placement values should be finite numbers.
+`sizeMeters` must be greater than zero, `curvature` must be between `0` and `1`, and placement values should be finite numbers. `curvature: 0` keeps the overlay flat. Positive curvature uses OpenVR overlay curvature on OpenVR and `XR_KHR_composition_layer_cylinder` cylinder layers on OpenXR.
 
 On Linux, runtime selection prefers `openxr`, then falls back to `openvr`, then to `mock`. Linux OpenVR is treated as a best-effort alternate backend when a compatible OpenVR runtime is installed but the OpenXR overlay path is unavailable or disabled. It is not currently validated end to end on the main development machine or in CI.
 
