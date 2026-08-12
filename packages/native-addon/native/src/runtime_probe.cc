@@ -581,13 +581,14 @@ RuntimeInfo ProbeRuntime() {
   const bool direct_openxr_ready = info.openxr_available && info.openxr_overlay_extension_available &&
                              info.openxr_linux_egl_binding_available && info.openxr_linux_opengl_es_binding_available;
   const bool api_layer_ready = info.openxr_available && info.openxr_api_layer_installed && info.openxr_api_layer_enabled;
+  const bool force_api_layer = api_layer_ready && IsTruthyEnvVar("ELECTRON_VR_FORCE_OPENXR_API_LAYER");
   const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
   const bool openxr_enabled = !openxr_disabled_by_env && (direct_openxr_ready || api_layer_ready);
 
   if (openxr_enabled) {
     info.selected_backend = BackendKind::kOpenXR;
-    info.openxr_mode = direct_openxr_ready ? OpenXRMode::kOverlaySession : OpenXRMode::kApiLayer;
-    AppendProbeMode(&info, direct_openxr_ready ? "openxr-overlay-session" : "openxr-api-layer");
+    info.openxr_mode = direct_openxr_ready && !force_api_layer ? OpenXRMode::kOverlaySession : OpenXRMode::kApiLayer;
+    AppendProbeMode(&info, direct_openxr_ready && !force_api_layer ? "openxr-overlay-session" : "openxr-api-layer");
     AppendProbeMode(&info, "selected-openxr");
   } else if (info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;

@@ -75,6 +75,8 @@ npx electron-vr-openxr-layer status
 
 The Linux fallback currently supports desktop OpenGL Xlib host sessions and one single-plane RGB DMA-BUF quad. It uses a private per-user Unix socket, `SCM_RIGHTS` descriptor transfer, a layer-owned shared GLX context, EGL DMA-BUF import, and implicit DMA-BUF synchronization. Xcb, deprecated OpenGL Wayland bindings, Vulkan, multiplane formats, explicit sync fences, and curvature are deferred and pass through unchanged. Use the same CLI with `enable`, `disable`, or `uninstall`; ordinary `npm install` never registers the layer.
 
+Native Wayland sessions can use this path when Electron is forced through XWayland and the OpenXR host supplies `XrGraphicsBindingOpenGLXlibKHR`. For controlled testing only, `ELECTRON_VR_FORCE_OPENXR_API_LAYER=1` selects an installed and enabled layer even when the runtime also exposes `XR_EXTX_overlay`; normal product launches should retain automatic direct-overlay priority.
+
 On macOS, OpenXR uses `XR_KHR_metal_enable` and imports Electron shared textures from their `IOSurface` handles. The Khronos loader is built automatically from `.openxr-sdk`, copied beside the native addon, and loaded through the addon's `@loader_path` rpath.
 
 ### Meta OpenXR Simulator on macOS

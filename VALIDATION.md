@@ -412,8 +412,8 @@ Expected final state is `installed=false` and `enabled=false`.
 ### Requirements
 
 - Ubuntu 24.04 x64 is the reference distribution. Record deviations.
-- An X11 desktop session for the initial API-layer test. `echo $XDG_SESSION_TYPE`
-  must report `x11`.
+- An X11 desktop session, or a Wayland session where Electron is forced through
+  XWayland and the controlled host confirms `XrGraphicsBindingOpenGLXlibKHR`.
 - A valid per-user `XDG_RUNTIME_DIR` owned by the current user, normally
   `/run/user/$(id -u)`.
 - A physical OpenGL/Vulkan-capable GPU and current Mesa or NVIDIA driver.
@@ -499,7 +499,8 @@ Adjust `HELLO_XR` if the build layout differs and record the resulting path.
 
 ### Linux Baseline
 
-Verify the desktop session and IPC directory first:
+Verify the desktop session and IPC directory first. Native X11 is the simplest
+baseline:
 
 ```bash
 test "$XDG_SESSION_TYPE" = x11
@@ -507,6 +508,17 @@ test -n "$DISPLAY"
 test -d "$XDG_RUNTIME_DIR"
 test -O "$XDG_RUNTIME_DIR"
 ```
+
+On Wayland, XWayland is acceptable when the host still uses the OpenXR Xlib
+binding. Force Electron onto XWayland for every Electron command:
+
+```bash
+export ELECTRON_OZONE_PLATFORM_HINT=x11
+```
+
+Do not infer the OpenXR binding from `XDG_SESSION_TYPE`; confirm that the host
+supplied `XrGraphicsBindingOpenGLXlibKHR`. Native Wayland and Xcb OpenXR
+bindings remain unsupported by the implicit layer.
 
 Then build and probe:
 
@@ -531,6 +543,11 @@ enabled=false
 
 This test requires a runtime that does not expose `XR_EXTX_overlay`, because
 the direct overlay path takes priority when the extension is present.
+
+For controlled validation against a runtime such as Monado that also exposes
+`XR_EXTX_overlay`, set `ELECTRON_VR_FORCE_OPENXR_API_LAYER=1` for the Electron
+producer only. The override takes effect only when the layer is installed and
+enabled. Do not set it for the host process or normal product launches.
 
 1. Close all OpenXR applications.
 2. Select the target OpenXR runtime with its normal activation method or set
@@ -707,6 +724,7 @@ npm run openxr-layer -- uninstall
 npm run openxr-layer -- status
 unset ELECTRON_VR_DISABLE_OPENXR
 unset ELECTRON_VR_DISABLE_OPENXR_API_LAYER
+unset ELECTRON_VR_FORCE_OPENXR_API_LAYER
 unset XR_RUNTIME_JSON
 ```
 

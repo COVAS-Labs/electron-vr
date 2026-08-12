@@ -185,3 +185,20 @@ test("linux runtime probe falls back to OpenVR when OpenXR is disabled", { skip:
 
   assert.match(combinedOutput, /selectedBackend:\s*'mock'/i);
 });
+
+test("linux runtime probe can force an installed API layer for validation", { skip: process.platform !== "linux" }, async (context) => {
+  const combinedOutput = await runRuntimeInfoProbe({
+    ELECTRON_VR_FORCE_OPENXR_API_LAYER: "1"
+  });
+
+  const layerReady = /openxrAvailable:\s*true/i.test(combinedOutput) &&
+    /openxrApiLayerInstalled:\s*true/i.test(combinedOutput) &&
+    /openxrApiLayerEnabled:\s*true/i.test(combinedOutput);
+  if (!layerReady) {
+    context.skip("OpenXR API layer is not installed and enabled.");
+    return;
+  }
+
+  assert.match(combinedOutput, /selectedBackend:\s*'openxr'/i);
+  assert.match(combinedOutput, /openxrMode:\s*'api-layer'/i);
+});
