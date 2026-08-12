@@ -78,18 +78,19 @@ test("renders the native mock preview fallback", { skip: process.platform !== "l
     );
 
     await waitFor(
-      () => combinedOutput.includes("using software bitmap upload for mock preview"),
+      () => /received first paint event .*hasTexture=yes|using software bitmap upload for mock preview/.test(combinedOutput),
       20000,
-      "software mock preview fallback"
+      "mock preview frame delivery"
     );
 
     assert.match(combinedOutput, /VR runtime probe:/);
     assert.match(combinedOutput, /openvrRuntimeInstalled:/);
     assert.match(combinedOutput, /Overlay initialized with backend: mock/);
-    assert.match(combinedOutput, /using software bitmap upload for mock preview/);
+    assert.match(combinedOutput, /received first paint event .*hasTexture=yes|using software bitmap upload for mock preview/);
     assert.match(combinedOutput, /Overlay head placement update: true/);
     assert.match(combinedOutput, /Overlay size update: true/);
     assert.match(combinedOutput, /Overlay visibility update: true/);
+    assert.doesNotMatch(combinedOutput, /Failed to submit Linux frame to VR bridge|Error while forwarding frame to VR bridge/);
   } finally {
     child.kill("SIGTERM");
     await Promise.race([

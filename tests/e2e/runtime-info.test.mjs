@@ -103,9 +103,13 @@ async function runRuntimeInfoProbe(extraEnv = {}) {
 
   try {
     try {
-      await waitFor(() => combinedOutput.includes("Runtime info:"), 20000, "runtime info logging");
+      await waitFor(
+        () => combinedOutput.includes("Runtime info:") && combinedOutput.includes("Compatibility report:"),
+        20000,
+        "runtime info and compatibility report logging"
+      );
     } catch {
-      throw new Error(buildProcessDebugMessage("runtime info logging", combinedOutput, exitCode, signalCode, spawnError));
+      throw new Error(buildProcessDebugMessage("runtime info and compatibility report logging", combinedOutput, exitCode, signalCode, spawnError));
     }
 
     return combinedOutput;
