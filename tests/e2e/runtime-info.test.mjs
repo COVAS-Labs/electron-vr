@@ -139,7 +139,7 @@ test("runtime probe exposes OpenVR runtime installation details", async () => {
     assert.match(combinedOutput, /openxrWindowsD3D11BindingAvailable/i);
     assert.match(combinedOutput, /openxrWindowsD3D12BindingAvailable/i);
     assert.match(combinedOutput, /openxrMacosMetalBindingAvailable/i);
-    if (process.platform === "linux" && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrLinuxEglBindingAvailable:\s*true/i.test(combinedOutput) && /openxrLinuxOpenGlesBindingAvailable:\s*true/i.test(combinedOutput)) {
+    if (process.platform === "linux" && !/openxr-disabled-by-env/i.test(combinedOutput) && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrLinuxEglBindingAvailable:\s*true/i.test(combinedOutput) && /openxrLinuxOpenGlesBindingAvailable:\s*true/i.test(combinedOutput)) {
       assert.match(combinedOutput, /selectedBackend:\s*'openxr'/i);
     }
     if (process.platform === "win32" && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrWindowsD3D11BindingAvailable:\s*true/i.test(combinedOutput)) {
