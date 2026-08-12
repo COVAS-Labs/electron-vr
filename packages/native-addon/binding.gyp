@@ -130,6 +130,7 @@
             "target_name": "electron_vr_openxr_layer",
             "type": "shared_library",
             "product_name": "electron_vr_openxr_layer",
+            "product_prefix": "lib",
             "sources": ["native/openxr-api-layer/layer_linux.cc"],
             "include_dirs": ["<(openxr_sdk_dir)/include"],
             "libraries": ["-lGL", "-lEGL", "-lX11", "-ldl", "-lpthread"],
