@@ -47,6 +47,9 @@ test("Linux API layer uses private Unix IPC and desktop OpenGL pass-through", as
   assert.match(source, /SCM_RIGHTS/);
   assert.match(source, /SO_PEERCRED/);
   assert.match(source, /glXMakeContextCurrent/);
+  assert.match(source, /DRM_FORMAT_MOD_INVALID/);
+  assert.match(source, /mmap/);
+  assert.doesNotMatch(source, /glEGLImageTargetTexture2DOES|glEGLImageTargetTexStorageEXT/);
   assert.match(protocol, /SOCK_SEQPACKET|kSocketName/);
 });
 

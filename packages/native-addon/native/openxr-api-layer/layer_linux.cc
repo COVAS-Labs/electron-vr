@@ -7,11 +7,13 @@
 #include <GL/gl.h>
 #include <GL/glext.h>
 #include <GL/glx.h>
+#include <libdrm/drm_fourcc.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_loader_negotiation.h>
 #include <openxr/openxr_platform.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -63,15 +65,12 @@ struct InstanceState {
 struct SessionState {
   XrSession session = XR_NULL_HANDLE;
   std::shared_ptr<InstanceState> instance;
+  XrGraphicsBindingOpenGLXlibKHR binding{XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR};
   Display* display = nullptr;
   GLXFBConfig fb_config = nullptr;
   GLXContext host_context = nullptr;
   GLXContext context = nullptr;
   GLXPbuffer pbuffer = 0;
-  EGLDisplay egl_display = EGL_NO_DISPLAY;
-  PFNEGLCREATEIMAGEKHRPROC egl_create_image = nullptr;
-  PFNEGLDESTROYIMAGEKHRPROC egl_destroy_image = nullptr;
-  PFNGLEGLIMAGETARGETTEXTURE2DOESPROC image_target_texture = nullptr;
   PFNGLGENFRAMEBUFFERSPROC gen_framebuffers = nullptr;
   PFNGLDELETEFRAMEBUFFERSPROC delete_framebuffers = nullptr;
   PFNGLBINDFRAMEBUFFERPROC bind_framebuffer = nullptr;
@@ -95,6 +94,7 @@ struct SessionState {
   bool image_waited = false;
   uint32_t image_index = 0;
   uint64_t rendered_generation = 0;
+  bool graphics_initialized = false;
 };
 
 struct FrameState {
@@ -177,11 +177,13 @@ void SocketMain(LayerHello hello) {
         for (int descriptor : received_fds) if (descriptor >= 0) close(descriptor);
         continue;
       }
-      std::lock_guard<std::mutex> lock(g_frame_mutex);
-      if (received_fd >= 0) {
-        if (g_frame.fd >= 0) close(g_frame.fd);
-        g_frame.fd = received_fd;
+      if (snapshot.generation == 0 || received_fd < 0) {
+        for (int descriptor : received_fds) if (descriptor >= 0) close(descriptor);
+        continue;
       }
+      std::lock_guard<std::mutex> lock(g_frame_mutex);
+      if (g_frame.fd >= 0) close(g_frame.fd);
+      g_frame.fd = received_fd;
       g_frame.snapshot = snapshot;
     }
     close(socket_fd);
@@ -279,7 +281,6 @@ bool InitializeGraphics(SessionState& state, const XrGraphicsBindingOpenGLXlibKH
   state.framebuffer_texture = GlProc<PFNGLFRAMEBUFFERTEXTURE2DPROC>("glFramebufferTexture2D");
   state.check_framebuffer = GlProc<PFNGLCHECKFRAMEBUFFERSTATUSPROC>("glCheckFramebufferStatus");
   state.blit_framebuffer = GlProc<PFNGLBLITFRAMEBUFFERPROC>("glBlitFramebuffer");
-  state.image_target_texture = GlProc<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>("glEGLImageTargetTexture2DOES");
   glGenTextures(1, &state.source_texture);
   if (state.gen_framebuffers != nullptr) {
     state.gen_framebuffers(1, &state.read_framebuffer);
@@ -291,13 +292,8 @@ bool InitializeGraphics(SessionState& state, const XrGraphicsBindingOpenGLXlibKH
     glXMakeContextCurrent(state.display, None, None, nullptr);
   }
 
-  state.egl_display = eglGetDisplay(reinterpret_cast<EGLNativeDisplayType>(state.display));
-  EGLint major = 0, minor = 0;
-  if (state.egl_display == EGL_NO_DISPLAY || eglInitialize(state.egl_display, &major, &minor) != EGL_TRUE) return false;
-  state.egl_create_image = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(eglGetProcAddress("eglCreateImageKHR"));
-  state.egl_destroy_image = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(eglGetProcAddress("eglDestroyImageKHR"));
   return state.gen_framebuffers && state.delete_framebuffers && state.bind_framebuffer && state.framebuffer_texture &&
-    state.check_framebuffer && state.blit_framebuffer && state.image_target_texture && state.egl_create_image && state.egl_destroy_image;
+    state.check_framebuffer && state.blit_framebuffer;
 }
 
 void DestroyGraphics(SessionState& state) {
@@ -320,7 +316,6 @@ void DestroyGraphics(SessionState& state) {
   }
   if (state.context) glXDestroyContext(state.display, state.context);
   if (state.pbuffer) glXDestroyPbuffer(state.display, state.pbuffer);
-  if (state.egl_display != EGL_NO_DISPLAY) eglTerminate(state.egl_display);
 }
 
 void DestroyOverlay(SessionState& state) {
@@ -364,32 +359,26 @@ bool EnsureSwapchain(SessionState& state, const OverlaySnapshot& snapshot) {
 }
 
 bool RenderFrame(SessionState& state, const OverlaySnapshot& snapshot, int fd) {
-  if (fd < 0 || snapshot.plane_count != 1 || !EnsureSwapchain(state, snapshot)) return false;
+  const uint64_t required_size = static_cast<uint64_t>(snapshot.planes[0].offset) +
+      static_cast<uint64_t>(snapshot.planes[0].stride) * snapshot.height;
+  if (fd < 0 || snapshot.plane_count != 1 || snapshot.modifier != DRM_FORMAT_MOD_INVALID ||
+      snapshot.planes[0].stride < snapshot.width * 4 || required_size > snapshot.planes[0].size ||
+      !EnsureSwapchain(state, snapshot)) return false;
   Display* previous_display = glXGetCurrentDisplay();
   GLXContext previous_context = glXGetCurrentContext();
   GLXDrawable previous_draw = glXGetCurrentDrawable();
   GLXDrawable previous_read = glXGetCurrentReadDrawable();
   if (!glXMakeContextCurrent(state.display, state.pbuffer, state.pbuffer, state.context)) return false;
-  std::vector<EGLint> attributes = {
-    EGL_WIDTH, static_cast<EGLint>(snapshot.width), EGL_HEIGHT, static_cast<EGLint>(snapshot.height),
-    EGL_LINUX_DRM_FOURCC_EXT, static_cast<EGLint>(snapshot.drm_format),
-    EGL_DMA_BUF_PLANE0_FD_EXT, fd,
-    EGL_DMA_BUF_PLANE0_OFFSET_EXT, static_cast<EGLint>(snapshot.planes[0].offset),
-    EGL_DMA_BUF_PLANE0_PITCH_EXT, static_cast<EGLint>(snapshot.planes[0].stride)};
-  const char* egl_extensions = eglQueryString(state.egl_display, EGL_EXTENSIONS);
-  if (snapshot.modifier != UINT64_MAX && egl_extensions != nullptr &&
-      std::strstr(egl_extensions, "EGL_EXT_image_dma_buf_import_modifiers") != nullptr) {
-    attributes.push_back(EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT);
-    attributes.push_back(static_cast<EGLint>(snapshot.modifier & 0xffffffffu));
-    attributes.push_back(EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT);
-    attributes.push_back(static_cast<EGLint>(snapshot.modifier >> 32));
-  }
-  attributes.push_back(EGL_NONE);
-  EGLImageKHR image = state.egl_create_image(state.egl_display, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, nullptr, attributes.data());
+  void* mapping = mmap(nullptr, snapshot.planes[0].size, PROT_READ, MAP_SHARED, fd, 0);
   bool copied = false;
-  if (image != EGL_NO_IMAGE_KHR) {
+  if (mapping != MAP_FAILED) {
     glBindTexture(GL_TEXTURE_2D, state.source_texture);
-    state.image_target_texture(GL_TEXTURE_2D, image);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, snapshot.planes[0].stride / 4);
+    const GLenum format = snapshot.drm_format == DRM_FORMAT_ARGB8888 ? GL_BGRA : GL_RGBA;
+    const auto* pixels = static_cast<const uint8_t*>(mapping) + snapshot.planes[0].offset;
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, snapshot.width, snapshot.height, 0, format, GL_UNSIGNED_BYTE, pixels);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     if (!state.image_acquired) {
       XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
       if (XR_SUCCEEDED(state.instance->dispatch.AcquireSwapchainImage(state.swapchain, &acquire, &state.image_index))) state.image_acquired = true;
@@ -414,7 +403,7 @@ bool RenderFrame(SessionState& state, const OverlaySnapshot& snapshot, int fd) {
       state.instance->dispatch.ReleaseSwapchainImage(state.swapchain, &release);
       state.image_acquired = state.image_waited = false;
     }
-    state.egl_destroy_image(state.egl_display, image);
+    munmap(mapping, snapshot.planes[0].size);
   }
   state.bind_framebuffer(GL_FRAMEBUFFER, 0);
   if (previous_display != nullptr && previous_context != nullptr) {
@@ -436,10 +425,12 @@ XrResult XRAPI_CALL LayerCreateSession(XrInstance instance, const XrSessionCreat
     const XrResult result = owner->dispatch.CreateSession(instance, info, session);
     if (XR_FAILED(result)) return result;
     auto state = std::make_shared<SessionState>(); state->session = *session; state->instance = owner;
-    if (binding != nullptr) state->compatible = InitializeGraphics(*state, *binding);
+    if (binding != nullptr) {
+      state->binding = *binding;
+      state->compatible = true;
+    }
     XrSystemProperties properties{XR_TYPE_SYSTEM_PROPERTIES};
     if (XR_SUCCEEDED(owner->dispatch.GetSystemProperties(instance, info->systemId, &properties))) state->max_layers = properties.graphicsProperties.maxLayerCount;
-    if (state->compatible) CreateSpaces(*state);
     { std::lock_guard<std::mutex> lock(g_mutex); g_sessions[*session] = state; }
     if (state->compatible && g_stop.exchange(false)) {
       LayerHello hello{}; hello.header = {kProtocolMagic, kProtocolVersion, MessageType::kHello, sizeof(hello), 0, 0};
@@ -476,7 +467,11 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* info)
         (state->max_layers && info->layerCount >= state->max_layers)) return forward();
     OverlaySnapshot snapshot{}; int fd = -1;
     { std::lock_guard<std::mutex> lock(g_frame_mutex); snapshot = g_frame.snapshot; if (g_frame.fd >= 0) fd = dup(g_frame.fd); }
-    const bool copied = snapshot.visible && snapshot.generation != 0 && RenderFrame(*state, snapshot, fd);
+    if (fd >= 0 && snapshot.generation != 0 && !state->graphics_initialized) {
+      state->graphics_initialized = InitializeGraphics(*state, state->binding);
+      if (state->graphics_initialized) CreateSpaces(*state);
+    }
+    const bool copied = state->graphics_initialized && snapshot.visible && snapshot.generation != 0 && RenderFrame(*state, snapshot, fd);
     if (fd >= 0) close(fd);
     const XrSpace space = snapshot.placement_mode == PlacementMode::kHead ? state->view_space :
       (state->stage_space ? state->stage_space : state->local_space);

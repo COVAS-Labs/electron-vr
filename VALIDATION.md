@@ -412,8 +412,8 @@ Expected final state is `installed=false` and `enabled=false`.
 ### Requirements
 
 - Ubuntu 24.04 x64 is the reference distribution. Record deviations.
-- An X11 desktop session, or a Wayland session where Electron is forced through
-  XWayland and the controlled host confirms `XrGraphicsBindingOpenGLXlibKHR`.
+- An X11 desktop session, or a Wayland session where the controlled host runs
+  through XWayland and confirms `XrGraphicsBindingOpenGLXlibKHR`.
 - A valid per-user `XDG_RUNTIME_DIR` owned by the current user, normally
   `/run/user/$(id -u)`.
 - A physical OpenGL/Vulkan-capable GPU and current Mesa or NVIDIA driver.
@@ -510,15 +510,10 @@ test -O "$XDG_RUNTIME_DIR"
 ```
 
 On Wayland, XWayland is acceptable when the host still uses the OpenXR Xlib
-binding. Force Electron onto XWayland for every Electron command:
-
-```bash
-export ELECTRON_OZONE_PLATFORM_HINT=x11
-```
-
-Do not infer the OpenXR binding from `XDG_SESSION_TYPE`; confirm that the host
-supplied `XrGraphicsBindingOpenGLXlibKHR`. Native Wayland and Xcb OpenXR
-bindings remain unsupported by the implicit layer.
+binding. Do not infer the OpenXR binding from `XDG_SESSION_TYPE`; confirm that
+the host supplied `XrGraphicsBindingOpenGLXlibKHR`. Electron may remain native
+Wayland when that is required for shared-texture DMA-BUF export. Native Wayland
+and Xcb OpenXR host bindings remain unsupported by the implicit layer.
 
 Then build and probe:
 

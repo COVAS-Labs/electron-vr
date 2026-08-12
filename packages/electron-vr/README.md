@@ -75,7 +75,7 @@ When `XR_EXTX_overlay` is unavailable, Linux x64 can use the explicitly installe
 npx electron-vr-openxr-layer install
 ```
 
-The initial Linux layer supports desktop OpenGL Xlib sessions and one single-plane RGB DMA-BUF overlay. Xcb, Wayland, Vulkan, multiplane formats, explicit synchronization, and curvature are not yet supported.
+The initial Linux layer supports desktop OpenGL Xlib sessions and one single-plane linear RGB DMA-BUF overlay. Xcb, native Wayland host bindings, Vulkan, modifier-backed or multiplane buffers, explicit synchronization, and curvature are not yet supported.
 
 On Windows x64, selection prefers a direct `XR_EXTX_overlay` session, then an installed implicit API layer for D3D11 or D3D12 hosts, then OpenVR, then mock. API-layer installation is explicit:
 
