@@ -76,7 +76,7 @@ const metadata = {
       manifest: "electron_vr_openxr_layer.json",
       library: "electron_vr_openxr_layer.dll",
       cli: "electron_vr_openxr_layer_cli.exe",
-      protocolVersion: 1
+      protocolVersion: 2
     }
   } : {})
 };

@@ -5,9 +5,9 @@
 namespace electron_vr::openxr_layer {
 
 constexpr uint32_t kProtocolMagic = 0x45565258;  // EVRX
-constexpr uint32_t kProtocolVersion = 1;
+constexpr uint32_t kProtocolVersion = 2;
 constexpr uint32_t kTextureSlotCount = 3;
-constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\electron-vr-openxr-overlay-v1";
+constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\electron-vr-openxr-overlay-v2";
 
 enum class GraphicsApi : uint32_t {
   kUnknown = 0,
@@ -41,6 +41,8 @@ struct LayerHello {
 
 struct TextureSlot {
   uint64_t handle = 0;
+  uint64_t fence_handle = 0;
+  uint64_t fence_value = 0;
   uint64_t sequence = 0;
 };
 

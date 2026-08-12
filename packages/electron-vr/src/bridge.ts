@@ -15,6 +15,7 @@ export interface RuntimeInfo {
   openxrLinuxEglBindingAvailable: boolean;
   openxrLinuxOpenGlesBindingAvailable: boolean;
   openxrWindowsD3D11BindingAvailable: boolean;
+  openxrWindowsD3D12BindingAvailable: boolean;
   openxrMacosMetalBindingAvailable: boolean;
   openxrRuntimeName: string;
   openxrRuntimeManifestPath: string;
@@ -263,6 +264,7 @@ function sanitizeRuntimeInfo(runtimeInfo: RuntimeInfo): RuntimeInfo {
     ...runtimeInfo,
     openxrSessionState: runtimeInfo.openxrSessionState ?? "unknown",
     openxrSessionRunning: runtimeInfo.openxrSessionRunning ?? false,
+    openxrWindowsD3D12BindingAvailable: runtimeInfo.openxrWindowsD3D12BindingAvailable ?? false,
     openxrMode: runtimeInfo.openxrMode ?? "none",
     openxrApiLayerInstalled: runtimeInfo.openxrApiLayerInstalled ?? false,
     openxrApiLayerEnabled: runtimeInfo.openxrApiLayerEnabled ?? false,

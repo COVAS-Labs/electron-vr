@@ -1,6 +1,7 @@
 #define XR_NO_PROTOTYPES
 #define XR_USE_PLATFORM_WIN32
 #define XR_USE_GRAPHICS_API_D3D11
+#define XR_USE_GRAPHICS_API_D3D12
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -12,6 +13,7 @@
 #include <windows.h>
 #include <d3d11_1.h>
 #include <d3d11_4.h>
+#include <d3d12.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
 
@@ -75,28 +77,47 @@ struct InstanceState {
   DispatchTable dispatch;
   std::string application_name;
   bool d3d11_enabled = false;
+  bool d3d12_enabled = false;
 };
 
 struct ImportedSlot {
-  ComPtr<ID3D11Texture2D> texture;
+  ComPtr<ID3D11Texture2D> texture11;
   ComPtr<IDXGIKeyedMutex> keyed_mutex;
+  ComPtr<ID3D12Resource> texture12;
+  ComPtr<ID3D12Fence> fence12;
+  uint64_t acknowledged_fence_value = 0;
+};
+
+struct D3D12AllocatorState {
+  ComPtr<ID3D12CommandAllocator> allocator;
+  uint64_t completion_value = 0;
 };
 
 struct SessionState {
   XrSession session = XR_NULL_HANDLE;
   std::shared_ptr<InstanceState> instance;
-  ComPtr<ID3D11Device> device;
-  ComPtr<ID3D11Device1> device1;
-  ComPtr<ID3D11DeviceContext> context;
+  GraphicsApi graphics_api = GraphicsApi::kUnknown;
+  ComPtr<ID3D11Device> device11;
+  ComPtr<ID3D11Device1> device11_1;
+  ComPtr<ID3D11DeviceContext> context11;
+  ComPtr<ID3D12Device> device12;
+  ComPtr<ID3D12CommandQueue> queue12;
+  ComPtr<ID3D12GraphicsCommandList> command_list12;
+  ComPtr<ID3D12Fence> completion_fence12;
+  std::array<D3D12AllocatorState, kTextureSlotCount> allocators12;
+  uint64_t next_completion_value12 = 1;
   LUID adapter_luid{};
   XrSpace view_space = XR_NULL_HANDLE;
   XrSpace local_space = XR_NULL_HANDLE;
   XrSpace stage_space = XR_NULL_HANDLE;
   XrSwapchain swapchain = XR_NULL_HANDLE;
-  std::vector<XrSwapchainImageD3D11KHR> images;
+  std::vector<XrSwapchainImageD3D11KHR> images11;
+  std::vector<XrSwapchainImageD3D12KHR> images12;
   std::array<ImportedSlot, kTextureSlotCount> imported_slots;
   uint64_t imported_generation = 0;
   uint64_t rejected_generation = 0;
+  uint64_t pending_generation = 0;
+  uint64_t resource_retirement_value12 = 0;
   uint64_t consumed_sequence = 0;
   uint32_t width = 0;
   uint32_t height = 0;
@@ -286,12 +307,24 @@ const XrGraphicsBindingD3D11KHR* FindD3D11Binding(const XrSessionCreateInfo* inf
   return nullptr;
 }
 
+const XrGraphicsBindingD3D12KHR* FindD3D12Binding(const XrSessionCreateInfo* info) {
+  if (info == nullptr) return nullptr;
+  const XrBaseInStructure* node = static_cast<const XrBaseInStructure*>(info->next);
+  while (node != nullptr) {
+    if (node->type == XR_TYPE_GRAPHICS_BINDING_D3D12_KHR) {
+      return reinterpret_cast<const XrGraphicsBindingD3D12KHR*>(node);
+    }
+    node = node->next;
+  }
+  return nullptr;
+}
+
 void DestroyOverlayResources(SessionState& state) {
   const DispatchTable& dispatch = state.instance->dispatch;
   if (state.image_acquired && state.swapchain != XR_NULL_HANDLE) {
     XrSwapchainImageWaitInfo wait_info{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-    wait_info.timeout = 0;
-    if (dispatch.WaitSwapchainImage(state.swapchain, &wait_info) == XR_SUCCESS) {
+    wait_info.timeout = XR_INFINITE_DURATION;
+    if (XR_SUCCEEDED(dispatch.WaitSwapchainImage(state.swapchain, &wait_info))) {
       XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
       dispatch.ReleaseSwapchainImage(state.swapchain, &release_info);
     }
@@ -300,12 +333,18 @@ void DestroyOverlayResources(SessionState& state) {
   state.image_waited = false;
   for (ImportedSlot& slot : state.imported_slots) {
     slot.keyed_mutex.Reset();
-    slot.texture.Reset();
+    slot.texture11.Reset();
+    slot.texture12.Reset();
+    slot.fence12.Reset();
+    slot.acknowledged_fence_value = 0;
   }
   state.imported_generation = 0;
   state.rejected_generation = 0;
+  state.pending_generation = 0;
+  state.resource_retirement_value12 = 0;
   state.consumed_sequence = 0;
-  state.images.clear();
+  state.images11.clear();
+  state.images12.clear();
   if (state.swapchain != XR_NULL_HANDLE) {
     dispatch.DestroySwapchain(state.swapchain);
     state.swapchain = XR_NULL_HANDLE;
@@ -316,6 +355,19 @@ void DestroyOverlayResources(SessionState& state) {
 }
 
 void DestroySessionResources(SessionState& state) {
+  if (state.queue12 != nullptr && state.completion_fence12 != nullptr) {
+    const uint64_t completion_value = state.next_completion_value12++;
+    if (SUCCEEDED(state.queue12->Signal(state.completion_fence12.Get(), completion_value)) &&
+        state.completion_fence12->GetCompletedValue() < completion_value) {
+      HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+      if (event != nullptr) {
+        if (SUCCEEDED(state.completion_fence12->SetEventOnCompletion(completion_value, event))) {
+          WaitForSingleObject(event, INFINITE);
+        }
+        CloseHandle(event);
+      }
+    }
+  }
   DestroyOverlayResources(state);
   const DispatchTable& dispatch = state.instance->dispatch;
   if (state.stage_space != XR_NULL_HANDLE) dispatch.DestroySpace(state.stage_space);
@@ -324,9 +376,14 @@ void DestroySessionResources(SessionState& state) {
   state.stage_space = XR_NULL_HANDLE;
   state.local_space = XR_NULL_HANDLE;
   state.view_space = XR_NULL_HANDLE;
-  state.context.Reset();
-  state.device1.Reset();
-  state.device.Reset();
+  state.command_list12.Reset();
+  for (auto& allocator : state.allocators12) allocator.allocator.Reset();
+  state.completion_fence12.Reset();
+  state.queue12.Reset();
+  state.device12.Reset();
+  state.context11.Reset();
+  state.device11_1.Reset();
+  state.device11.Reset();
 }
 
 void CreateReferenceSpaces(SessionState& state) {
@@ -362,11 +419,12 @@ bool QueryAdapterLuid(ID3D11Device* device, LUID* luid) {
 bool OpenImportedTextures(SessionState& state, const OverlaySnapshot& snapshot) {
   if (state.imported_generation == snapshot.texture_generation) {
     return std::all_of(state.imported_slots.begin(), state.imported_slots.end(), [](const ImportedSlot& slot) {
-      return slot.texture != nullptr && slot.keyed_mutex != nullptr;
+      return (slot.texture11 != nullptr && slot.keyed_mutex != nullptr) ||
+             (slot.texture12 != nullptr && slot.fence12 != nullptr);
     });
   }
   if (state.rejected_generation == snapshot.texture_generation) return false;
-  if (snapshot.texture_generation == 0 || state.device1 == nullptr) return false;
+  if (snapshot.texture_generation == 0) return false;
 
   std::array<ImportedSlot, kTextureSlotCount> imported_slots;
   bool valid = true;
@@ -376,18 +434,42 @@ bool OpenImportedTextures(SessionState& state, const OverlaySnapshot& snapshot) 
       valid = false;
       continue;
     }
-    const HRESULT open_result = state.device1->OpenSharedResource1(handle, IID_PPV_ARGS(&imported_slots[index].texture));
-    CloseHandle(handle);
-    if (FAILED(open_result) || imported_slots[index].texture == nullptr ||
-        FAILED(imported_slots[index].texture.As(&imported_slots[index].keyed_mutex))) {
-      valid = false;
-      continue;
-    }
-    D3D11_TEXTURE2D_DESC desc{};
-    imported_slots[index].texture->GetDesc(&desc);
-    if (desc.Width != snapshot.width || desc.Height != snapshot.height ||
-        desc.Format != static_cast<DXGI_FORMAT>(snapshot.dxgi_format) ||
-        desc.MipLevels != 1 || desc.ArraySize != 1 || desc.SampleDesc.Count != 1) {
+    if (state.graphics_api == GraphicsApi::kD3D11 && state.device11_1 != nullptr) {
+      const HRESULT open_result = state.device11_1->OpenSharedResource1(handle, IID_PPV_ARGS(&imported_slots[index].texture11));
+      CloseHandle(handle);
+      if (FAILED(open_result) || imported_slots[index].texture11 == nullptr ||
+          FAILED(imported_slots[index].texture11.As(&imported_slots[index].keyed_mutex))) {
+        valid = false;
+        continue;
+      }
+      D3D11_TEXTURE2D_DESC desc{};
+      imported_slots[index].texture11->GetDesc(&desc);
+      if (desc.Width != snapshot.width || desc.Height != snapshot.height ||
+          desc.Format != static_cast<DXGI_FORMAT>(snapshot.dxgi_format) ||
+          desc.MipLevels != 1 || desc.ArraySize != 1 || desc.SampleDesc.Count != 1) {
+        valid = false;
+      }
+    } else if (state.graphics_api == GraphicsApi::kD3D12 && state.device12 != nullptr) {
+      const HRESULT open_result = state.device12->OpenSharedHandle(handle, IID_PPV_ARGS(&imported_slots[index].texture12));
+      CloseHandle(handle);
+      const HANDLE fence_handle = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(snapshot.slots[index].fence_handle));
+      HRESULT fence_result = E_INVALIDARG;
+      if (fence_handle != nullptr) {
+        fence_result = state.device12->OpenSharedHandle(fence_handle, IID_PPV_ARGS(&imported_slots[index].fence12));
+        CloseHandle(fence_handle);
+      }
+      if (FAILED(open_result) || FAILED(fence_result) || imported_slots[index].texture12 == nullptr || imported_slots[index].fence12 == nullptr) {
+        valid = false;
+        continue;
+      }
+      const D3D12_RESOURCE_DESC desc = imported_slots[index].texture12->GetDesc();
+      if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || desc.Width != snapshot.width ||
+          desc.Height != snapshot.height || desc.Format != static_cast<DXGI_FORMAT>(snapshot.dxgi_format) ||
+          desc.MipLevels != 1 || desc.DepthOrArraySize != 1 || desc.SampleDesc.Count != 1) {
+        valid = false;
+      }
+    } else {
+      CloseHandle(handle);
       valid = false;
     }
   }
@@ -412,6 +494,9 @@ bool CreateOverlaySwapchain(SessionState& state, const OverlaySnapshot& snapshot
 
   XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
   info.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+  if (state.graphics_api == GraphicsApi::kD3D12) {
+    info.usageFlags |= XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+  }
   info.format = desired_format;
   info.sampleCount = 1;
   info.width = snapshot.width;
@@ -427,12 +512,19 @@ bool CreateOverlaySwapchain(SessionState& state, const OverlaySnapshot& snapshot
     state.swapchain = XR_NULL_HANDLE;
     return false;
   }
-  state.images.resize(image_count);
-  for (auto& image : state.images) image = {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR};
-  if (XR_FAILED(dispatch.EnumerateSwapchainImages(
-        state.swapchain, image_count, &image_count,
-        reinterpret_cast<XrSwapchainImageBaseHeader*>(state.images.data())))) {
-    state.images.clear();
+  XrSwapchainImageBaseHeader* images = nullptr;
+  if (state.graphics_api == GraphicsApi::kD3D11) {
+    state.images11.resize(image_count);
+    for (auto& image : state.images11) image = {XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR};
+    images = reinterpret_cast<XrSwapchainImageBaseHeader*>(state.images11.data());
+  } else {
+    state.images12.resize(image_count);
+    for (auto& image : state.images12) image = {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR};
+    images = reinterpret_cast<XrSwapchainImageBaseHeader*>(state.images12.data());
+  }
+  if (XR_FAILED(dispatch.EnumerateSwapchainImages(state.swapchain, image_count, &image_count, images))) {
+    state.images11.clear();
+    state.images12.clear();
     dispatch.DestroySwapchain(state.swapchain);
     state.swapchain = XR_NULL_HANDLE;
     return false;
@@ -450,17 +542,115 @@ bool EnsureOverlayResources(SessionState& state, const OverlaySnapshot& snapshot
                        state.format != static_cast<DXGI_FORMAT>(snapshot.dxgi_format) ||
                        state.imported_generation != snapshot.texture_generation;
   if (changed) {
-    if (state.image_acquired) return false;
+    if (state.image_acquired) {
+      XrSwapchainImageWaitInfo wait_info{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+      wait_info.timeout = 0;
+      const XrResult wait_result = state.instance->dispatch.WaitSwapchainImage(state.swapchain, &wait_info);
+      if (wait_result == XR_TIMEOUT_EXPIRED || XR_FAILED(wait_result)) return false;
+      XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+      if (XR_FAILED(state.instance->dispatch.ReleaseSwapchainImage(state.swapchain, &release_info))) return false;
+      state.image_acquired = false;
+      state.image_waited = false;
+    }
+    if (state.graphics_api == GraphicsApi::kD3D12 && state.swapchain != XR_NULL_HANDLE) {
+      if (state.pending_generation != snapshot.texture_generation) {
+        const uint64_t retirement_value = state.next_completion_value12++;
+        if (FAILED(state.queue12->Signal(state.completion_fence12.Get(), retirement_value))) return false;
+        state.pending_generation = snapshot.texture_generation;
+        state.resource_retirement_value12 = retirement_value;
+        return false;
+      }
+      if (state.completion_fence12->GetCompletedValue() < state.resource_retirement_value12) return false;
+    }
     DestroyOverlayResources(state);
   }
   if (!OpenImportedTextures(state, snapshot)) return false;
   return state.swapchain != XR_NULL_HANDLE || CreateOverlaySwapchain(state, snapshot);
 }
 
+D3D12_RESOURCE_BARRIER TransitionBarrier(
+    ID3D12Resource* resource,
+    D3D12_RESOURCE_STATES before,
+    D3D12_RESOURCE_STATES after) {
+  D3D12_RESOURCE_BARRIER barrier{};
+  barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+  barrier.Transition.pResource = resource;
+  barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+  barrier.Transition.StateBefore = before;
+  barrier.Transition.StateAfter = after;
+  return barrier;
+}
+
+bool CopyLatestFrameD3D12(SessionState& state, const OverlaySnapshot& snapshot) {
+  ImportedSlot& source = state.imported_slots[snapshot.latest_slot];
+  if (source.texture12 == nullptr || source.fence12 == nullptr ||
+      state.acquired_image_index >= state.images12.size() || state.images12[state.acquired_image_index].texture == nullptr) {
+    return false;
+  }
+
+  D3D12AllocatorState* allocator_state = nullptr;
+  const uint64_t completed = state.completion_fence12->GetCompletedValue();
+  for (auto& candidate : state.allocators12) {
+    if (candidate.completion_value == 0 || candidate.completion_value <= completed) {
+      allocator_state = &candidate;
+      break;
+    }
+  }
+  if (allocator_state == nullptr || FAILED(allocator_state->allocator->Reset()) ||
+      FAILED(state.command_list12->Reset(allocator_state->allocator.Get(), nullptr))) {
+    return false;
+  }
+
+  ID3D12Resource* destination = state.images12[state.acquired_image_index].texture;
+  const D3D12_RESOURCE_BARRIER barriers_before[] = {
+    TransitionBarrier(source.texture12.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE),
+    TransitionBarrier(destination, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST),
+  };
+  state.command_list12->ResourceBarrier(2, barriers_before);
+  state.command_list12->CopyResource(destination, source.texture12.Get());
+  const D3D12_RESOURCE_BARRIER barriers_after[] = {
+    TransitionBarrier(destination, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET),
+    TransitionBarrier(source.texture12.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON),
+  };
+  state.command_list12->ResourceBarrier(2, barriers_after);
+  if (FAILED(state.command_list12->Close()) ||
+      FAILED(state.queue12->Wait(source.fence12.Get(), snapshot.slots[snapshot.latest_slot].fence_value))) {
+    return false;
+  }
+  ID3D12CommandList* lists[] = {state.command_list12.Get()};
+  state.queue12->ExecuteCommandLists(1, lists);
+  const uint64_t completion_value = state.next_completion_value12++;
+  allocator_state->completion_value = completion_value;
+  const HRESULT completion_signal = state.queue12->Signal(state.completion_fence12.Get(), completion_value);
+  const HRESULT acknowledgement_signal = state.queue12->Signal(
+    source.fence12.Get(), snapshot.slots[snapshot.latest_slot].fence_value + 1);
+  if (FAILED(completion_signal) || FAILED(acknowledgement_signal)) {
+    if (FAILED(completion_signal)) allocator_state->completion_value = UINT64_MAX;
+    return false;
+  }
+  source.acknowledged_fence_value = snapshot.slots[snapshot.latest_slot].fence_value + 1;
+  return true;
+}
+
+void AcknowledgeUnusedD3D12Slots(SessionState& state, const OverlaySnapshot& snapshot) {
+  if (state.graphics_api != GraphicsApi::kD3D12 || state.queue12 == nullptr) return;
+  for (uint32_t index = 0; index < kTextureSlotCount; ++index) {
+    if (index == snapshot.latest_slot) continue;
+    ImportedSlot& slot = state.imported_slots[index];
+    const uint64_t ready_value = snapshot.slots[index].fence_value;
+    if (ready_value == 0 || slot.fence12 == nullptr || slot.acknowledged_fence_value >= ready_value + 1) continue;
+    if (SUCCEEDED(state.queue12->Wait(slot.fence12.Get(), ready_value)) &&
+        SUCCEEDED(state.queue12->Signal(slot.fence12.Get(), ready_value + 1))) {
+      slot.acknowledged_fence_value = ready_value + 1;
+    }
+  }
+}
+
 bool CopyLatestFrame(SessionState& state, const OverlaySnapshot& snapshot) {
   if (snapshot.latest_sequence == state.consumed_sequence) return state.consumed_sequence != 0;
   if (snapshot.latest_slot >= kTextureSlotCount || snapshot.slots[snapshot.latest_slot].sequence != snapshot.latest_sequence) return false;
   const DispatchTable& dispatch = state.instance->dispatch;
+  AcknowledgeUnusedD3D12Slots(state, snapshot);
 
   if (!state.image_acquired) {
     XrSwapchainImageAcquireInfo acquire_info{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
@@ -479,16 +669,18 @@ bool CopyLatestFrame(SessionState& state, const OverlaySnapshot& snapshot) {
 
   bool copied = false;
   ImportedSlot& source = state.imported_slots[snapshot.latest_slot];
-  if (source.keyed_mutex != nullptr && source.texture != nullptr) {
+  if (state.graphics_api == GraphicsApi::kD3D11 && source.keyed_mutex != nullptr && source.texture11 != nullptr) {
     const HRESULT mutex_result = source.keyed_mutex->AcquireSync(1, kMutexWaitTimeoutMs);
     if (mutex_result == S_OK) {
-      if (state.acquired_image_index < state.images.size() && state.images[state.acquired_image_index].texture != nullptr) {
-        state.context->CopyResource(state.images[state.acquired_image_index].texture, source.texture.Get());
-        state.context->Flush();
+      if (state.acquired_image_index < state.images11.size() && state.images11[state.acquired_image_index].texture != nullptr) {
+        state.context11->CopyResource(state.images11[state.acquired_image_index].texture, source.texture11.Get());
+        state.context11->Flush();
         copied = true;
       }
       source.keyed_mutex->ReleaseSync(0);
     }
+  } else if (state.graphics_api == GraphicsApi::kD3D12) {
+    copied = CopyLatestFrameD3D12(state, snapshot);
   }
   XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
   const XrResult release_result = dispatch.ReleaseSwapchainImage(state.swapchain, &release_info);
@@ -516,7 +708,7 @@ XrSpace SelectSpace(const SessionState& state, PlacementMode mode) {
 LayerHello MakeLayerHello(const SessionState& state) {
   LayerHello hello{};
   hello.process_id = GetCurrentProcessId();
-  hello.graphics_api = GraphicsApi::kD3D11;
+  hello.graphics_api = state.graphics_api;
   hello.adapter_luid.low_part = state.adapter_luid.LowPart;
   hello.adapter_luid.high_part = state.adapter_luid.HighPart;
   std::strncpy(hello.application_name, state.instance->application_name.c_str(), sizeof(hello.application_name) - 1);
@@ -574,8 +766,15 @@ XrResult XRAPI_CALL LayerCreateSession(XrInstance instance, const XrSessionCreat
     const auto instance_state = FindInstance(instance);
     if (instance_state == nullptr || create_info == nullptr || session == nullptr) return XR_ERROR_VALIDATION_FAILURE;
     const XrGraphicsBindingD3D11KHR* binding = FindD3D11Binding(create_info);
-    ComPtr<ID3D11Device> device;
-    if (binding != nullptr && binding->device != nullptr) device = binding->device;
+    const XrGraphicsBindingD3D12KHR* binding12 = FindD3D12Binding(create_info);
+    ComPtr<ID3D11Device> device11;
+    ComPtr<ID3D12Device> device12;
+    ComPtr<ID3D12CommandQueue> queue12;
+    if (binding != nullptr && binding->device != nullptr) device11 = binding->device;
+    if (binding12 != nullptr && binding12->device != nullptr && binding12->queue != nullptr) {
+      device12 = binding12->device;
+      queue12 = binding12->queue;
+    }
 
     const XrResult result = instance_state->dispatch.CreateSession(instance, create_info, session);
     if (XR_FAILED(result)) return result;
@@ -583,15 +782,39 @@ XrResult XRAPI_CALL LayerCreateSession(XrInstance instance, const XrSessionCreat
     auto state = std::make_shared<SessionState>();
     state->session = *session;
     state->instance = instance_state;
-    state->device = device;
-    if (state->device != nullptr) {
-      state->device.As(&state->device1);
-      state->device->GetImmediateContext(&state->context);
+    state->device11 = device11;
+    state->device12 = device12;
+    state->queue12 = queue12;
+    if (state->device11 != nullptr) {
+      state->graphics_api = GraphicsApi::kD3D11;
+      state->device11.As(&state->device11_1);
+      state->device11->GetImmediateContext(&state->context11);
       ComPtr<ID3D11Multithread> multithread;
-      if (state->context != nullptr && SUCCEEDED(state->context.As(&multithread))) {
+      if (state->context11 != nullptr && SUCCEEDED(state->context11.As(&multithread))) {
         multithread->SetMultithreadProtected(TRUE);
       }
-      state->compatible = state->device1 != nullptr && QueryAdapterLuid(state->device.Get(), &state->adapter_luid);
+      state->compatible = state->device11_1 != nullptr && QueryAdapterLuid(state->device11.Get(), &state->adapter_luid);
+    } else if (state->device12 != nullptr && state->queue12 != nullptr &&
+               state->queue12->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT) {
+      state->graphics_api = GraphicsApi::kD3D12;
+      state->adapter_luid = state->device12->GetAdapterLuid();
+      state->compatible = SUCCEEDED(state->device12->CreateFence(
+        0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&state->completion_fence12)));
+      for (auto& allocator : state->allocators12) {
+        if (state->compatible) {
+          state->compatible = SUCCEEDED(state->device12->CreateCommandAllocator(
+            D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator.allocator)));
+        }
+      }
+      if (state->compatible) {
+        state->compatible = SUCCEEDED(state->device12->CreateCommandList(
+          0,
+          D3D12_COMMAND_LIST_TYPE_DIRECT,
+          state->allocators12[0].allocator.Get(),
+          nullptr,
+          IID_PPV_ARGS(&state->command_list12)));
+        if (state->compatible) state->compatible = SUCCEEDED(state->command_list12->Close());
+      }
     }
     XrSystemProperties properties{XR_TYPE_SYSTEM_PROPERTIES};
     if (XR_SUCCEEDED(instance_state->dispatch.GetSystemProperties(instance, create_info->systemId, &properties))) {
@@ -760,6 +983,7 @@ XrResult XRAPI_CALL LayerCreateApiLayerInstance(
     state->next_get_instance_proc_addr = next->nextGetInstanceProcAddr;
     state->application_name = info->applicationInfo.applicationName;
     state->d3d11_enabled = HasEnabledExtension(info, XR_KHR_D3D11_ENABLE_EXTENSION_NAME);
+    state->d3d12_enabled = HasEnabledExtension(info, XR_KHR_D3D12_ENABLE_EXTENSION_NAME);
     XrApiLayerCreateInfo downstream_info = *layer_info;
     downstream_info.nextInfo = next->next;
     const XrResult result = next->nextCreateApiLayerInstance(info, &downstream_info, instance);

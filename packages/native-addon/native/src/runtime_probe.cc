@@ -19,7 +19,11 @@
 #ifndef XR_USE_GRAPHICS_API_D3D11
 #define XR_USE_GRAPHICS_API_D3D11
 #endif
+#ifndef XR_USE_GRAPHICS_API_D3D12
+#define XR_USE_GRAPHICS_API_D3D12
+#endif
 #include <d3d11_1.h>
+#include <d3d12.h>
 #include <dxgi1_2.h>
 #include <windows.h>
 #include <openxr/openxr.h>
@@ -488,6 +492,7 @@ bool QueryOpenXRExtensions(RuntimeInfo* info) {
   info->openxr_available = true;
   info->openxr_overlay_extension_available = HasExtension(extensions, XR_EXTX_OVERLAY_EXTENSION_NAME);
   info->openxr_windows_d3d11_binding_available = HasExtension(extensions, XR_KHR_D3D11_ENABLE_EXTENSION_NAME);
+  info->openxr_windows_d3d12_binding_available = HasExtension(extensions, XR_KHR_D3D12_ENABLE_EXTENSION_NAME);
   info->probe_mode = "openxr-extension-enumeration";
   FreeLibrary(loader_module);
   return true;
@@ -608,6 +613,7 @@ RuntimeInfo ProbeRuntime() {
       info.openxr_available = false;
       info.openxr_overlay_extension_available = false;
       info.openxr_windows_d3d11_binding_available = false;
+      info.openxr_windows_d3d12_binding_available = false;
     }
   }
 
@@ -620,8 +626,10 @@ RuntimeInfo ProbeRuntime() {
     info.openxr_api_layer_enabled = false;
   }
 
-  const bool openxr_ready = info.openxr_available && info.openxr_windows_d3d11_binding_available;
-  const bool direct_openxr_ready = openxr_ready && info.openxr_overlay_extension_available;
+  const bool openxr_ready = info.openxr_available &&
+                            (info.openxr_windows_d3d11_binding_available || info.openxr_windows_d3d12_binding_available);
+  const bool direct_openxr_ready = info.openxr_available && info.openxr_overlay_extension_available &&
+                                   info.openxr_windows_d3d11_binding_available;
   const bool api_layer_ready = openxr_ready && info.openxr_api_layer_installed && info.openxr_api_layer_enabled;
   const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
   const bool openxr_enabled = !openxr_disabled_by_env && (direct_openxr_ready || api_layer_ready);
@@ -680,6 +688,7 @@ RuntimeInfo ProbeRuntime() {
   info.openxr_linux_egl_binding_available = false;
   info.openxr_linux_opengl_es_binding_available = false;
   info.openxr_windows_d3d11_binding_available = false;
+  info.openxr_windows_d3d12_binding_available = false;
   info.openxr_macos_metal_binding_available = false;
 
   if (info.openvr_available && info.openvr_runtime_installed) {

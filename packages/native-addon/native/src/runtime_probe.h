@@ -26,6 +26,7 @@ struct RuntimeInfo {
   bool openxr_linux_egl_binding_available = false;
   bool openxr_linux_opengl_es_binding_available = false;
   bool openxr_windows_d3d11_binding_available = false;
+  bool openxr_windows_d3d12_binding_available = false;
   bool openxr_macos_metal_binding_available = false;
   std::string openxr_runtime_name;
   std::string openxr_runtime_manifest_path;

@@ -96,7 +96,7 @@ The packaged Windows and Linux builds bundle the OpenVR runtime library they nee
 
 ### Windows OpenXR API layer
 
-Windows x64 packages include an implicit OpenXR API layer for D3D11 applications. Installation is explicit; `npm install` never changes global OpenXR registration.
+Windows x64 packages include an implicit OpenXR API layer for D3D11 and D3D12 applications. Installation is explicit; `npm install` never changes global OpenXR registration.
 
 For a packaged consumer application:
 
@@ -112,7 +112,7 @@ From this repository, use `npm run openxr-layer -- <command>` after `npm run reb
 
 The layer is registered per user in `HKCU`, uses the host application's D3D11 device, and exchanges a three-slot keyed-mutex texture ring with Electron. It passes every OpenXR call through unchanged when no companion is connected or overlay submission fails. Set `ELECTRON_VR_DISABLE_OPENXR_API_LAYER=1` as an emergency process-level disable switch.
 
-The first milestone supports one flat quad in Windows x64 D3D11 OpenXR applications. D3D12, positive curvature, cross-adapter copying, 32-bit applications, elevated applications, and anti-cheat-protected processes are not supported yet. Per-user API layers are not loaded into elevated OpenXR applications by the Khronos loader.
+The API layer supports one flat quad in Windows x64 D3D11 and D3D12 OpenXR applications. D3D12 uses cross-API shared textures and shared fences on the application's OpenXR command queue. Positive curvature, cross-adapter copying, 32-bit applications, elevated applications, and anti-cheat-protected processes are not supported yet. Per-user API layers are not loaded into elevated OpenXR applications by the Khronos loader.
 
 Runtime selection prefers a direct `XR_EXTX_overlay` session, then the installed and enabled API layer, then OpenVR, then mock. This path is compiled in Windows CI, but real runtime/game validation still requires a Windows VR machine.
 

@@ -21,7 +21,7 @@ The Windows D3D11 single-overlay vertical slice is implemented in the workspace:
 - Windows prebuilt packaging and CI artifact checks
 - Pass-through behavior when the companion, graphics API, texture, or overlay resources are unavailable
 
-Local macOS builds, TypeScript builds, unit tests, and runtime-info tests pass. Windows compilation, loader activation, and real runtime/game validation remain required before the first milestone can be considered validated. D3D12 and the later Linux/macOS API-layer follow-ups remain intentionally unimplemented.
+Local builds, TypeScript tests, and runtime-info tests pass. The D3D11 API-layer build and headless Windows harness pass in CI. D3D12 host support is now implemented with shared fences and is pending the same Windows CI and real runtime/game validation. Later Linux/macOS API-layer follow-ups remain intentionally unimplemented.
 
 ## Target Architecture
 

@@ -1,4 +1,6 @@
 #define XR_NO_PROTOTYPES
+#define XR_USE_PLATFORM_WIN32
+#define XR_USE_GRAPHICS_API_D3D12
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -8,9 +10,13 @@
 #endif
 
 #include <windows.h>
+#include <d3d12.h>
+#include <dxgi1_4.h>
+#include <wrl/client.h>
 
 #include <openxr/openxr.h>
 #include <openxr/openxr_loader_negotiation.h>
+#include <openxr/openxr_platform.h>
 
 #include <cstring>
 #include <iostream>
@@ -18,6 +24,8 @@
 #include <vector>
 
 namespace {
+
+using Microsoft::WRL::ComPtr;
 
 constexpr char kLayerName[] = "XR_APILAYER_ELECTRON_VR_overlay";
 
@@ -226,6 +234,9 @@ int wmain() {
   XrInstanceCreateInfo instance_info{XR_TYPE_INSTANCE_CREATE_INFO};
   std::strncpy(instance_info.applicationInfo.applicationName, "electron-vr-ci", XR_MAX_APPLICATION_NAME_SIZE - 1);
   instance_info.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
+  const char* extensions[] = {XR_KHR_D3D12_ENABLE_EXTENSION_NAME};
+  instance_info.enabledExtensionCount = 1;
+  instance_info.enabledExtensionNames = extensions;
   XrInstance instance = XR_NULL_HANDLE;
   passed &= Expect(
     XR_FAILED(request.createApiLayerInstance(&instance_info, &layer_info, &instance)) && g_create_instance_calls == 0,
@@ -242,10 +253,26 @@ int wmain() {
     request.getInstanceProcAddr(instance, "xrCreateSession", &function) == XR_SUCCESS && function != nullptr,
     "layer exposes intercepted xrCreateSession");
   const auto create_session = reinterpret_cast<PFN_xrCreateSession>(function);
+  ComPtr<IDXGIFactory4> factory;
+  ComPtr<IDXGIAdapter> warp_adapter;
+  ComPtr<ID3D12Device> d3d12_device;
+  ComPtr<ID3D12CommandQueue> d3d12_queue;
+  passed &= Expect(SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))), "creates DXGI factory for D3D12 WARP test");
+  passed &= Expect(factory != nullptr && SUCCEEDED(factory->EnumWarpAdapter(IID_PPV_ARGS(&warp_adapter))), "finds WARP adapter");
+  passed &= Expect(warp_adapter != nullptr && SUCCEEDED(D3D12CreateDevice(
+    warp_adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&d3d12_device))), "creates D3D12 WARP device");
+  D3D12_COMMAND_QUEUE_DESC queue_desc{};
+  queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+  passed &= Expect(d3d12_device != nullptr && SUCCEEDED(d3d12_device->CreateCommandQueue(
+    &queue_desc, IID_PPV_ARGS(&d3d12_queue))), "creates D3D12 direct command queue");
+  XrGraphicsBindingD3D12KHR graphics_binding{XR_TYPE_GRAPHICS_BINDING_D3D12_KHR};
+  graphics_binding.device = d3d12_device.Get();
+  graphics_binding.queue = d3d12_queue.Get();
   XrSessionCreateInfo session_info{XR_TYPE_SESSION_CREATE_INFO};
+  session_info.next = &graphics_binding;
   session_info.systemId = 1;
   XrSession session = XR_NULL_HANDLE;
-  passed &= Expect(create_session(instance, &session_info, &session) == XR_SUCCESS, "session creation passes through");
+  passed &= Expect(create_session(instance, &session_info, &session) == XR_SUCCESS, "D3D12 session creation passes through");
   passed &= Expect(session == g_session && g_create_session_calls == 1, "downstream session is preserved");
 
   function = nullptr;

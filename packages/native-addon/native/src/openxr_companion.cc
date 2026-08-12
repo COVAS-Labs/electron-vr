@@ -21,6 +21,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <d3d11_1.h>
+#include <d3d11_4.h>
 #include <dxgi1_2.h>
 #include <sddl.h>
 #include <windows.h>
@@ -67,8 +68,12 @@ std::string HResultString(HRESULT result) {
 struct TextureSlotState {
   ID3D11Texture2D* texture = nullptr;
   IDXGIKeyedMutex* keyed_mutex = nullptr;
+  ID3D11Fence* fence = nullptr;
   HANDLE local_handle = nullptr;
+  HANDLE local_fence_handle = nullptr;
   uint64_t remote_handle = 0;
+  uint64_t remote_fence_handle = 0;
+  uint64_t fence_value = 1;
   uint64_t sequence = 0;
 };
 
@@ -83,7 +88,9 @@ struct CompanionState {
   OverlaySnapshot snapshot;
   ID3D11Device* device = nullptr;
   ID3D11Device1* device1 = nullptr;
+  ID3D11Device5* device5 = nullptr;
   ID3D11DeviceContext* context = nullptr;
+  ID3D11DeviceContext4* context4 = nullptr;
   std::array<TextureSlotState, kTextureSlotCount> slots;
   uint32_t next_slot = 0;
   uint64_t connection_generation = 0;
@@ -182,15 +189,23 @@ void CloseTextureResourcesLocked() {
   g_state.source_handle = 0;
   for (TextureSlotState& slot : g_state.slots) {
     ReleaseCom(&slot.keyed_mutex);
+    ReleaseCom(&slot.fence);
     ReleaseCom(&slot.texture);
     if (slot.local_handle != nullptr) {
       CloseHandle(slot.local_handle);
       slot.local_handle = nullptr;
     }
+    if (slot.local_fence_handle != nullptr) {
+      CloseHandle(slot.local_fence_handle);
+      slot.local_fence_handle = nullptr;
+    }
     slot.remote_handle = 0;
+    slot.remote_fence_handle = 0;
     slot.sequence = 0;
   }
   ReleaseCom(&g_state.context);
+  ReleaseCom(&g_state.context4);
+  ReleaseCom(&g_state.device5);
   ReleaseCom(&g_state.device1);
   ReleaseCom(&g_state.device);
   g_state.snapshot.texture_generation++;
@@ -266,6 +281,18 @@ bool CreateDeviceForHostLocked(std::string* error_message) {
     return false;
   }
 
+  if (g_state.hello.graphics_api == GraphicsApi::kD3D12) {
+    result = g_state.device->QueryInterface(__uuidof(ID3D11Device5), reinterpret_cast<void**>(&g_state.device5));
+    if (SUCCEEDED(result)) {
+      result = g_state.context->QueryInterface(__uuidof(ID3D11DeviceContext4), reinterpret_cast<void**>(&g_state.context4));
+    }
+    if (FAILED(result) || g_state.device5 == nullptr || g_state.context4 == nullptr) {
+      SetError(error_message, "D3D12 OpenXR transport requires D3D11 fence interoperability.");
+      CloseTextureResourcesLocked();
+      return false;
+    }
+  }
+
   g_state.resource_connection_generation = g_state.connection_generation;
   return true;
 }
@@ -302,8 +329,10 @@ bool CreateTextureRingLocked(const D3D11_TEXTURE2D_DESC& source_desc, std::strin
 
   for (TextureSlotState& slot : g_state.slots) {
     ReleaseCom(&slot.keyed_mutex);
+    ReleaseCom(&slot.fence);
     ReleaseCom(&slot.texture);
     if (slot.local_handle != nullptr) CloseHandle(slot.local_handle);
+    if (slot.local_fence_handle != nullptr) CloseHandle(slot.local_fence_handle);
     slot = {};
   }
 
@@ -321,7 +350,12 @@ bool CreateTextureRingLocked(const D3D11_TEXTURE2D_DESC& source_desc, std::strin
   desc.Usage = D3D11_USAGE_DEFAULT;
   desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
   desc.CPUAccessFlags = 0;
-  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+  if (g_state.hello.graphics_api == GraphicsApi::kD3D11) {
+    desc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+  } else {
+    desc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED;
+  }
 
   bool success = true;
   const auto close_remote_handle = [&](uint64_t remote_value) {
@@ -346,7 +380,9 @@ bool CreateTextureRingLocked(const D3D11_TEXTURE2D_DESC& source_desc, std::strin
       success = false;
       break;
     }
-    result = slot.texture->QueryInterface(__uuidof(IDXGIKeyedMutex), reinterpret_cast<void**>(&slot.keyed_mutex));
+    if (g_state.hello.graphics_api == GraphicsApi::kD3D11) {
+      result = slot.texture->QueryInterface(__uuidof(IDXGIKeyedMutex), reinterpret_cast<void**>(&slot.keyed_mutex));
+    }
     IDXGIResource1* resource = nullptr;
     if (SUCCEEDED(result)) {
       result = slot.texture->QueryInterface(__uuidof(IDXGIResource1), reinterpret_cast<void**>(&resource));
@@ -366,13 +402,34 @@ bool CreateTextureRingLocked(const D3D11_TEXTURE2D_DESC& source_desc, std::strin
       break;
     }
     slot.remote_handle = reinterpret_cast<uint64_t>(remote_handle);
+    if (g_state.hello.graphics_api == GraphicsApi::kD3D12) {
+      result = g_state.device5->CreateFence(0, D3D11_FENCE_FLAG_SHARED, __uuidof(ID3D11Fence), reinterpret_cast<void**>(&slot.fence));
+      if (SUCCEEDED(result)) {
+        result = slot.fence->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &slot.local_fence_handle);
+      }
+      HANDLE remote_fence_handle = nullptr;
+      if (SUCCEEDED(result) && !DuplicateHandle(
+            GetCurrentProcess(), slot.local_fence_handle, target_process, &remote_fence_handle, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+        result = HRESULT_FROM_WIN32(GetLastError());
+      }
+      if (FAILED(result)) {
+        SetError(error_message, "Failed to publish API-layer transport fence (" + HResultString(result) + ").");
+        success = false;
+        break;
+      }
+      slot.remote_fence_handle = reinterpret_cast<uint64_t>(remote_fence_handle);
+      slot.fence_value = 1;
+    }
   }
   if (!success) {
     for (TextureSlotState& slot : g_state.slots) {
       close_remote_handle(slot.remote_handle);
+      close_remote_handle(slot.remote_fence_handle);
       ReleaseCom(&slot.keyed_mutex);
+      ReleaseCom(&slot.fence);
       ReleaseCom(&slot.texture);
       if (slot.local_handle != nullptr) CloseHandle(slot.local_handle);
+      if (slot.local_fence_handle != nullptr) CloseHandle(slot.local_fence_handle);
       slot = {};
     }
     CloseHandle(target_process);
@@ -386,6 +443,8 @@ bool CreateTextureRingLocked(const D3D11_TEXTURE2D_DESC& source_desc, std::strin
   g_state.snapshot.dxgi_format = static_cast<uint32_t>(desc.Format);
   for (uint32_t index = 0; index < kTextureSlotCount; ++index) {
     g_state.snapshot.slots[index].handle = g_state.slots[index].remote_handle;
+    g_state.snapshot.slots[index].fence_handle = g_state.slots[index].remote_fence_handle;
+    g_state.snapshot.slots[index].fence_value = 0;
     g_state.snapshot.slots[index].sequence = 0;
   }
   g_state.next_slot = 0;
@@ -445,7 +504,8 @@ void ServerThreadMain() {
     LayerHello hello{};
     if (!ReadExact(pipe, &hello, sizeof(hello)) ||
         hello.magic != kProtocolMagic || hello.version != kProtocolVersion ||
-        hello.size != sizeof(LayerHello) || hello.graphics_api != GraphicsApi::kD3D11) {
+        hello.size != sizeof(LayerHello) ||
+        (hello.graphics_api != GraphicsApi::kD3D11 && hello.graphics_api != GraphicsApi::kD3D12)) {
       DisconnectNamedPipe(pipe);
       CloseHandle(pipe);
       continue;
@@ -585,7 +645,7 @@ bool SubmitOpenXRCompanionFrame(uint64_t shared_handle, std::string* error_messa
     return false;
   }
   if (!g_state.connected) {
-    SetError(error_message, "Waiting for a D3D11 OpenXR application to connect to the API-layer companion.");
+    SetError(error_message, "Waiting for a D3D11 or D3D12 OpenXR application to connect to the API-layer companion.");
     return false;
   }
   if (!CreateDeviceForHostLocked(error_message) || !OpenSourceTextureLocked(shared_handle, error_message)) {
@@ -611,45 +671,65 @@ bool SubmitOpenXRCompanionFrame(uint64_t shared_handle, std::string* error_messa
   if (!CreateTextureRingLocked(source_desc, error_message)) return false;
 
   TextureSlotState& slot = g_state.slots[g_state.next_slot];
-  const HRESULT acquire_result = slot.keyed_mutex->AcquireSync(0, 0);
-  if (acquire_result == WAIT_TIMEOUT) {
-    SetError(error_message, "All API-layer transport textures are busy; skipped this frame.");
+  if (g_state.hello.graphics_api == GraphicsApi::kD3D11) {
+    const HRESULT acquire_result = slot.keyed_mutex->AcquireSync(0, 0);
+    if (acquire_result == WAIT_TIMEOUT) {
+      g_state.next_slot = (g_state.next_slot + 1) % kTextureSlotCount;
+      if (error_message != nullptr) error_message->clear();
+      return true;
+    }
+    if (FAILED(acquire_result)) {
+      SetError(error_message, "Failed to acquire API-layer transport texture (" + HResultString(acquire_result) + ").");
+      return false;
+    }
+  } else if (slot.fence->GetCompletedValue() < slot.fence_value - 1) {
     g_state.next_slot = (g_state.next_slot + 1) % kTextureSlotCount;
-    return false;
+    if (error_message != nullptr) error_message->clear();
+    return true;
   }
-  if (FAILED(acquire_result)) {
-    SetError(error_message, "Failed to acquire API-layer transport texture (" + HResultString(acquire_result) + ").");
-    return false;
-  }
-  D3D11_QUERY_DESC query_desc{};
-  query_desc.Query = D3D11_QUERY_EVENT;
   ID3D11Query* completion_query = nullptr;
-  const HRESULT query_result = g_state.device->CreateQuery(&query_desc, &completion_query);
-  if (FAILED(query_result) || completion_query == nullptr) {
-    slot.keyed_mutex->ReleaseSync(0);
-    SetError(error_message, "Failed to create a D3D11 completion query for the Electron texture copy.");
-    return false;
+  if (g_state.hello.graphics_api == GraphicsApi::kD3D11) {
+    D3D11_QUERY_DESC query_desc{};
+    query_desc.Query = D3D11_QUERY_EVENT;
+    const HRESULT query_result = g_state.device->CreateQuery(&query_desc, &completion_query);
+    if (FAILED(query_result) || completion_query == nullptr) {
+      slot.keyed_mutex->ReleaseSync(0);
+      SetError(error_message, "Failed to create a D3D11 completion query for the Electron texture copy.");
+      return false;
+    }
   }
   g_state.context->CopyResource(slot.texture, g_state.source_texture);
-  g_state.context->End(completion_query);
-  g_state.context->Flush();
-  HRESULT completion_result = S_FALSE;
-  while (completion_result == S_FALSE) {
-    completion_result = g_state.context->GetData(completion_query, nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
-    if (completion_result == S_FALSE) SwitchToThread();
+  if (g_state.hello.graphics_api == GraphicsApi::kD3D12) {
+    const HRESULT signal_result = g_state.context4->Signal(slot.fence, slot.fence_value);
+    g_state.context->Flush();
+    if (FAILED(signal_result)) {
+      SetError(error_message, "Failed to signal the D3D12 transport fence (" + HResultString(signal_result) + ").");
+      return false;
+    }
+  } else {
+    g_state.context->End(completion_query);
+    g_state.context->Flush();
+    HRESULT completion_result = S_FALSE;
+    while (completion_result == S_FALSE) {
+      completion_result = g_state.context->GetData(completion_query, nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+      if (completion_result == S_FALSE) SwitchToThread();
+    }
+    completion_query->Release();
+    if (FAILED(completion_result)) {
+      slot.keyed_mutex->ReleaseSync(0);
+      SetError(error_message, "The D3D11 Electron texture copy did not complete successfully (" + HResultString(completion_result) + ").");
+      return false;
+    }
+    slot.keyed_mutex->ReleaseSync(1);
   }
-  completion_query->Release();
-  if (FAILED(completion_result)) {
-    slot.keyed_mutex->ReleaseSync(0);
-    SetError(error_message, "The D3D11 Electron texture copy did not complete successfully (" + HResultString(completion_result) + ").");
-    return false;
-  }
-  slot.keyed_mutex->ReleaseSync(1);
 
   const uint64_t sequence = ++g_state.snapshot.latest_sequence;
   slot.sequence = sequence;
   g_state.snapshot.latest_slot = g_state.next_slot;
   g_state.snapshot.slots[g_state.next_slot].sequence = sequence;
+  g_state.snapshot.slots[g_state.next_slot].fence_value =
+    g_state.hello.graphics_api == GraphicsApi::kD3D12 ? slot.fence_value : 0;
+  if (g_state.hello.graphics_api == GraphicsApi::kD3D12) slot.fence_value += 2;
   g_state.snapshot.revision++;
   g_state.next_slot = (g_state.next_slot + 1) % kTextureSlotCount;
   if (error_message != nullptr) error_message->clear();
@@ -739,7 +819,9 @@ void PopulateOpenXRCompanionRuntimeInfo(RuntimeInfo* runtime_info) {
   runtime_info->openxr_companion_connected = g_state.connected;
   runtime_info->openxr_host_process_id = g_state.connected ? g_state.hello.process_id : 0;
   runtime_info->openxr_host_application_name = g_state.connected ? g_state.hello.application_name : "";
-  runtime_info->openxr_host_graphics_api = g_state.connected ? "d3d11" : "";
+  runtime_info->openxr_host_graphics_api = g_state.connected
+    ? (g_state.hello.graphics_api == GraphicsApi::kD3D12 ? "d3d12" : "d3d11")
+    : "";
   if (g_state.connected) {
     std::ostringstream luid;
     luid << std::hex << static_cast<uint32_t>(g_state.hello.adapter_luid.high_part)

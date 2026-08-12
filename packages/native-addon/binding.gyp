@@ -142,6 +142,7 @@
             ],
             "libraries": [
               "d3d11.lib",
+              "d3d12.lib",
               "dxgi.lib"
             ],
             "msvs_settings": {
@@ -180,6 +181,7 @@
             "sources": ["native/openxr-api-layer/layer_test.cc"],
             "include_dirs": ["<(openxr_sdk_dir)/include"],
             "defines": ["NOMINMAX", "WIN32_LEAN_AND_MEAN"],
+            "libraries": ["d3d12.lib", "dxgi.lib"],
             "msvs_settings": {
               "VCCLCompilerTool": {
                 "ExceptionHandling": 1,

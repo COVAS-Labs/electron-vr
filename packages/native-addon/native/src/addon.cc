@@ -265,6 +265,7 @@ Napi::Object RuntimeInfoToObject(Napi::Env env, const RuntimeInfo& info) {
   result.Set("openxrLinuxEglBindingAvailable", info.openxr_linux_egl_binding_available);
   result.Set("openxrLinuxOpenGlesBindingAvailable", info.openxr_linux_opengl_es_binding_available);
   result.Set("openxrWindowsD3D11BindingAvailable", info.openxr_windows_d3d11_binding_available);
+  result.Set("openxrWindowsD3D12BindingAvailable", info.openxr_windows_d3d12_binding_available);
   result.Set("openxrMacosMetalBindingAvailable", info.openxr_macos_metal_binding_available);
   result.Set("openxrRuntimeName", info.openxr_runtime_name);
   result.Set("openxrRuntimeManifestPath", info.openxr_runtime_manifest_path);
