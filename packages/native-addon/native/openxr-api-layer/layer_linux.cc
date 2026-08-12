@@ -457,7 +457,8 @@ XrResult XRAPI_CALL LayerDestroySession(XrSession session) {
     { std::lock_guard<std::mutex> lock(g_mutex); g_sessions.erase(session); }
     g_stop.store(true);
     { std::lock_guard<std::mutex> lock(g_socket_mutex); if (g_socket >= 0) shutdown(g_socket, SHUT_RDWR); }
-    if (g_socket_thread.joinable()) g_socket_thread.join(); CloseFrame();
+    if (g_socket_thread.joinable()) g_socket_thread.join();
+    CloseFrame();
     DestroyOverlay(*state);
     if (state->stage_space) state->instance->dispatch.DestroySpace(state->stage_space);
     if (state->local_space) state->instance->dispatch.DestroySpace(state->local_space);

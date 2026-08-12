@@ -132,9 +132,9 @@
             "product_name": "electron_vr_openxr_layer",
             "sources": ["native/openxr-api-layer/layer_linux.cc"],
             "include_dirs": ["<(openxr_sdk_dir)/include"],
-            "defines": ["XR_USE_PLATFORM_XLIB", "XR_USE_GRAPHICS_API_OPENGL", "XR_NO_PROTOTYPES"],
             "libraries": ["-lGL", "-lEGL", "-lX11", "-ldl", "-lpthread"],
-            "cflags_cc": ["-std=c++17", "-fvisibility=hidden", "-Wall", "-Wextra"],
+            "cflags_cc!": ["-fno-exceptions"],
+            "cflags_cc": ["-std=c++17", "-fexceptions", "-fvisibility=hidden", "-Wall", "-Wextra"],
             "ldflags": ["-Wl,-z,defs", "-Wl,-z,relro", "-Wl,-z,now"],
             "copies": [{
               "destination": "<(PRODUCT_DIR)",
