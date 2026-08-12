@@ -69,6 +69,14 @@ You can also reposition the overlay later with `overlay.setPlacement(...)`, togg
 
 On Linux, runtime selection prefers `openxr`, then falls back to `openvr`, then to `mock`. Linux OpenVR is treated as a best-effort alternate backend when a compatible OpenVR runtime is installed but the OpenXR overlay path is unavailable or disabled. It is not currently validated end to end on the main development machine or in CI.
 
+When `XR_EXTX_overlay` is unavailable, Linux x64 can use the explicitly installed API layer before falling back to OpenVR:
+
+```bash
+npx electron-vr-openxr-layer install
+```
+
+The initial Linux layer supports desktop OpenGL Xlib sessions and one single-plane RGB DMA-BUF overlay. Xcb, Wayland, Vulkan, multiplane formats, explicit synchronization, and curvature are not yet supported.
+
 On Windows x64, selection prefers a direct `XR_EXTX_overlay` session, then an installed implicit API layer for D3D11 or D3D12 hosts, then OpenVR, then mock. API-layer installation is explicit:
 
 ```powershell

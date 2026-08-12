@@ -12,7 +12,7 @@ const nodeGypEntrypoint = require.resolve("node-gyp/bin/node-gyp.js");
 const electronPackage = require("electron/package.json");
 const electronVersion = String(electronPackage.version).replace(/^[^\d]*/, "");
 const { sdkDir } = await ensureOpenVrSdk();
-const openxrSdk = process.platform === "win32" || process.platform === "darwin" ? await ensureOpenXrSdk() : null;
+const openxrSdk = process.platform === "win32" || process.platform === "darwin" || process.platform === "linux" ? await ensureOpenXrSdk() : null;
 const openxrLoader = process.platform === "darwin" ? await ensureOpenXrLoader({ sdkDir: openxrSdk.sdkDir }) : null;
 const releaseDirectory = resolve(process.cwd(), "build", "Release");
 const relocationDirectory = resolve(process.cwd(), ".tmp", "openvr-runtime");

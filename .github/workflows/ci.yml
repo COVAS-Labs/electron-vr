@@ -59,7 +59,6 @@ jobs:
           foreach ($asset in $assets) {
             if (-not (Test-Path $asset)) { throw "Missing $asset" }
           }
-
           & "packages/native-addon/build/Release/electron_vr_openxr_layer_test.exe"
           if ($LASTEXITCODE -ne 0) { throw "OpenXR API-layer native harness failed" }
 
@@ -92,6 +91,20 @@ jobs:
           } finally {
             Invoke-LayerCli "uninstall" | Out-Null
           }
+      - name: Verify Linux OpenXR API-layer artifacts
+        if: runner.os == 'Linux'
+        run: |
+          test -f packages/native-addon/build/Release/libelectron_vr_openxr_layer.so
+          test -f packages/native-addon/build/Release/electron_vr_openxr_layer_linux.json
+          test -x packages/native-addon/build/Release/electron_vr_openxr_layer_test
+          (cd packages/native-addon/build/Release && ./electron_vr_openxr_layer_test)
+          export XDG_DATA_HOME="$RUNNER_TEMP/electron-vr-xdg"
+          echo "XDG_DATA_HOME=$XDG_DATA_HOME" >> "$GITHUB_ENV"
+          npm run openxr-layer -- install
+          npm run openxr-layer -- status | grep 'enabled=true'
+          npm run openxr-layer -- disable
+          npm run openxr-layer -- status | grep 'enabled=false'
+          npm run openxr-layer -- enable
       - run: npm run test:unit
 
       - name: Run runtime info smoke test
@@ -101,6 +114,10 @@ jobs:
       - name: Run runtime info smoke test (Windows)
         if: runner.os == 'Windows'
         run: npm run test:e2e:runtime-info
+
+      - name: Cleanup Linux OpenXR API layer
+        if: always() && runner.os == 'Linux'
+        run: npm run openxr-layer -- uninstall
 
   smoke:
     name: Electron Smoke (${{ matrix.os }})

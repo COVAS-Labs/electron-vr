@@ -66,6 +66,15 @@ The package probes OpenXR capability and chooses backends based on the available
 
 Linux OpenXR remains the preferred path when the overlay extension is available. Linux OpenVR is kept as a best-effort alternate or fallback runtime path for compatible OpenVR overlay runtimes, but it is not end-to-end validated on the main development machine or in CI. Set `ELECTRON_VR_DISABLE_OPENXR=1` to force Linux onto the OpenVR-or-mock selection branch while debugging.
 
+Linux x64 packages also include an explicit implicit-API-layer fallback for runtimes without `XR_EXTX_overlay`:
+
+```bash
+npx electron-vr-openxr-layer install
+npx electron-vr-openxr-layer status
+```
+
+The Linux fallback currently supports desktop OpenGL Xlib host sessions and one single-plane RGB DMA-BUF quad. It uses a private per-user Unix socket, `SCM_RIGHTS` descriptor transfer, a layer-owned shared GLX context, EGL DMA-BUF import, and implicit DMA-BUF synchronization. Xcb, deprecated OpenGL Wayland bindings, Vulkan, multiplane formats, explicit sync fences, and curvature are deferred and pass through unchanged. Use the same CLI with `enable`, `disable`, or `uninstall`; ordinary `npm install` never registers the layer.
+
 On macOS, OpenXR uses `XR_KHR_metal_enable` and imports Electron shared textures from their `IOSurface` handles. The Khronos loader is built automatically from `.openxr-sdk`, copied beside the native addon, and loaded through the addon's `@loader_path` rpath.
 
 ### Meta OpenXR Simulator on macOS

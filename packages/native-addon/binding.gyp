@@ -14,6 +14,7 @@
         "native/src/mock_backend.cc",
         "native/src/openxr_backend.cc",
         "native/src/openxr_companion.cc",
+        "native/src/openxr_companion_linux.cc",
         "native/src/openvr_backend.cc"
       ],
       "include_dirs": [
@@ -121,6 +122,37 @@
     }
   ],
   "conditions": [
+    [
+      "OS==\"linux\"",
+      {
+        "targets": [
+          {
+            "target_name": "electron_vr_openxr_layer",
+            "type": "shared_library",
+            "product_name": "electron_vr_openxr_layer",
+            "sources": ["native/openxr-api-layer/layer_linux.cc"],
+            "include_dirs": ["<(openxr_sdk_dir)/include"],
+            "defines": ["XR_USE_PLATFORM_XLIB", "XR_USE_GRAPHICS_API_OPENGL", "XR_NO_PROTOTYPES"],
+            "libraries": ["-lGL", "-lEGL", "-lX11", "-ldl", "-lpthread"],
+            "cflags_cc": ["-std=c++17", "-fvisibility=hidden", "-Wall", "-Wextra"],
+            "ldflags": ["-Wl,-z,defs", "-Wl,-z,relro", "-Wl,-z,now"],
+            "copies": [{
+              "destination": "<(PRODUCT_DIR)",
+              "files": ["native/openxr-api-layer/electron_vr_openxr_layer_linux.json"]
+            }]
+          },
+          {
+            "target_name": "electron_vr_openxr_layer_test",
+            "type": "executable",
+            "dependencies": ["electron_vr_openxr_layer"],
+            "sources": ["native/openxr-api-layer/layer_linux_test.cc"],
+            "include_dirs": ["<(openxr_sdk_dir)/include"],
+            "libraries": ["-ldl"],
+            "cflags_cc": ["-std=c++17", "-Wall", "-Wextra"]
+          }
+        ]
+      }
+    ],
     [
       "OS==\"win\"",
       {

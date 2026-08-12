@@ -34,3 +34,16 @@ test("API-layer protocol and source retain the Direct3D single-overlay contract"
   assert.match(harness, /PFN_xrNegotiateLoaderApiLayerInterface/);
   assert.match(harness, /no-companion frame is forwarded unchanged/);
 });
+
+test("Linux API layer uses private Unix IPC and desktop OpenGL pass-through", async () => {
+  const manifest = JSON.parse(await readFile(resolve(layerDirectory, "electron_vr_openxr_layer_linux.json"), "utf8"));
+  const source = await readFile(resolve(layerDirectory, "layer_linux.cc"), "utf8");
+  const protocol = await readFile(resolve(root, "packages", "native-addon", "native", "openxr_api_layer_protocol_linux.h"), "utf8");
+  assert.equal(manifest.api_layer.name, "XR_APILAYER_ELECTRON_VR_overlay");
+  assert.match(manifest.api_layer.library_path, /libelectron_vr_openxr_layer\.so$/);
+  assert.match(source, /XrGraphicsBindingOpenGLXlibKHR/);
+  assert.match(source, /SCM_RIGHTS/);
+  assert.match(source, /SO_PEERCRED/);
+  assert.match(source, /glXMakeContextCurrent/);
+  assert.match(protocol, /SOCK_SEQPACKET|kSocketName/);
+});

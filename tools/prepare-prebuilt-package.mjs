@@ -41,12 +41,21 @@ const windowsLayerAssets = [
   "electron_vr_openxr_layer.json",
   "protocol.json"
 ];
+const linuxLayerAssets = [
+  "libelectron_vr_openxr_layer.so",
+  "electron_vr_openxr_layer_linux.json"
+];
 
 await rm(packageDir, { force: true, recursive: true });
 await mkdir(packageDir, { recursive: true });
 await copyFile(addonSourcePath, join(packageDir, "vr_bridge.node"));
 if (platform === "win32" && arch === "x64") {
   for (const asset of windowsLayerAssets) {
+    await copyFile(resolve(repoRoot, "packages", "native-addon", "build", "Release", asset), join(packageDir, asset));
+  }
+}
+if (platform === "linux" && arch === "x64") {
+  for (const asset of linuxLayerAssets) {
     await copyFile(resolve(repoRoot, "packages", "native-addon", "build", "Release", asset), join(packageDir, asset));
   }
 }
@@ -78,6 +87,12 @@ const metadata = {
       cli: "electron_vr_openxr_layer_cli.exe",
       protocolVersion: 2
     }
+  } : platform === "linux" && arch === "x64" ? {
+    openxrApiLayer: {
+      manifest: "electron_vr_openxr_layer_linux.json",
+      library: "libelectron_vr_openxr_layer.so",
+      protocolVersion: 1
+    }
   } : {})
 };
 
@@ -90,6 +105,28 @@ const { join } = require("node:path");
 const result = spawnSync(join(__dirname, "electron_vr_openxr_layer_cli.exe"), process.argv.slice(2), { stdio: "inherit" });
 if (result.error) throw result.error;
 process.exitCode = result.status == null ? 1 : result.status;
+`,
+    "utf8"
+  );
+}
+if (platform === "linux" && arch === "x64") {
+  await writeFile(
+    join(packageDir, "openxr-layer-cli.js"),
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const command = process.argv[2];
+const root = process.env.XDG_DATA_HOME || path.join(process.env.HOME || "", ".local", "share");
+const directory = path.join(root, "openxr", "1", "api_layers", "implicit.d");
+const manifest = path.join(directory, "electron_vr_openxr_layer.json");
+const disabled = manifest + ".disabled";
+const library = path.join(directory, "libelectron_vr_openxr_layer.so");
+if (command === "install") { fs.mkdirSync(directory, { recursive: true, mode: 0o700 }); fs.copyFileSync(path.join(__dirname, "libelectron_vr_openxr_layer.so"), library); fs.copyFileSync(path.join(__dirname, "electron_vr_openxr_layer_linux.json"), manifest); fs.rmSync(disabled, { force: true }); }
+else if (command === "enable") { if (fs.existsSync(disabled)) fs.renameSync(disabled, manifest); }
+else if (command === "disable") { if (fs.existsSync(manifest)) fs.renameSync(manifest, disabled); }
+else if (command === "uninstall") { fs.rmSync(manifest, { force: true }); fs.rmSync(disabled, { force: true }); fs.rmSync(library, { force: true }); }
+else if (command !== "status") throw new Error("Expected install, enable, disable, status, or uninstall");
+console.log("installed=" + (fs.existsSync(library) && (fs.existsSync(manifest) || fs.existsSync(disabled)))); console.log("enabled=" + (fs.existsSync(library) && fs.existsSync(manifest)));
 `,
     "utf8"
   );
@@ -130,8 +167,9 @@ await writeFile(
     os: [platform],
     cpu: [arch],
     files: ["index.js", "metadata.json", "README.md", "vr_bridge.node", ...bundledRuntimeLibraries,
-      ...(platform === "win32" && arch === "x64" ? [...windowsLayerAssets, "openxr-layer-cli.js"] : [])],
-    ...(platform === "win32" && arch === "x64" ? { bin: { "electron-vr-openxr-layer": "openxr-layer-cli.js" } } : {}),
+      ...(platform === "win32" && arch === "x64" ? [...windowsLayerAssets, "openxr-layer-cli.js"] : []),
+      ...(platform === "linux" && arch === "x64" ? [...linuxLayerAssets, "openxr-layer-cli.js"] : [])],
+    ...((platform === "win32" || platform === "linux") && arch === "x64" ? { bin: { "electron-vr-openxr-layer": "openxr-layer-cli.js" } } : {}),
      publishConfig: {
        registry,
        ...(access ? { access } : {})

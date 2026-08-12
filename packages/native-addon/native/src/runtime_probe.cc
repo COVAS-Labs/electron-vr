@@ -2,6 +2,7 @@
 
 #include "openxr_loader_win.h"
 #include "openxr_companion.h"
+#include "openxr_companion_linux.h"
 
 #include <array>
 #include <cstdlib>
@@ -575,29 +576,33 @@ RuntimeInfo ProbeRuntime() {
     }
   }
 
-  const bool openxr_ready = info.openxr_available && info.openxr_overlay_extension_available &&
-                            info.openxr_linux_egl_binding_available && info.openxr_linux_opengl_es_binding_available;
+  info.openxr_api_layer_installed = IsOpenXRApiLayerInstalledLinux(
+    &info.openxr_api_layer_enabled, &info.openxr_api_layer_manifest_path);
+  const bool direct_openxr_ready = info.openxr_available && info.openxr_overlay_extension_available &&
+                             info.openxr_linux_egl_binding_available && info.openxr_linux_opengl_es_binding_available;
+  const bool api_layer_ready = info.openxr_available && info.openxr_api_layer_installed && info.openxr_api_layer_enabled;
   const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
-  const bool openxr_enabled = openxr_ready && !openxr_disabled_by_env;
+  const bool openxr_enabled = !openxr_disabled_by_env && (direct_openxr_ready || api_layer_ready);
 
   if (openxr_enabled) {
     info.selected_backend = BackendKind::kOpenXR;
-    info.openxr_mode = OpenXRMode::kOverlaySession;
+    info.openxr_mode = direct_openxr_ready ? OpenXRMode::kOverlaySession : OpenXRMode::kApiLayer;
+    AppendProbeMode(&info, direct_openxr_ready ? "openxr-overlay-session" : "openxr-api-layer");
     AppendProbeMode(&info, "selected-openxr");
   } else if (info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
-    } else if (info.openxr_available && !openxr_ready) {
-      AppendProbeMode(&info, "openxr-missing-egl-or-opengl-es");
+    } else if (info.openxr_available && !direct_openxr_ready && !api_layer_ready) {
+      AppendProbeMode(&info, "openxr-needs-overlay-extension-or-api-layer");
     }
     AppendProbeMode(&info, "selected-openvr");
   } else {
     info.selected_backend = BackendKind::kMock;
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
-    } else if (info.openxr_available && !openxr_ready) {
-      AppendProbeMode(&info, "openxr-missing-egl-or-opengl-es");
+    } else if (info.openxr_available && !direct_openxr_ready && !api_layer_ready) {
+      AppendProbeMode(&info, "openxr-needs-overlay-extension-or-api-layer");
     }
     if (!info.openvr_runtime_installed) {
       AppendProbeMode(&info, "openvr-runtime-not-installed");
