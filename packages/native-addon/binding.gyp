@@ -1,7 +1,8 @@
 {
   "variables": {
     "openvr_sdk_dir%": "<!(node -p \"process.env.OPENVR_SDK_DIR || require('node:path').resolve(process.cwd(), '..', '..', '.openvr-sdk')\")",
-    "openxr_sdk_dir%": "<!(node -p \"process.env.OPENXR_SDK_DIR || require('node:path').resolve(process.cwd(), '..', '..', '.openxr-sdk')\")"
+    "openxr_sdk_dir%": "<!(node -p \"process.env.OPENXR_SDK_DIR || require('node:path').resolve(process.cwd(), '..', '..', '.openxr-sdk')\")",
+    "openxr_loader_dir%": "<!(node -p \"process.env.OPENXR_LOADER_DIR || require('node:path').resolve(process.cwd(), '..', '..', '.openxr-loader-build', 'src', 'loader')\")"
   },
   "targets": [
     {
@@ -12,6 +13,7 @@
         "native/src/runtime_probe.cc",
         "native/src/mock_backend.cc",
         "native/src/openxr_backend.cc",
+        "native/src/openxr_companion.cc",
         "native/src/openvr_backend.cc"
       ],
       "include_dirs": [
@@ -84,8 +86,112 @@
               }
             }
           }
+        ],
+        [
+          "OS==\"mac\"",
+          {
+            "include_dirs": [
+              "<(openxr_sdk_dir)/include"
+            ],
+            "sources!": [
+              "native/src/openxr_backend.cc"
+            ],
+            "sources": [
+              "native/src/openxr_backend_mac.mm"
+            ],
+            "defines": [
+              "XR_USE_GRAPHICS_API_METAL"
+            ],
+            "libraries": [
+              "<(openxr_loader_dir)/libopenxr_loader.dylib",
+              "-framework Metal",
+              "-framework IOSurface",
+              "-framework Foundation"
+            ],
+            "xcode_settings": {
+              "CLANG_ENABLE_OBJC_ARC": "YES",
+              "MACOSX_DEPLOYMENT_TARGET": "12.4",
+              "LD_RUNPATH_SEARCH_PATHS": [
+                "@loader_path"
+              ]
+            }
+          }
         ]
       ]
     }
+  ],
+  "conditions": [
+    [
+      "OS==\"win\"",
+      {
+        "targets": [
+          {
+            "target_name": "electron_vr_openxr_layer",
+            "type": "shared_library",
+            "product_prefix": "",
+            "sources": [
+              "native/openxr-api-layer/layer.cc",
+              "native/openxr-api-layer/layer.def"
+            ],
+            "include_dirs": [
+              "<(openxr_sdk_dir)/include"
+            ],
+            "defines": [
+              "NOMINMAX",
+              "WIN32_LEAN_AND_MEAN",
+              "XR_USE_PLATFORM_WIN32",
+              "XR_USE_GRAPHICS_API_D3D11",
+              "XR_NO_PROTOTYPES"
+            ],
+            "libraries": [
+              "d3d11.lib",
+              "dxgi.lib"
+            ],
+            "msvs_settings": {
+              "VCCLCompilerTool": {
+                "ExceptionHandling": 1,
+                "AdditionalOptions": ["/std:c++17", "/W4", "/permissive-"]
+              }
+            },
+            "copies": [
+              {
+                "destination": "<(PRODUCT_DIR)",
+                "files": [
+                  "native/openxr-api-layer/electron_vr_openxr_layer.json",
+                  "native/openxr-api-layer/protocol.json"
+                ]
+              }
+            ]
+          },
+          {
+            "target_name": "electron_vr_openxr_layer_cli",
+            "type": "executable",
+            "sources": ["native/openxr-api-layer/registration_cli.cc"],
+            "defines": ["NOMINMAX", "WIN32_LEAN_AND_MEAN"],
+            "libraries": ["advapi32.lib"],
+            "msvs_settings": {
+              "VCCLCompilerTool": {
+                "ExceptionHandling": 1,
+                "AdditionalOptions": ["/std:c++17", "/W4", "/permissive-"]
+              }
+            }
+          },
+          {
+            "target_name": "electron_vr_openxr_layer_test",
+            "type": "executable",
+            "dependencies": ["electron_vr_openxr_layer"],
+            "sources": ["native/openxr-api-layer/layer_test.cc"],
+            "include_dirs": ["<(openxr_sdk_dir)/include"],
+            "defines": ["NOMINMAX", "WIN32_LEAN_AND_MEAN", "XR_NO_PROTOTYPES"],
+            "msvs_settings": {
+              "VCCLCompilerTool": {
+                "ExceptionHandling": 1,
+                "AdditionalOptions": ["/std:c++17", "/W4", "/permissive-"]
+              }
+            }
+          }
+        ]
+      }
+    ]
   ]
 }

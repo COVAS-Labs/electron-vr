@@ -193,6 +193,7 @@ struct OpenXRBackendState {
   float size_meters = 1.0f;
   float curvature = 0.0f;
   bool cylinder_layer_extension_enabled = false;
+  bool overlay_session_extension_enabled = false;
   OverlayPlacement placement;
   uint32_t frame_width = 0;
   uint32_t frame_height = 0;
@@ -1245,12 +1246,14 @@ bool CreateInstance(std::string* error_message) {
     return false;
   }
 
-  if (!HasExtension(extensions, XR_EXTX_OVERLAY_EXTENSION_NAME)) {
-    SetError(error_message, "OpenXR runtime does not expose XR_EXTX_overlay.");
+  g_state.overlay_session_extension_enabled = HasExtension(extensions, XR_EXTX_OVERLAY_EXTENSION_NAME);
+  g_state.cylinder_layer_extension_enabled = HasExtension(extensions, XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME);
+#if defined(_WIN32) || defined(__linux__)
+  if (!g_state.overlay_session_extension_enabled) {
+    SetError(error_message, "The direct OpenXR backend requires XR_EXTX_overlay. Use the Windows API-layer backend when the runtime does not expose it.");
     return false;
   }
-
-  g_state.cylinder_layer_extension_enabled = HasExtension(extensions, XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME);
+#endif
   if (g_state.curvature > 0.0f && !g_state.cylinder_layer_extension_enabled) {
     SetError(error_message, "OpenXR runtime does not expose XR_KHR_composition_layer_cylinder.");
     return false;
@@ -1266,26 +1269,27 @@ bool CreateInstance(std::string* error_message) {
     return false;
   }
 
-  const char* enabled_extensions[] = {
-    XR_EXTX_OVERLAY_EXTENSION_NAME,
+  std::vector<const char*> enabled_extensions = {
     XR_MNDX_EGL_ENABLE_EXTENSION_NAME,
     XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
-    XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME,
   };
-  const uint32_t enabled_extension_count = g_state.cylinder_layer_extension_enabled ? 4 : 3;
 #elif defined(_WIN32)
   if (!HasExtension(extensions, XR_KHR_D3D11_ENABLE_EXTENSION_NAME)) {
     SetError(error_message, "OpenXR runtime does not expose XR_KHR_D3D11_enable.");
     return false;
   }
 
-  const char* enabled_extensions[] = {
-    XR_EXTX_OVERLAY_EXTENSION_NAME,
+  std::vector<const char*> enabled_extensions = {
     XR_KHR_D3D11_ENABLE_EXTENSION_NAME,
-    XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME,
   };
-  const uint32_t enabled_extension_count = g_state.cylinder_layer_extension_enabled ? 3 : 2;
 #endif
+
+  if (g_state.overlay_session_extension_enabled) {
+    enabled_extensions.push_back(XR_EXTX_OVERLAY_EXTENSION_NAME);
+  }
+  if (g_state.cylinder_layer_extension_enabled) {
+    enabled_extensions.push_back(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME);
+  }
 
   auto create_info = MakeXrStruct<XrInstanceCreateInfo, XR_TYPE_INSTANCE_CREATE_INFO>();
   std::strncpy(create_info.applicationInfo.applicationName, "electron-vr", XR_MAX_APPLICATION_NAME_SIZE - 1);
@@ -1293,8 +1297,8 @@ bool CreateInstance(std::string* error_message) {
   std::strncpy(create_info.applicationInfo.engineName, "electron-vr", XR_MAX_ENGINE_NAME_SIZE - 1);
   create_info.applicationInfo.engineVersion = 1;
   create_info.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
-  create_info.enabledExtensionCount = enabled_extension_count;
-  create_info.enabledExtensionNames = enabled_extensions;
+  create_info.enabledExtensionCount = static_cast<uint32_t>(enabled_extensions.size());
+  create_info.enabledExtensionNames = enabled_extensions.data();
 
   if (!CheckXr(CreateInstanceHandle(&create_info, &g_state.instance), "Failed to create OpenXR instance", error_message)) {
     return false;
@@ -1341,7 +1345,9 @@ bool CreateSession(std::string* error_message) {
   overlay_info.createFlags = 0;
   overlay_info.sessionLayersPlacement = UINT32_MAX;
 
-  graphics_binding.next = &overlay_info;
+  if (g_state.overlay_session_extension_enabled) {
+    graphics_binding.next = &overlay_info;
+  }
 
   auto session_create_info = MakeXrStruct<XrSessionCreateInfo, XR_TYPE_SESSION_CREATE_INFO>();
   session_create_info.next = &graphics_binding;
@@ -1363,14 +1369,16 @@ bool CreateSession(std::string* error_message) {
   overlay_info.createFlags = 0;
   overlay_info.sessionLayersPlacement = UINT32_MAX;
 
-  graphics_binding.next = &overlay_info;
+  if (g_state.overlay_session_extension_enabled) {
+    graphics_binding.next = &overlay_info;
+  }
 
   auto session_create_info = MakeXrStruct<XrSessionCreateInfo, XR_TYPE_SESSION_CREATE_INFO>();
   session_create_info.next = &graphics_binding;
   session_create_info.systemId = g_state.system_id;
 #endif
 
-  if (!CheckXr(CreateSessionHandle(g_state.instance, &session_create_info, &g_state.session), "Failed to create OpenXR overlay session", error_message)) {
+  if (!CheckXr(CreateSessionHandle(g_state.instance, &session_create_info, &g_state.session), "Failed to create OpenXR session", error_message)) {
     return false;
   }
 
@@ -1404,7 +1412,7 @@ bool CreateSession(std::string* error_message) {
     return false;
   }
 
-  g_state.session_state = XR_SESSION_STATE_READY;
+  g_state.session_state = XR_SESSION_STATE_UNKNOWN;
   g_state.session_running = false;
   return true;
 }
@@ -1658,11 +1666,11 @@ bool SubmitLayerForCurrentFrame(const LinuxTextureInfo& texture_info, std::strin
     return false;
   }
 
-  if (!EnsureSwapchainForFrame(texture_info, error_message)) {
-    return false;
+  if (!g_state.session_running) {
+    return true;
   }
 
-  if (!BeginSessionIfNeeded(error_message)) {
+  if (!EnsureSwapchainForFrame(texture_info, error_message)) {
     return false;
   }
 
@@ -1776,11 +1784,11 @@ bool SubmitLayerForCurrentFrameWindows(ID3D11Texture2D* source_texture, const D3
     return false;
   }
 
-  if (!EnsureSwapchainForWindowsFrame(source_desc.Width, source_desc.Height, error_message)) {
-    return false;
+  if (!g_state.session_running) {
+    return true;
   }
 
-  if (!BeginSessionIfNeeded(error_message)) {
+  if (!EnsureSwapchainForWindowsFrame(source_desc.Width, source_desc.Height, error_message)) {
     return false;
   }
 

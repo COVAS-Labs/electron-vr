@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -87,6 +88,41 @@ uint64_t ReadWindowsHandle(const Napi::Value& value) {
   }
 
   return result;
+}
+#endif
+
+#if defined(__APPLE__)
+MacTextureInfo ReadMacTextureInfo(const Napi::Value& value) {
+  if (!value.IsObject()) {
+    throw Napi::TypeError::New(value.Env(), "submitSharedTexture expects a texture info object on macOS.");
+  }
+
+  const Napi::Object texture_object = value.As<Napi::Object>();
+  const Napi::Value handle_value = texture_object.Get("sharedTextureHandle");
+  if (!handle_value.IsBuffer()) {
+    throw Napi::TypeError::New(value.Env(), "macOS sharedTextureHandle must be a Buffer.");
+  }
+
+  const Napi::Buffer<uint8_t> handle = handle_value.As<Napi::Buffer<uint8_t>>();
+  if (handle.Length() != sizeof(uintptr_t)) {
+    throw Napi::RangeError::New(value.Env(), "macOS sharedTextureHandle has an invalid pointer size.");
+  }
+
+  MacTextureInfo texture_info;
+  std::memcpy(&texture_info.io_surface, handle.Data(), sizeof(texture_info.io_surface));
+
+  const Napi::Value coded_size_value = texture_object.Get("codedSize");
+  if (coded_size_value.IsObject()) {
+    const Napi::Object coded_size = coded_size_value.As<Napi::Object>();
+    texture_info.width = coded_size.Get("width").As<Napi::Number>().Uint32Value();
+    texture_info.height = coded_size.Get("height").As<Napi::Number>().Uint32Value();
+  }
+
+  const Napi::Value pixel_format_value = texture_object.Get("pixelFormat");
+  if (pixel_format_value.IsString()) {
+    texture_info.pixel_format = pixel_format_value.As<Napi::String>().Utf8Value();
+  }
+  return texture_info;
 }
 #endif
 
@@ -189,6 +225,8 @@ SharedTextureSubmission ReadSharedTextureSubmission(const Napi::Value& value) {
   submission.windows_handle = ReadWindowsHandle(value);
 #elif defined(__linux__)
   submission.linux_texture = ReadLinuxTextureInfo(value);
+#elif defined(__APPLE__)
+  submission.mac_texture = ReadMacTextureInfo(value);
 #else
   throw Napi::Error::New(value.Env(), "submitSharedTexture is not supported on this platform.");
 #endif
@@ -225,13 +263,25 @@ Napi::Object RuntimeInfoToObject(Napi::Env env, const RuntimeInfo& info) {
   result.Set("openxrAvailable", info.openxr_available);
   result.Set("openxrOverlayExtensionAvailable", info.openxr_overlay_extension_available);
   result.Set("openxrLinuxEglBindingAvailable", info.openxr_linux_egl_binding_available);
+  result.Set("openxrLinuxOpenGlesBindingAvailable", info.openxr_linux_opengl_es_binding_available);
   result.Set("openxrWindowsD3D11BindingAvailable", info.openxr_windows_d3d11_binding_available);
+  result.Set("openxrMacosMetalBindingAvailable", info.openxr_macos_metal_binding_available);
   result.Set("openxrRuntimeName", info.openxr_runtime_name);
   result.Set("openxrRuntimeManifestPath", info.openxr_runtime_manifest_path);
   result.Set("openxrRuntimeLibraryPath", info.openxr_runtime_library_path);
   result.Set("openxrLoaderPath", info.openxr_loader_path);
   result.Set("openxrSessionState", info.openxr_session_state);
   result.Set("openxrSessionRunning", info.openxr_session_running);
+  result.Set("openxrMode", OpenXRModeToString(info.openxr_mode));
+  result.Set("openxrApiLayerInstalled", info.openxr_api_layer_installed);
+  result.Set("openxrApiLayerEnabled", info.openxr_api_layer_enabled);
+  result.Set("openxrApiLayerManifestPath", info.openxr_api_layer_manifest_path);
+  result.Set("openxrCompanionConnected", info.openxr_companion_connected);
+  result.Set("openxrHostProcessId", info.openxr_host_process_id);
+  result.Set("openxrHostApplicationName", info.openxr_host_application_name);
+  result.Set("openxrHostGraphicsApi", info.openxr_host_graphics_api);
+  result.Set("openxrHostAdapterLuid", info.openxr_host_adapter_luid);
+  result.Set("openxrProtocolVersion", info.openxr_protocol_version);
   result.Set("openvrAvailable", info.openvr_available);
   result.Set("openvrRuntimeInstalled", info.openvr_runtime_installed);
   result.Set("openvrRuntimePath", info.openvr_runtime_path);

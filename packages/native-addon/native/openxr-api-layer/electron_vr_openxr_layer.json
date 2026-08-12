@@ -1,0 +1,11 @@
+{
+  "file_format_version": "1.0.0",
+  "api_layer": {
+    "name": "XR_APILAYER_ELECTRON_VR_overlay",
+    "library_path": ".\\electron_vr_openxr_layer.dll",
+    "api_version": "1.0",
+    "implementation_version": "1",
+    "description": "Injects an Electron-backed quad into D3D11 OpenXR sessions",
+    "disable_environment": "ELECTRON_VR_DISABLE_OPENXR_API_LAYER"
+  }
+}

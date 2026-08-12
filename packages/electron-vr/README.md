@@ -69,6 +69,13 @@ You can also reposition the overlay later with `overlay.setPlacement(...)`, togg
 
 On Linux, runtime selection prefers `openxr`, then falls back to `openvr`, then to `mock`. Linux OpenVR is treated as a best-effort alternate backend when a compatible OpenVR runtime is installed but the OpenXR overlay path is unavailable or disabled. It is not currently validated end to end on the main development machine or in CI.
 
-On Windows, runtime probing reports OpenXR overlay and D3D11 graphics-binding capability, but the default backend remains `openvr` during rollout. Set `ELECTRON_VR_ENABLE_OPENXR=1` to opt into the Windows OpenXR path when a compatible runtime exposes `XR_EXTX_overlay` and `XR_KHR_D3D11_enable`. This path is not currently validated end to end on the main development machine or in CI.
+On Windows x64, selection prefers a direct `XR_EXTX_overlay` session, then an installed implicit API layer for D3D11 hosts, then OpenVR, then mock. API-layer installation is explicit:
 
-`getRuntimeInfo()` also includes `openvrRuntimeInstalled`, `openvrRuntimePath`, and platform-specific OpenXR capability details such as `openxrWindowsD3D11BindingAvailable`, so runtime diagnostics do not need to initialize OpenVR just to check availability. It now also surfaces live session/app details when the runtime exposes them, including `openxrSessionState`, `openxrSessionRunning`, and the current OpenVR scene app fields (`openvrSceneApplicationState`, `openvrSceneProcessId`, `openvrSceneApplicationKey`, `openvrSceneApplicationName`, `openvrSceneApplicationBinaryPath`). OpenXR does not expose a standard cross-runtime "current app" query, so those app-level fields are currently OpenVR-specific. `probeMode` includes the backend-selection decision as well, which makes fallback behavior easier to diagnose even when Linux OpenVR or Windows OpenXR cannot be validated on the current host.
+```powershell
+npx electron-vr-openxr-layer install
+npx electron-vr-openxr-layer status
+```
+
+Use the same command with `enable`, `disable`, or `uninstall`. `npm install` does not register the layer. `ELECTRON_VR_DISABLE_OPENXR_API_LAYER=1` disables it for a process. The first API-layer milestone supports one flat D3D11 quad; D3D12, elevated applications, and positive curvature are not yet supported.
+
+`getRuntimeInfo()` also includes `openvrRuntimeInstalled`, `openvrRuntimePath`, `openxrMode`, API-layer installation and connection state, protocol version, and connected OpenXR host metadata. `probeMode` includes the backend-selection decision.

@@ -127,15 +127,25 @@ test("runtime probe exposes OpenVR runtime installation details", async () => {
     assert.match(combinedOutput, /Runtime info:/);
     assert.match(combinedOutput, /openxrAvailable/i);
     assert.match(combinedOutput, /openxrOverlayExtensionAvailable/i);
+    assert.match(combinedOutput, /openxrLinuxOpenGlesBindingAvailable/i);
     assert.match(combinedOutput, /openxrWindowsD3D11BindingAvailable/i);
-    if (process.platform === "linux" && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrOverlayExtensionAvailable:\s*true/i.test(combinedOutput) && /openxrLinuxEglBindingAvailable:\s*true/i.test(combinedOutput)) {
+    assert.match(combinedOutput, /openxrMacosMetalBindingAvailable/i);
+    if (process.platform === "linux" && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrLinuxEglBindingAvailable:\s*true/i.test(combinedOutput) && /openxrLinuxOpenGlesBindingAvailable:\s*true/i.test(combinedOutput)) {
       assert.match(combinedOutput, /selectedBackend:\s*'openxr'/i);
     }
-    if (process.platform === "win32" && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrOverlayExtensionAvailable:\s*true/i.test(combinedOutput) && /openxrWindowsD3D11BindingAvailable:\s*true/i.test(combinedOutput)) {
-      assert.match(combinedOutput, /selectedBackend:\s*'(openvr|mock)'/i);
+    if (process.platform === "win32" && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrWindowsD3D11BindingAvailable:\s*true/i.test(combinedOutput)) {
+      assert.match(combinedOutput, /selectedBackend:\s*'(openxr|openvr|mock)'/i);
+    }
+    if (process.platform === "darwin" && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrMacosMetalBindingAvailable:\s*true/i.test(combinedOutput)) {
+      assert.match(combinedOutput, /selectedBackend:\s*'(openxr|mock)'/i);
     }
     assert.match(combinedOutput, /openxrSessionState/i);
     assert.match(combinedOutput, /openxrSessionRunning/i);
+    assert.match(combinedOutput, /openxrMode/i);
+    assert.match(combinedOutput, /openxrApiLayerInstalled/i);
+    assert.match(combinedOutput, /openxrApiLayerEnabled/i);
+    assert.match(combinedOutput, /openxrCompanionConnected/i);
+    assert.match(combinedOutput, /openxrProtocolVersion/i);
     assert.match(combinedOutput, /openvrAvailable/i);
     assert.match(combinedOutput, /openvrRuntimeInstalled/i);
     assert.match(combinedOutput, /openvrRuntimePath/i);

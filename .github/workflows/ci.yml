@@ -44,6 +44,54 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run rebuild:electron
+
+      - name: Verify Windows OpenXR API-layer artifacts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $assets = @(
+            "packages/native-addon/build/Release/electron_vr_openxr_layer.dll",
+            "packages/native-addon/build/Release/electron_vr_openxr_layer_cli.exe",
+            "packages/native-addon/build/Release/electron_vr_openxr_layer_test.exe",
+            "packages/native-addon/build/Release/electron_vr_openxr_layer.json",
+            "packages/native-addon/build/Release/protocol.json"
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path $asset)) { throw "Missing $asset" }
+          }
+
+          & "packages/native-addon/build/Release/electron_vr_openxr_layer_test.exe"
+          if ($LASTEXITCODE -ne 0) { throw "OpenXR API-layer native harness failed" }
+
+          $cli = "packages/native-addon/build/Release/electron_vr_openxr_layer_cli.exe"
+          function Invoke-LayerCli([string] $command) {
+            $output = & $cli $command | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "API-layer CLI command failed: $command" }
+            return $output
+          }
+
+          try {
+            Invoke-LayerCli "uninstall" | Out-Null
+            Invoke-LayerCli "install" | Out-Null
+            $enabled = Invoke-LayerCli "status"
+            if ($enabled -notmatch "installed=true" -or $enabled -notmatch "enabled=true") {
+              throw "API layer was not installed and enabled`n$enabled"
+            }
+
+            Invoke-LayerCli "disable" | Out-Null
+            $disabled = Invoke-LayerCli "status"
+            if ($disabled -notmatch "enabled=false") {
+              throw "API layer did not disable`n$disabled"
+            }
+
+            Invoke-LayerCli "enable" | Out-Null
+            $reenabled = Invoke-LayerCli "status"
+            if ($reenabled -notmatch "enabled=true") {
+              throw "API layer did not re-enable`n$reenabled"
+            }
+          } finally {
+            Invoke-LayerCli "uninstall" | Out-Null
+          }
       - run: npm run test:unit
 
       - name: Run runtime info smoke test

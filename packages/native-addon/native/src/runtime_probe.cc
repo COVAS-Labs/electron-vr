@@ -1,9 +1,11 @@
 #include "runtime_probe.h"
 
 #include "openxr_loader_win.h"
+#include "openxr_companion.h"
 
 #include <array>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -30,10 +32,18 @@
 #ifndef XR_USE_PLATFORM_EGL
 #define XR_USE_PLATFORM_EGL
 #endif
-#ifndef XR_USE_GRAPHICS_API_OPENGL
-#define XR_USE_GRAPHICS_API_OPENGL
+#ifndef XR_USE_GRAPHICS_API_OPENGL_ES
+#define XR_USE_GRAPHICS_API_OPENGL_ES
 #endif
 #include <EGL/egl.h>
+#include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
+#endif
+
+#if defined(__APPLE__)
+#ifndef XR_USE_GRAPHICS_API_METAL
+#define XR_USE_GRAPHICS_API_METAL
+#endif
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 #endif
@@ -289,6 +299,46 @@ std::string UnescapeJsonString(const std::string& value) {
   return result;
 }
 
+std::string ExtractJsonStringValue(const std::string& json_text, const char* key) {
+  const std::string key_token = "\"" + std::string(key) + "\"";
+  const size_t key_index = json_text.find(key_token);
+  if (key_index == std::string::npos) return "";
+  const size_t colon_index = json_text.find(':', key_index + key_token.size());
+  const size_t string_start = json_text.find('"', colon_index == std::string::npos ? key_index : colon_index + 1);
+  if (string_start == std::string::npos) return "";
+
+  std::string raw_value;
+  bool escaped = false;
+  for (size_t index = string_start + 1; index < json_text.size(); ++index) {
+    const char character = json_text[index];
+    if (!escaped && character == '"') return UnescapeJsonString(raw_value);
+    raw_value.push_back(character);
+    escaped = !escaped && character == '\\';
+    if (character != '\\') escaped = false;
+  }
+  return "";
+}
+
+#if defined(__APPLE__)
+void PopulateDarwinRuntimeManifestInfo(RuntimeInfo* info) {
+  if (info == nullptr || info->openxr_runtime_manifest_path.empty()) return;
+  std::error_code path_error;
+  const std::filesystem::path manifest_path = std::filesystem::canonical(info->openxr_runtime_manifest_path, path_error);
+  if (path_error) return;
+
+  info->openxr_runtime_manifest_path = manifest_path.string();
+  std::ifstream manifest_stream(manifest_path);
+  std::stringstream manifest_contents;
+  manifest_contents << manifest_stream.rdbuf();
+  const std::string manifest_text = manifest_contents.str();
+  info->openxr_runtime_name = ExtractJsonStringValue(manifest_text, "name");
+  const std::string library_path = ExtractJsonStringValue(manifest_text, "library_path");
+  if (!library_path.empty()) {
+    info->openxr_runtime_library_path = std::filesystem::weakly_canonical(manifest_path.parent_path() / library_path).string();
+  }
+}
+#endif
+
 std::string ExtractFirstRuntimePath(const std::string& json_text) {
   const std::string runtime_key = "\"runtime\"";
   const size_t runtime_key_index = json_text.find(runtime_key);
@@ -378,7 +428,7 @@ std::string DetectOpenVRRuntimePath(bool* installed) {
   return runtime_path;
 }
 
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
 bool HasExtension(const std::vector<XrExtensionProperties>& extensions, const char* name) {
   for (const XrExtensionProperties& extension : extensions) {
     if (std::string(extension.extensionName) == name) {
@@ -467,7 +517,12 @@ bool QueryOpenXRExtensions(RuntimeInfo* info) {
 
   info->openxr_available = true;
   info->openxr_overlay_extension_available = HasExtension(extensions, XR_EXTX_OVERLAY_EXTENSION_NAME);
+#if defined(__APPLE__)
+  info->openxr_macos_metal_binding_available = HasExtension(extensions, XR_KHR_METAL_ENABLE_EXTENSION_NAME);
+#else
   info->openxr_linux_egl_binding_available = HasExtension(extensions, XR_MNDX_EGL_ENABLE_EXTENSION_NAME);
+  info->openxr_linux_opengl_es_binding_available = HasExtension(extensions, XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME);
+#endif
   info->probe_mode = "openxr-extension-enumeration";
   return true;
 #endif
@@ -487,6 +542,15 @@ RuntimeInfo ProbeRuntime() {
   info.openxr_runtime_library_path = openxrwin::GetActiveRuntimeLibraryPath();
   info.openxr_available = openxrwin::CanLoadOpenXRLoader(&info.openxr_loader_path);
   info.openvr_available = LibraryExists("openvr_api.dll");
+#elif defined(__APPLE__)
+  info.openxr_available = LibraryExists("libopenxr_loader.dylib");
+  info.openxr_loader_path = info.openxr_available ? "libopenxr_loader.dylib" : "";
+  const char* runtime_manifest = std::getenv("XR_RUNTIME_JSON");
+  info.openxr_runtime_manifest_path = runtime_manifest != nullptr
+    ? runtime_manifest
+    : "/usr/local/share/openxr/1/active_runtime.json";
+  PopulateDarwinRuntimeManifestInfo(&info);
+  info.openvr_available = false;
 #else
   info.openxr_available = LibraryExists("libopenxr_loader.so.1", "libopenxr_loader.so");
   info.openvr_available = LibraryExists("libopenvr_api.so", "openvr_api.so");
@@ -502,22 +566,25 @@ RuntimeInfo ProbeRuntime() {
       info.openxr_available = false;
       info.openxr_overlay_extension_available = false;
       info.openxr_linux_egl_binding_available = false;
+      info.openxr_linux_opengl_es_binding_available = false;
     }
   }
 
-  const bool openxr_ready = info.openxr_available && info.openxr_overlay_extension_available && info.openxr_linux_egl_binding_available;
+  const bool openxr_ready = info.openxr_available && info.openxr_overlay_extension_available &&
+                            info.openxr_linux_egl_binding_available && info.openxr_linux_opengl_es_binding_available;
   const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
   const bool openxr_enabled = openxr_ready && !openxr_disabled_by_env;
 
   if (openxr_enabled) {
     info.selected_backend = BackendKind::kOpenXR;
+    info.openxr_mode = OpenXRMode::kOverlaySession;
     AppendProbeMode(&info, "selected-openxr");
   } else if (info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
     } else if (info.openxr_available && !openxr_ready) {
-      AppendProbeMode(&info, "openxr-missing-overlay-or-egl");
+      AppendProbeMode(&info, "openxr-missing-egl-or-opengl-es");
     }
     AppendProbeMode(&info, "selected-openvr");
   } else {
@@ -525,7 +592,7 @@ RuntimeInfo ProbeRuntime() {
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
     } else if (info.openxr_available && !openxr_ready) {
-      AppendProbeMode(&info, "openxr-missing-overlay-or-egl");
+      AppendProbeMode(&info, "openxr-missing-egl-or-opengl-es");
     }
     if (!info.openvr_runtime_installed) {
       AppendProbeMode(&info, "openvr-runtime-not-installed");
@@ -545,41 +612,43 @@ RuntimeInfo ProbeRuntime() {
   }
 
   info.openxr_linux_egl_binding_available = false;
+  info.openxr_linux_opengl_es_binding_available = false;
 
-  const bool openxr_ready = info.openxr_available && info.openxr_overlay_extension_available && info.openxr_windows_d3d11_binding_available;
+  info.openxr_api_layer_installed = IsOpenXRApiLayerInstalled(
+    &info.openxr_api_layer_enabled, &info.openxr_api_layer_manifest_path);
+  if (IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR_API_LAYER")) {
+    info.openxr_api_layer_enabled = false;
+  }
+
+  const bool openxr_ready = info.openxr_available && info.openxr_windows_d3d11_binding_available;
+  const bool direct_openxr_ready = openxr_ready && info.openxr_overlay_extension_available;
+  const bool api_layer_ready = openxr_ready && info.openxr_api_layer_installed && info.openxr_api_layer_enabled;
   const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
-  const bool openxr_enabled_by_env = !openxr_disabled_by_env && IsTruthyEnvVar("ELECTRON_VR_ENABLE_OPENXR");
+  const bool openxr_enabled = !openxr_disabled_by_env && (direct_openxr_ready || api_layer_ready);
 
-  if (openxr_enabled_by_env && openxr_ready) {
+  if (openxr_enabled) {
     info.selected_backend = BackendKind::kOpenXR;
-    AppendProbeMode(&info, "openxr-enabled-by-env");
+    info.openxr_mode = direct_openxr_ready ? OpenXRMode::kOverlaySession : OpenXRMode::kApiLayer;
+    AppendProbeMode(&info, direct_openxr_ready ? "openxr-overlay-session" : "openxr-api-layer");
     AppendProbeMode(&info, "selected-openxr");
   } else if (info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
-    } else if (openxr_enabled_by_env && !openxr_ready) {
-      AppendProbeMode(&info, "openxr-enable-requested-but-unavailable");
-    } else if (openxr_ready) {
-      AppendProbeMode(&info, "openxr-available-not-default");
+    } else if (openxr_ready && !info.openxr_overlay_extension_available && !api_layer_ready) {
+      AppendProbeMode(&info, "openxr-needs-overlay-extension-or-api-layer");
     } else if (info.openxr_available) {
-      AppendProbeMode(&info, "openxr-missing-overlay-or-d3d11");
+      AppendProbeMode(&info, "openxr-missing-d3d11");
     }
     AppendProbeMode(&info, "selected-openvr");
-  } else if (openxr_enabled_by_env && openxr_ready) {
-    info.selected_backend = BackendKind::kOpenXR;
-    AppendProbeMode(&info, "openxr-enabled-by-env");
-    AppendProbeMode(&info, "selected-openxr");
   } else {
     info.selected_backend = BackendKind::kMock;
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
-    } else if (openxr_enabled_by_env && !openxr_ready) {
-      AppendProbeMode(&info, "openxr-enable-requested-but-unavailable");
-    } else if (openxr_ready) {
-      AppendProbeMode(&info, "openxr-available-not-default");
+    } else if (openxr_ready && !info.openxr_overlay_extension_available && !api_layer_ready) {
+      AppendProbeMode(&info, "openxr-needs-overlay-extension-or-api-layer");
     } else if (info.openxr_available) {
-      AppendProbeMode(&info, "openxr-missing-overlay-or-d3d11");
+      AppendProbeMode(&info, "openxr-missing-d3d11");
     }
     if (!info.openvr_runtime_installed) {
       AppendProbeMode(&info, "openvr-runtime-not-installed");
@@ -588,10 +657,30 @@ RuntimeInfo ProbeRuntime() {
     }
     AppendProbeMode(&info, "selected-mock");
   }
+#elif defined(__APPLE__)
+  if (info.openxr_available && !QueryOpenXRExtensions(&info)) {
+    info.openxr_available = false;
+    info.openxr_macos_metal_binding_available = false;
+  }
+
+  if (info.openxr_available && info.openxr_macos_metal_binding_available &&
+      IsTruthyEnvVar("ELECTRON_VR_ENABLE_OPENXR") && !IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR")) {
+    info.selected_backend = BackendKind::kOpenXR;
+    info.openxr_mode = OpenXRMode::kStandardTestSession;
+    AppendProbeMode(&info, "selected-openxr");
+  } else {
+    info.selected_backend = BackendKind::kMock;
+    if (info.openxr_available && !info.openxr_macos_metal_binding_available) {
+      AppendProbeMode(&info, "openxr-missing-metal");
+    }
+    AppendProbeMode(&info, "selected-mock");
+  }
 #else
   info.openxr_overlay_extension_available = false;
   info.openxr_linux_egl_binding_available = false;
+  info.openxr_linux_opengl_es_binding_available = false;
   info.openxr_windows_d3d11_binding_available = false;
+  info.openxr_macos_metal_binding_available = false;
 
   if (info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
@@ -619,6 +708,20 @@ const char* BackendKindToString(BackendKind kind) {
     case BackendKind::kMock:
       return "mock";
     case BackendKind::kNone:
+    default:
+      return "none";
+  }
+}
+
+const char* OpenXRModeToString(OpenXRMode mode) {
+  switch (mode) {
+    case OpenXRMode::kOverlaySession:
+      return "overlay-session";
+    case OpenXRMode::kApiLayer:
+      return "api-layer";
+    case OpenXRMode::kStandardTestSession:
+      return "standard-test-session";
+    case OpenXRMode::kNone:
     default:
       return "none";
   }

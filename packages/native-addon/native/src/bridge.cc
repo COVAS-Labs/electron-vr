@@ -6,6 +6,7 @@
 #include "mock_backend.h"
 #include "openvr_backend.h"
 #include "openxr_backend.h"
+#include "openxr_companion.h"
 
 namespace vrbridge {
 
@@ -28,6 +29,14 @@ bool ValidateSharedTextureSubmission(const SharedTextureSubmission& texture_subm
     return false;
   }
   return true;
+#elif defined(__APPLE__)
+  if (texture_submission.mac_texture.io_surface == 0 || texture_submission.mac_texture.width == 0 || texture_submission.mac_texture.height == 0) {
+    if (error_message != nullptr) {
+      *error_message = "macOS shared texture submission requires an IOSurface and non-zero dimensions.";
+    }
+    return false;
+  }
+  return true;
 #else
   if (error_message != nullptr) {
     *error_message = "Shared texture submission is not supported on this platform.";
@@ -41,6 +50,8 @@ bool SubmitOpenXRSharedTexture(const SharedTextureSubmission& texture_submission
   return SubmitOpenXRFrameWindows(texture_submission.windows_handle, error_message);
 #elif defined(__linux__)
   return SubmitOpenXRFrameLinux(texture_submission.linux_texture, error_message);
+#elif defined(__APPLE__)
+  return SubmitOpenXRFrameMac(texture_submission.mac_texture, error_message);
 #else
   if (error_message != nullptr) {
     *error_message = "OpenXR shared texture submission is not supported on this platform.";
@@ -91,7 +102,11 @@ RuntimeInfo BridgeState::GetLiveRuntimeInfo() const {
 
   switch (runtime_info.selected_backend) {
     case BackendKind::kOpenXR:
-      PopulateOpenXRRuntimeInfo(&runtime_info);
+      if (runtime_info.openxr_mode == OpenXRMode::kApiLayer) {
+        PopulateOpenXRCompanionRuntimeInfo(&runtime_info);
+      } else {
+        PopulateOpenXRRuntimeInfo(&runtime_info);
+      }
       break;
     case BackendKind::kOpenVR:
       PopulateOpenVRRuntimeInfo(&runtime_info);
@@ -138,7 +153,9 @@ bool BridgeState::Initialize(const InitializeOptions& options) {
   bool success = false;
   switch (runtime_info_.selected_backend) {
     case BackendKind::kOpenXR:
-      success = InitializeOpenXRBackend(options_, &last_error_);
+      success = runtime_info_.openxr_mode == OpenXRMode::kApiLayer
+        ? InitializeOpenXRCompanion(options_, &last_error_)
+        : InitializeOpenXRBackend(options_, &last_error_);
       break;
     case BackendKind::kOpenVR:
       success = InitializeOpenVRBackend(options_, &last_error_);
@@ -170,7 +187,9 @@ bool BridgeState::SubmitSharedTexture(const SharedTextureSubmission& texture_sub
   bool success = false;
   switch (runtime_info_.selected_backend) {
     case BackendKind::kOpenXR:
-      success = SubmitOpenXRSharedTexture(texture_submission, &last_error_);
+      success = runtime_info_.openxr_mode == OpenXRMode::kApiLayer
+        ? SubmitOpenXRCompanionFrame(texture_submission.windows_handle, &last_error_)
+        : SubmitOpenXRSharedTexture(texture_submission, &last_error_);
       break;
     case BackendKind::kOpenVR:
       success = SubmitOpenVRSharedTexture(texture_submission, &last_error_);
@@ -233,7 +252,9 @@ bool BridgeState::SetOverlayPlacement(const OverlayPlacement& placement) {
   bool success = false;
   switch (runtime_info_.selected_backend) {
     case BackendKind::kOpenXR:
-      success = SetOpenXRPlacement(placement, &last_error_);
+      success = runtime_info_.openxr_mode == OpenXRMode::kApiLayer
+        ? SetOpenXRCompanionPlacement(placement, &last_error_)
+        : SetOpenXRPlacement(placement, &last_error_);
       break;
     case BackendKind::kOpenVR:
       success = SetOpenVRPlacement(placement, &last_error_);
@@ -263,7 +284,9 @@ bool BridgeState::SetOverlayVisible(bool visible) {
   bool success = false;
   switch (runtime_info_.selected_backend) {
     case BackendKind::kOpenXR:
-      success = SetOpenXRVisible(visible, &last_error_);
+      success = runtime_info_.openxr_mode == OpenXRMode::kApiLayer
+        ? SetOpenXRCompanionVisible(visible, &last_error_)
+        : SetOpenXRVisible(visible, &last_error_);
       break;
     case BackendKind::kOpenVR:
       success = SetOpenVRVisible(visible, &last_error_);
@@ -298,7 +321,9 @@ bool BridgeState::SetOverlaySizeMeters(float size_meters) {
   bool success = false;
   switch (runtime_info_.selected_backend) {
     case BackendKind::kOpenXR:
-      success = SetOpenXRSizeMeters(size_meters, &last_error_);
+      success = runtime_info_.openxr_mode == OpenXRMode::kApiLayer
+        ? SetOpenXRCompanionSizeMeters(size_meters, &last_error_)
+        : SetOpenXRSizeMeters(size_meters, &last_error_);
       break;
     case BackendKind::kOpenVR:
       success = SetOpenVRSizeMeters(size_meters, &last_error_);
@@ -333,7 +358,9 @@ bool BridgeState::SetOverlayCurvature(float curvature) {
   bool success = false;
   switch (runtime_info_.selected_backend) {
     case BackendKind::kOpenXR:
-      success = SetOpenXRCurvature(curvature, &last_error_);
+      success = runtime_info_.openxr_mode == OpenXRMode::kApiLayer
+        ? SetOpenXRCompanionCurvature(curvature, &last_error_)
+        : SetOpenXRCurvature(curvature, &last_error_);
       break;
     case BackendKind::kOpenVR:
       success = SetOpenVRCurvature(curvature, &last_error_);
@@ -357,7 +384,11 @@ bool BridgeState::SetOverlayCurvature(float curvature) {
 void BridgeState::Shutdown() {
   switch (runtime_info_.selected_backend) {
     case BackendKind::kOpenXR:
-      ShutdownOpenXRBackend();
+      if (runtime_info_.openxr_mode == OpenXRMode::kApiLayer) {
+        ShutdownOpenXRCompanion();
+      } else {
+        ShutdownOpenXRBackend();
+      }
       break;
     case BackendKind::kOpenVR:
       ShutdownOpenVRBackend();

@@ -57,9 +57,17 @@ struct LinuxTextureInfo {
   std::vector<LinuxPlaneInfo> planes;
 };
 
+struct MacTextureInfo {
+  uintptr_t io_surface = 0;
+  uint32_t width = 0;
+  uint32_t height = 0;
+  std::string pixel_format;
+};
+
 struct SharedTextureSubmission {
   uint64_t windows_handle = 0;
   LinuxTextureInfo linux_texture;
+  MacTextureInfo mac_texture;
 };
 
 struct SoftwareFrameInfo {

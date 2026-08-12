@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type BackendKind = "none" | "openxr" | "openvr" | "mock";
+export type OpenXRMode = "none" | "overlay-session" | "api-layer" | "standard-test-session";
 
 export interface RuntimeInfo {
   platform: string;
@@ -12,13 +13,25 @@ export interface RuntimeInfo {
   openxrAvailable: boolean;
   openxrOverlayExtensionAvailable: boolean;
   openxrLinuxEglBindingAvailable: boolean;
+  openxrLinuxOpenGlesBindingAvailable: boolean;
   openxrWindowsD3D11BindingAvailable: boolean;
+  openxrMacosMetalBindingAvailable: boolean;
   openxrRuntimeName: string;
   openxrRuntimeManifestPath: string;
   openxrRuntimeLibraryPath: string;
   openxrLoaderPath: string;
   openxrSessionState: string;
   openxrSessionRunning: boolean;
+  openxrMode: OpenXRMode;
+  openxrApiLayerInstalled: boolean;
+  openxrApiLayerEnabled: boolean;
+  openxrApiLayerManifestPath: string;
+  openxrCompanionConnected: boolean;
+  openxrHostProcessId: number;
+  openxrHostApplicationName: string;
+  openxrHostGraphicsApi: string;
+  openxrHostAdapterLuid: string;
+  openxrProtocolVersion: number;
   openvrAvailable: boolean;
   openvrRuntimeInstalled: boolean;
   openvrRuntimePath: string;
@@ -110,6 +123,7 @@ interface OffscreenWebContents {
   on(event: "paint", listener: (event: SharedTexturePaintEvent, dirty: Rectangle, result?: unknown) => void): void;
   removeListener(event: "paint", listener: (event: SharedTexturePaintEvent, dirty: Rectangle, result?: unknown) => void): void;
   setFrameRate(frameRate: number): void;
+  invalidate(): void;
   capturePage(rect?: Rectangle): Promise<NativeImageLike>;
 }
 
@@ -249,6 +263,16 @@ function sanitizeRuntimeInfo(runtimeInfo: RuntimeInfo): RuntimeInfo {
     ...runtimeInfo,
     openxrSessionState: runtimeInfo.openxrSessionState ?? "unknown",
     openxrSessionRunning: runtimeInfo.openxrSessionRunning ?? false,
+    openxrMode: runtimeInfo.openxrMode ?? "none",
+    openxrApiLayerInstalled: runtimeInfo.openxrApiLayerInstalled ?? false,
+    openxrApiLayerEnabled: runtimeInfo.openxrApiLayerEnabled ?? false,
+    openxrApiLayerManifestPath: runtimeInfo.openxrApiLayerManifestPath ?? "",
+    openxrCompanionConnected: runtimeInfo.openxrCompanionConnected ?? false,
+    openxrHostProcessId: runtimeInfo.openxrHostProcessId ?? 0,
+    openxrHostApplicationName: runtimeInfo.openxrHostApplicationName ?? "",
+    openxrHostGraphicsApi: runtimeInfo.openxrHostGraphicsApi ?? "",
+    openxrHostAdapterLuid: runtimeInfo.openxrHostAdapterLuid ?? "",
+    openxrProtocolVersion: runtimeInfo.openxrProtocolVersion ?? 0,
     openvrSceneApplicationState: runtimeInfo.openvrSceneApplicationState ?? "",
     openvrSceneProcessId: runtimeInfo.openvrSceneProcessId ?? 0,
     openvrSceneApplicationKey: runtimeInfo.openvrSceneApplicationKey ?? "",
@@ -323,17 +347,30 @@ export class VrBridge {
   private loggedFirstWindowsSoftwareSubmit = false;
   private windowsReadbackInFlight = false;
   private windowsReadbackPending = false;
+  private invalidationTimer: ReturnType<typeof setInterval> | null = null;
 
   attachWindow(window: BrowserWindow, options: AttachWindowOptions = {}): void {
     this.detachWindow();
 
     const offscreenContents = window.webContents as unknown as OffscreenWebContents;
-    offscreenContents.setFrameRate(options.frameRate ?? 60);
+    const frameRate = options.frameRate ?? 60;
+    offscreenContents.setFrameRate(frameRate);
     offscreenContents.on("paint", this.onPaint);
     this.attachedWindow = window;
+    if (this.getSelectedBackend() === "openxr") {
+      this.invalidationTimer = setInterval(() => {
+        if (this.attachedWindow && !this.attachedWindow.isDestroyed()) {
+          (this.attachedWindow.webContents as unknown as OffscreenWebContents).invalidate();
+        }
+      }, 1000 / frameRate);
+    }
   }
 
   detachWindow(): void {
+    if (this.invalidationTimer) {
+      clearInterval(this.invalidationTimer);
+      this.invalidationTimer = null;
+    }
     if (!this.attachedWindow) {
       return;
     }
@@ -548,6 +585,19 @@ export class VrBridge {
         } else if (!this.warnedAboutMissingSharedTexture) {
           this.warnedAboutMissingSharedTexture = true;
           console.warn("Shared texture metadata was unavailable on paint; preview submission was skipped.");
+        }
+        return;
+      }
+
+      if (process.platform === "darwin") {
+        if (Buffer.isBuffer(handle) && textureInfo?.codedSize) {
+          const submitted = this.addon.submitSharedTexture(textureInfo);
+          if (!submitted) {
+            console.error("Failed to submit macOS frame to VR bridge:", this.addon.getLastError());
+          }
+        } else if (!this.warnedAboutMissingSharedTexture) {
+          this.warnedAboutMissingSharedTexture = true;
+          console.warn("IOSurface metadata was unavailable on paint; OpenXR submission was skipped.");
         }
       }
     } catch (error) {

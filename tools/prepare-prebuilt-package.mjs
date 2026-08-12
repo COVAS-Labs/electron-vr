@@ -35,10 +35,21 @@ const platform = process.platform;
 const arch = process.arch;
 const packageName = `@${ownerScope}/electron-vr-prebuilt-${platform}-${arch}`;
 const packageDir = join(artifactRoot, `prebuilt-${platform}-${arch}`, "package");
+const windowsLayerAssets = [
+  "electron_vr_openxr_layer.dll",
+  "electron_vr_openxr_layer_cli.exe",
+  "electron_vr_openxr_layer.json",
+  "protocol.json"
+];
 
 await rm(packageDir, { force: true, recursive: true });
 await mkdir(packageDir, { recursive: true });
 await copyFile(addonSourcePath, join(packageDir, "vr_bridge.node"));
+if (platform === "win32" && arch === "x64") {
+  for (const asset of windowsLayerAssets) {
+    await copyFile(resolve(repoRoot, "packages", "native-addon", "build", "Release", asset), join(packageDir, asset));
+  }
+}
 const runtimeLibrary = await copyOpenVRRuntimeLibrary({
   destinationDirectory: packageDir,
   platform,
@@ -59,8 +70,30 @@ const metadata = {
   platform,
   arch,
   backends: ["openxr", "openvr", "mock"],
-  bundledRuntimeLibraries
+  bundledRuntimeLibraries,
+  ...(platform === "win32" && arch === "x64" ? {
+    openxrApiLayer: {
+      manifest: "electron_vr_openxr_layer.json",
+      library: "electron_vr_openxr_layer.dll",
+      cli: "electron_vr_openxr_layer_cli.exe",
+      protocolVersion: 1
+    }
+  } : {})
 };
+
+if (platform === "win32" && arch === "x64") {
+  await writeFile(
+    join(packageDir, "openxr-layer-cli.js"),
+    `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const { join } = require("node:path");
+const result = spawnSync(join(__dirname, "electron_vr_openxr_layer_cli.exe"), process.argv.slice(2), { stdio: "inherit" });
+if (result.error) throw result.error;
+process.exitCode = result.status == null ? 1 : result.status;
+`,
+    "utf8"
+  );
+}
 
 await writeFile(
   join(packageDir, "index.js"),
@@ -96,7 +129,9 @@ await writeFile(
     main: "index.js",
     os: [platform],
     cpu: [arch],
-    files: ["index.js", "metadata.json", "README.md", "vr_bridge.node", ...bundledRuntimeLibraries],
+    files: ["index.js", "metadata.json", "README.md", "vr_bridge.node", ...bundledRuntimeLibraries,
+      ...(platform === "win32" && arch === "x64" ? [...windowsLayerAssets, "openxr-layer-cli.js"] : [])],
+    ...(platform === "win32" && arch === "x64" ? { bin: { "electron-vr-openxr-layer": "openxr-layer-cli.js" } } : {}),
      publishConfig: {
        registry,
        ...(access ? { access } : {})

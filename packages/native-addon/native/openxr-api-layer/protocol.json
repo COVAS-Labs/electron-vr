@@ -1,0 +1,6 @@
+{
+  "name": "electron-vr-openxr-overlay",
+  "version": 1,
+  "graphicsApis": ["d3d11"],
+  "textureSlots": 3
+}
