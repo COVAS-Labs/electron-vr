@@ -138,10 +138,7 @@
             ],
             "defines": [
               "NOMINMAX",
-              "WIN32_LEAN_AND_MEAN",
-              "XR_USE_PLATFORM_WIN32",
-              "XR_USE_GRAPHICS_API_D3D11",
-              "XR_NO_PROTOTYPES"
+              "WIN32_LEAN_AND_MEAN"
             ],
             "libraries": [
               "d3d11.lib",
@@ -182,7 +179,7 @@
             "dependencies": ["electron_vr_openxr_layer"],
             "sources": ["native/openxr-api-layer/layer_test.cc"],
             "include_dirs": ["<(openxr_sdk_dir)/include"],
-            "defines": ["NOMINMAX", "WIN32_LEAN_AND_MEAN", "XR_NO_PROTOTYPES"],
+            "defines": ["NOMINMAX", "WIN32_LEAN_AND_MEAN"],
             "msvs_settings": {
               "VCCLCompilerTool": {
                 "ExceptionHandling": 1,
