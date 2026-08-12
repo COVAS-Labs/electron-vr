@@ -121,6 +121,29 @@ From this repository, use `npm run openxr-layer -- <command>` after `npm run reb
 
 The layer is registered per user in `HKCU`, uses the host application's D3D11 device, and exchanges a three-slot keyed-mutex texture ring with Electron. It passes every OpenXR call through unchanged when no companion is connected or overlay submission fails. Set `ELECTRON_VR_DISABLE_OPENXR_API_LAYER=1` as an emergency process-level disable switch.
 
+Electron applications can perform the same explicit per-user lifecycle through the package API:
+
+```ts
+const status = await VROverlay.installOpenXRApiLayer();
+console.log(status.installed, status.enabled, status.manifestPath);
+
+await VROverlay.getOpenXRApiLayerStatus();
+await VROverlay.disableOpenXRApiLayer();
+await VROverlay.enableOpenXRApiLayer();
+await VROverlay.uninstallOpenXRApiLayer();
+```
+
+Each method returns `Promise<OpenXRApiLayerStatus>` and rejects if the platform is unsupported or registration fails. Ask for explicit user consent before installation; do not install silently during startup. Restart OpenXR games after changing layer installation or enablement. The API supports the packaged Linux x64 and Windows x64 layers and normally operates without administrator/root privileges.
+
+Production applications should use the combined compatibility report for backend selection, setup prompts, and feature gating:
+
+```ts
+const report = await VROverlay.getCompatibilityReport();
+console.log(report.launch.verdict, report.launch.requiredActions);
+```
+
+`report.launch.wouldWorkNow` is the authoritative answer to whether launching a browser overlay now is expected to produce real VR output. A false result is classified as either an actionable setup/runtime/host requirement or a fundamental incompatibility. See [`PRODUCT_INTEGRATION.md`](./PRODUCT_INTEGRATION.md) for the recommended end-user consent flow, main-process IPC boundary, waiting/connected states, issue copy, recovery controls, telemetry, and support diagnostics.
+
 The API layer supports one flat quad in Windows x64 D3D11 and D3D12 OpenXR applications. D3D12 uses cross-API shared textures and shared fences on the application's OpenXR command queue. Positive curvature, cross-adapter copying, 32-bit applications, elevated applications, and anti-cheat-protected processes are not supported yet. Per-user API layers are not loaded into elevated OpenXR applications by the Khronos loader.
 
 Runtime selection prefers a direct `XR_EXTX_overlay` session, then the installed and enabled API layer, then OpenVR, then mock. This path is compiled in Windows CI, but real runtime/game validation still requires a Windows VR machine.

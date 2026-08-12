@@ -48,10 +48,11 @@ async function runRuntimeInfoProbe(extraEnv = {}) {
   const scriptPath = resolve(projectRoot, "tests", "fixtures", "runtime-info-smoke.mjs");
   await writeFile(scriptPath, `
     import { app } from "electron";
-    import { createVrBridge } from "../../packages/electron-vr/dist/index.js";
+    import { createVrBridge, getVRCompatibilityReport } from "../../packages/electron-vr/dist/index.js";
 
-    app.whenReady().then(() => {
+    app.whenReady().then(async () => {
       console.log("Runtime info:", createVrBridge().getRuntimeInfo());
+      console.log("Compatibility report:", await getVRCompatibilityReport());
       app.quit();
     });
     app.on("window-all-closed", () => {
@@ -125,6 +126,9 @@ test("runtime probe exposes OpenVR runtime installation details", async () => {
   const combinedOutput = await runRuntimeInfoProbe();
   try {
     assert.match(combinedOutput, /Runtime info:/);
+    assert.match(combinedOutput, /Compatibility report:/);
+    assert.match(combinedOutput, /readiness:/i);
+    assert.match(combinedOutput, /recommendedAction:/i);
     assert.match(combinedOutput, /openxrAvailable/i);
     assert.match(combinedOutput, /openxrOverlayExtensionAvailable/i);
     assert.match(combinedOutput, /openxrLinuxOpenGlesBindingAvailable/i);

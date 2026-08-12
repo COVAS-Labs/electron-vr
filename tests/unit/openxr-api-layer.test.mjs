@@ -4,6 +4,8 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { parseOpenXRApiLayerStatus } from "../../packages/electron-vr/dist/openxrApiLayer.js";
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const layerDirectory = resolve(root, "packages", "native-addon", "native", "openxr-api-layer");
 
@@ -46,4 +48,38 @@ test("Linux API layer uses private Unix IPC and desktop OpenGL pass-through", as
   assert.match(source, /SO_PEERCRED/);
   assert.match(source, /glXMakeContextCurrent/);
   assert.match(protocol, /SOCK_SEQPACKET|kSocketName/);
+});
+
+test("API-layer status parser handles Windows and Linux utility output", () => {
+  assert.deepEqual(parseOpenXRApiLayerStatus([
+    "installed=true",
+    "registered=true",
+    "enabled=false",
+    "manifest=C:\\Users\\test\\electron_vr_openxr_layer.json",
+    "scope=current-user (elevated OpenXR applications do not load HKCU layers)"
+  ].join("\r\n")), {
+    installed: true,
+    enabled: false,
+    registered: true,
+    manifestPath: "C:\\Users\\test\\electron_vr_openxr_layer.json",
+    scope: "current-user (elevated OpenXR applications do not load HKCU layers)"
+  });
+
+  assert.deepEqual(parseOpenXRApiLayerStatus([
+    "installed=false",
+    "enabled=false",
+    "manifest=/home/test/.local/share/openxr/1/api_layers/implicit.d/electron_vr_openxr_layer.json"
+  ].join("\n")), {
+    installed: false,
+    enabled: false,
+    registered: null,
+    manifestPath: "/home/test/.local/share/openxr/1/api_layers/implicit.d/electron_vr_openxr_layer.json",
+    scope: "current-user"
+  });
+});
+
+test("published Linux API-layer utility reports structured status details", async () => {
+  const packagingSource = await readFile(resolve(root, "tools", "prepare-prebuilt-package.mjs"), "utf8");
+  assert.match(packagingSource, /console\.log\(\"manifest=\" \+ manifest\)/);
+  assert.match(packagingSource, /console\.log\(\"scope=current-user\"\)/);
 });

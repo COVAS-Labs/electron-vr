@@ -126,7 +126,7 @@ else if (command === "enable") { if (fs.existsSync(disabled)) fs.renameSync(disa
 else if (command === "disable") { if (fs.existsSync(manifest)) fs.renameSync(manifest, disabled); }
 else if (command === "uninstall") { fs.rmSync(manifest, { force: true }); fs.rmSync(disabled, { force: true }); fs.rmSync(library, { force: true }); }
 else if (command !== "status") throw new Error("Expected install, enable, disable, status, or uninstall");
-console.log("installed=" + (fs.existsSync(library) && (fs.existsSync(manifest) || fs.existsSync(disabled)))); console.log("enabled=" + (fs.existsSync(library) && fs.existsSync(manifest)));
+console.log("installed=" + (fs.existsSync(library) && (fs.existsSync(manifest) || fs.existsSync(disabled)))); console.log("enabled=" + (fs.existsSync(library) && fs.existsSync(manifest))); console.log("manifest=" + manifest); console.log("scope=current-user");
 `,
     "utf8"
   );

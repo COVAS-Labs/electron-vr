@@ -1,9 +1,10 @@
 
     import { app } from "electron";
-    import { createVrBridge } from "../../packages/electron-vr/dist/index.js";
+    import { createVrBridge, getVRCompatibilityReport } from "../../packages/electron-vr/dist/index.js";
 
-    app.whenReady().then(() => {
+    app.whenReady().then(async () => {
       console.log("Runtime info:", createVrBridge().getRuntimeInfo());
+      console.log("Compatibility report:", await getVRCompatibilityReport());
       app.quit();
     });
     app.on("window-all-closed", () => {

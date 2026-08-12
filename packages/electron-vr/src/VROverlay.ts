@@ -2,7 +2,16 @@ import { app, BrowserWindow } from "electron";
 import type { BrowserWindowConstructorOptions } from "electron";
 
 import { createVrBridge, type BackendKind, type OverlayPlacement, type RuntimeInfo, type Quat, type Vec3 } from "./bridge.js";
+import {
+  disableOpenXRApiLayer,
+  enableOpenXRApiLayer,
+  getOpenXRApiLayerStatus,
+  installOpenXRApiLayer,
+  uninstallOpenXRApiLayer,
+  type OpenXRApiLayerStatus
+} from "./openxrApiLayer.js";
 import { assertCurvature, assertSizeMeters, normalizePlacement } from "./overlayOptions.js";
+import { getVRCompatibilityReport, type VRCompatibilityReport } from "./compatibility.js";
 
 type OverlayWindowOptions = Omit<BrowserWindowConstructorOptions, "width" | "height" | "webPreferences"> & {
   webPreferences?: BrowserWindowConstructorOptions["webPreferences"];
@@ -113,6 +122,30 @@ export class VROverlay {
 
   static hasRealVRRuntime(runtimeInfo: RuntimeInfo = VROverlay.getRuntimeInfo()): boolean {
     return runtimeInfo.selectedBackend === "openxr" || runtimeInfo.selectedBackend === "openvr";
+  }
+
+  static getCompatibilityReport(): Promise<VRCompatibilityReport> {
+    return getVRCompatibilityReport();
+  }
+
+  static installOpenXRApiLayer(): Promise<OpenXRApiLayerStatus> {
+    return installOpenXRApiLayer();
+  }
+
+  static getOpenXRApiLayerStatus(): Promise<OpenXRApiLayerStatus> {
+    return getOpenXRApiLayerStatus();
+  }
+
+  static enableOpenXRApiLayer(): Promise<OpenXRApiLayerStatus> {
+    return enableOpenXRApiLayer();
+  }
+
+  static disableOpenXRApiLayer(): Promise<OpenXRApiLayerStatus> {
+    return disableOpenXRApiLayer();
+  }
+
+  static uninstallOpenXRApiLayer(): Promise<OpenXRApiLayerStatus> {
+    return uninstallOpenXRApiLayer();
   }
 
   static async openWindow(

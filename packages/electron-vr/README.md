@@ -86,4 +86,27 @@ npx electron-vr-openxr-layer status
 
 Use the same command with `enable`, `disable`, or `uninstall`. `npm install` does not register the layer. `ELECTRON_VR_DISABLE_OPENXR_API_LAYER=1` disables it for a process. The API layer supports one flat quad for D3D11 and D3D12 hosts; elevated applications and positive curvature are not yet supported.
 
+Applications can manage the same per-user installation through the public API:
+
+```ts
+const installed = await VROverlay.installOpenXRApiLayer();
+console.log(installed.installed, installed.enabled, installed.manifestPath);
+
+const status = await VROverlay.getOpenXRApiLayerStatus();
+await VROverlay.disableOpenXRApiLayer();
+await VROverlay.enableOpenXRApiLayer();
+await VROverlay.uninstallOpenXRApiLayer();
+```
+
+The methods return `Promise<OpenXRApiLayerStatus>` and reject when the platform is unsupported or the utility fails. Installation should require explicit user consent. It affects subsequently started OpenXR applications, so restart an already running game after installing, enabling, disabling, or uninstalling the layer. These methods support Linux x64 and Windows x64 and do not require administrator/root access for the normal per-user installation.
+
+For product UI, prefer the combined readiness report instead of interpreting raw probe fields:
+
+```ts
+const report = await VROverlay.getCompatibilityReport();
+console.log(report.launch.verdict, report.launch.requiredActions);
+```
+
+`report.launch.wouldWorkNow` answers whether launching a browser overlay now is expected to produce real VR output. Otherwise, the verdict distinguishes an actionable setup/runtime/host requirement from a fundamental incompatibility. The report also exposes detailed readiness states, actionable issues, and per-feature support. See `PRODUCT_INTEGRATION.md` in the repository for the recommended consent, IPC, restart, recovery, diagnostics, and production UI flow.
+
 `getRuntimeInfo()` also includes `openvrRuntimeInstalled`, `openvrRuntimePath`, `openxrMode`, API-layer installation and connection state, protocol version, and connected OpenXR host metadata. `probeMode` includes the backend-selection decision.
