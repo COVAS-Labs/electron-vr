@@ -135,7 +135,7 @@ export function analyzeVRCompatibility(
   } else if (runtime.selectedBackend === "openxr" && runtime.openxrMode === "api-layer") {
     requiresApiLayer = true;
     features = { ...realFeatures };
-    compatibleHostGraphicsApis = runtime.platform === "win32" ? ["D3D11", "D3D12"] : ["OpenGL Xlib/GLX"];
+    compatibleHostGraphicsApis = runtime.platform === "win32" ? ["D3D11", "D3D12"] : ["Vulkan", "OpenGL Xlib/GLX"];
     backendLabel = "OpenXR application integration";
     if (runtime.openxrCompanionConnected) {
       readiness = "ready";
@@ -198,7 +198,7 @@ export function analyzeVRCompatibility(
       summary = "OpenXR is installed, but application integration must be enabled before overlays can appear in compatible OpenXR applications.";
       requiresApiLayer = true;
       recommendedAction = "install-openxr-api-layer";
-      compatibleHostGraphicsApis = runtime.platform === "win32" ? ["D3D11", "D3D12"] : ["OpenGL Xlib/GLX"];
+      compatibleHostGraphicsApis = runtime.platform === "win32" ? ["D3D11", "D3D12"] : ["Vulkan", "OpenGL Xlib/GLX"];
       issues.push(issue(
         "openxr-api-layer-not-installed",
         "warning",
@@ -212,7 +212,7 @@ export function analyzeVRCompatibility(
       summary = "OpenXR application integration is installed but disabled.";
       requiresApiLayer = true;
       recommendedAction = "enable-openxr-api-layer";
-      compatibleHostGraphicsApis = runtime.platform === "win32" ? ["D3D11", "D3D12"] : ["OpenGL Xlib/GLX"];
+      compatibleHostGraphicsApis = runtime.platform === "win32" ? ["D3D11", "D3D12"] : ["Vulkan", "OpenGL Xlib/GLX"];
       issues.push(issue(
         "openxr-api-layer-disabled",
         "warning",

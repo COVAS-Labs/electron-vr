@@ -37,20 +37,89 @@ test("API-layer protocol and source retain the Direct3D single-overlay contract"
   assert.match(harness, /no-companion frame is forwarded unchanged/);
 });
 
-test("Linux API layer uses private Unix IPC and desktop OpenGL pass-through", async () => {
+test("Linux API layer keeps GLX fallback and adds fenced Vulkan DMA-BUF submission", async () => {
   const manifest = JSON.parse(await readFile(resolve(layerDirectory, "electron_vr_openxr_layer_linux.json"), "utf8"));
   const source = await readFile(resolve(layerDirectory, "layer_linux.cc"), "utf8");
   const protocol = await readFile(resolve(root, "packages", "native-addon", "native", "openxr_api_layer_protocol_linux.h"), "utf8");
   assert.equal(manifest.api_layer.name, "XR_APILAYER_ELECTRON_VR_overlay");
   assert.match(manifest.api_layer.library_path, /libelectron_vr_openxr_layer\.so$/);
   assert.match(source, /XrGraphicsBindingOpenGLXlibKHR/);
+  assert.match(source, /XrGraphicsBindingVulkanKHR/);
+  assert.match(source, /XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR/);
   assert.match(source, /SCM_RIGHTS/);
   assert.match(source, /SO_PEERCRED/);
   assert.match(source, /glXMakeContextCurrent/);
   assert.match(source, /DRM_FORMAT_MOD_INVALID/);
   assert.match(source, /mmap/);
+  assert.match(source, /DMA_BUF_IOCTL_SYNC/);
+  assert.match(source, /kMinimumCopyInterval/);
+  assert.match(source, /MessageType::kFrameAck/);
+  assert.match(source, /g_frame_condition\.wait/);
+  assert.match(source, /kMaximumFrameWait/);
+  assert.match(source, /vkGetMemoryFdPropertiesKHR/);
+  assert.match(source, /VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT/);
+  assert.match(source, /VK_QUEUE_FAMILY_FOREIGN_EXT/);
+  assert.match(source, /vkCmdCopyImage/);
+  assert.match(source, /vkWaitForFences/);
+  assert.match(source, /LayerCreateVulkanDeviceKHR/);
+  assert.match(source, /LayerGetVulkanDeviceExtensionsKHR/);
+  assert.match(source, /GetVulkanDeviceExtensionsKHR\(instance, system_id, capacity, count, buffer\)/);
+  assert.match(source, /if \(fd_count == 0\)/);
+  assert.match(source, /VkDeviceCreateInfo device_info = \*info->vulkanCreateInfo/);
+  assert.match(source, /VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME/);
+  assert.match(source, /std::shared_ptr<std::vector<uint8_t>> pixels/);
+  assert.match(source, /glTexSubImage2D/);
   assert.doesNotMatch(source, /glEGLImageTargetTexture2DOES|glEGLImageTargetTexStorageEXT/);
   assert.match(protocol, /SOCK_SEQPACKET|kSocketName/);
+  assert.match(protocol, /kGraphicsBindingVulkan/);
+});
+
+test("Linux API-layer software frames use acknowledged memfd snapshots", async () => {
+  const bridge = await readFile(resolve(root, "packages", "electron-vr", "src", "bridge.ts"), "utf8");
+  const nativeBridge = await readFile(resolve(root, "packages", "native-addon", "native", "src", "bridge.cc"), "utf8");
+  const companion = await readFile(resolve(root, "packages", "native-addon", "native", "src", "openxr_companion_linux.cc"), "utf8");
+  const layer = await readFile(resolve(layerDirectory, "layer_linux.cc"), "utf8");
+  assert.match(bridge, /openxrMode === "api-layer"/);
+  assert.match(bridge, /submitLinuxOpenXRSoftwareFrame/);
+  assert.match(bridge, /bgraToRgba\(bitmap\)/);
+  assert.match(nativeBridge, /SubmitOpenXRCompanionSoftwareFrameLinux/);
+  assert.match(companion, /memfd_create\("electron-vr-openxr-frame"/);
+  assert.match(companion, /DRM_FORMAT_ABGR8888/);
+  assert.match(companion, /SendFrameLocked\(fd, error\)/);
+  assert.match(companion, /ack\.consumed != 0/);
+  assert.match(companion, /poll\(&descriptor, 1, 1000\)/);
+  assert.match(layer, /errno == ENOTTY/);
+  assert.match(layer, /SendFrameAck\(socket_fd, snapshot, true\)/);
+  assert.match(layer, /bool consumed = !snapshot\.visible/);
+});
+
+test("Linux API-layer selects shared DMA-BUF only for Vulkan hosts", async () => {
+  const bridge = await readFile(resolve(root, "packages", "electron-vr", "src", "bridge.ts"), "utf8");
+  const companion = await readFile(resolve(root, "packages", "native-addon", "native", "src", "openxr_companion_linux.cc"), "utf8");
+  const binding = await readFile(resolve(root, "packages", "native-addon", "binding.gyp"), "utf8");
+  assert.match(bridge, /openxrCompanionConnected && runtimeInfo\.openxrHostGraphicsApi === "opengl-xlib"/);
+  assert.match(bridge, /!runtimeInfo\.openxrCompanionConnected \|\| runtimeInfo\.openxrHostGraphicsApi === "opengl-xlib"/);
+  assert.match(companion, /kGraphicsBindingVulkan \? "vulkan"/);
+  assert.match(companion, /kGraphicsBindingOpenGLXlib \? "opengl-xlib"/);
+  assert.match(binding, /XR_USE_GRAPHICS_API_VULKAN/);
+  assert.match(binding, /-lvulkan/);
+});
+
+test("Linux Vulkan DMA-BUF probe retains import and readback contracts", async () => {
+  const binding = await readFile(resolve(root, "packages", "native-addon", "binding.gyp"), "utf8");
+  const source = await readFile(resolve(layerDirectory, "vulkan_dmabuf_probe.cc"), "utf8");
+  assert.match(binding, /electron_vr_vulkan_dmabuf_probe/);
+  assert.match(binding, /vulkan_dmabuf_probe\.cc/);
+  assert.match(binding, /-lvulkan/);
+  assert.match(source, /openxr_api_layer_protocol_linux\.h/);
+  assert.match(source, /LayerHello/);
+  assert.match(source, /SCM_RIGHTS/);
+  assert.match(source, /VK_QUEUE_FAMILY_FOREIGN_EXT/);
+  assert.match(source, /VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT/);
+  assert.match(source, /DRM_FORMAT_MOD_LINEAR/);
+  assert.match(source, /vkGetMemoryFdPropertiesKHR/);
+  assert.match(source, /vkInvalidateMappedMemoryRanges/);
+  assert.match(source, /SendFrameAck/);
 });
 
 test("API-layer status parser handles Windows and Linux utility output", () => {

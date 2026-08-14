@@ -243,9 +243,17 @@ bool BridgeState::SubmitSoftwareFrame(const SoftwareFrameInfo& frame_info) {
       success = SubmitOpenVRSoftwareFrame(frame_info, &last_error_);
       break;
     case BackendKind::kOpenXR:
+#if defined(__linux__)
+      if (runtime_info_.openxr_mode == OpenXRMode::kApiLayer) {
+        success = SubmitOpenXRCompanionSoftwareFrameLinux(frame_info, &last_error_);
+        break;
+      }
+#endif
+      SetLastError("Software frame submission is only available for the OpenXR API layer, mock, and OpenVR backends.");
+      return false;
     case BackendKind::kNone:
     default:
-      SetLastError("Software frame submission is only available for the mock and OpenVR backends.");
+      SetLastError("Software frame submission is only available for the OpenXR API layer, mock, and OpenVR backends.");
       return false;
   }
 

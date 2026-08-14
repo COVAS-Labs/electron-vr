@@ -9,6 +9,7 @@ namespace vrbridge {
 bool IsOpenXRApiLayerInstalledLinux(bool* enabled, std::string* manifest_path);
 bool InitializeOpenXRCompanionLinux(const InitializeOptions& options, std::string* error_message);
 bool SubmitOpenXRCompanionFrameLinux(const LinuxTextureInfo& texture, std::string* error_message);
+bool SubmitOpenXRCompanionSoftwareFrameLinux(const SoftwareFrameInfo& frame_info, std::string* error_message);
 bool SetOpenXRCompanionPlacementLinux(const OverlayPlacement& placement, std::string* error_message);
 bool SetOpenXRCompanionVisibleLinux(bool visible, std::string* error_message);
 bool SetOpenXRCompanionSizeMetersLinux(float size_meters, std::string* error_message);

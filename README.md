@@ -64,7 +64,7 @@ The package probes OpenXR capability and chooses backends based on the available
 - `openvr` when the OpenXR overlay path is unavailable or explicitly disabled and a Linux OpenVR runtime is installed
 - `mock` otherwise
 
-Linux OpenXR remains the preferred path when the overlay extension is available. Linux OpenVR is kept as a best-effort alternate or fallback runtime path for compatible OpenVR overlay runtimes, but it is not end-to-end validated on the main development machine or in CI. Set `ELECTRON_VR_DISABLE_OPENXR=1` to force Linux onto the OpenVR-or-mock selection branch while debugging.
+Linux OpenXR remains the preferred path when the overlay extension is available. Linux OpenVR uses public `TextureType_Vulkan` automatically on the GPU reported by SteamVR, independent of the game's graphics API, and falls back from direct DMA-BUF import to bitmap-to-Vulkan upload. Set `ELECTRON_VR_DISABLE_OPENXR=1` to force Linux onto the OpenVR-or-mock selection branch while debugging. `ELECTRON_VR_DISABLE_OPENVR_VULKAN=1` disables the default Vulkan path; `ELECTRON_VR_OPENVR_GL_UPLOAD=1` explicitly selects the CPU-readback OpenGL diagnostic path.
 
 Linux x64 packages also include an explicit implicit-API-layer fallback for runtimes without `XR_EXTX_overlay`:
 
@@ -73,7 +73,7 @@ npx electron-vr-openxr-layer install
 npx electron-vr-openxr-layer status
 ```
 
-The Linux fallback currently supports desktop OpenGL Xlib host sessions and one single-plane linear RGB DMA-BUF quad. It uses a private per-user Unix socket, `SCM_RIGHTS` descriptor transfer, maps the linear DMA-BUF for upload through a layer-owned shared GLX context, and uses implicit DMA-BUF synchronization. Xcb, deprecated OpenGL Wayland bindings, Vulkan, modifier-backed or multiplane buffers, explicit sync fences, and curvature are deferred and pass through unchanged. Use the same CLI with `enable`, `disable`, or `uninstall`; ordinary `npm install` never registers the layer.
+The Linux fallback supports Vulkan and desktop OpenGL Xlib host sessions with one single-plane linear RGB DMA-BUF quad. Vulkan hosts import the DMA-BUF on the host device, perform a fenced transfer into an OpenXR swapchain image, and acknowledge Electron only after completion; GLX hosts retain the immutable CPU snapshot and shared-context upload fallback. The Vulkan path is currently scoped to the validated Ubuntu 24.04 AMD RADV, Monado, and `hello_xr -g Vulkan` configuration. Xcb, deprecated OpenGL Wayland bindings, modifier-backed or multiplane buffers, and curvature are deferred and pass through unchanged. Use the same CLI with `enable`, `disable`, or `uninstall`; ordinary `npm install` never registers the layer.
 
 Native Wayland sessions can use this path when the OpenXR host runs through XWayland and supplies `XrGraphicsBindingOpenGLXlibKHR`; Electron may remain native Wayland for DMA-BUF export. For controlled testing only, `ELECTRON_VR_FORCE_OPENXR_API_LAYER=1` selects an installed and enabled layer even when the runtime also exposes `XR_EXTX_overlay`; normal product launches should retain automatic direct-overlay priority.
 
@@ -101,7 +101,9 @@ Linux OpenXR overlay submission now preserves the Electron window alpha channel 
 
 For Linux verification, `npm run test:e2e:smoke:openxr` forces the demo app onto the OpenXR backend and asserts that initialization plus placement, size, and visibility updates succeed.
 
-`npm run test:e2e:smoke:openvr:linux` disables OpenXR and, when a Linux OpenVR runtime with overlay support is available, asserts that the demo app initializes the OpenVR backend and that placement, size, and visibility updates succeed. The test is runtime-gated so it skips cleanly on hosts without a usable Linux OpenVR overlay runtime, including the current development machine and CI.
+`npm run test:e2e:smoke:openvr:linux` disables OpenXR and, when a Linux OpenVR runtime with overlay support is available, asserts initialization, placement, size, visibility, and Vulkan or explicitly requested OpenGL frame submission. The test skips cleanly on hosts without a usable Linux OpenVR overlay runtime.
+
+For OpenVR translators that accept `TextureType_OpenGL` but do not implement SteamVR's private DMA-BUF resource manager, set `ELECTRON_VR_OPENVR_GL_UPLOAD=1`. This experimental Linux-only path reads back the Electron bitmap, uploads it into a persistent GLX texture, and bypasses DMA-BUF import. It is never selected automatically and is not intended as a native SteamVR fallback.
 
 The packaged Windows and Linux builds bundle the OpenVR runtime library they need, so consumers do not need to set `OPENVR_SDK_DIR` just to load the addon.
 

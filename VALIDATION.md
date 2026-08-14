@@ -1,6 +1,6 @@
 # Windows and Linux Host Validation
 
-This document defines the real-host validation that remains outstanding for the
+This document defines real-host validation for the
 Electron VR overlay implementation. Repository CI validates compilation,
 API-layer negotiation, pass-through behavior, installation, and Electron smoke
 tests. It does not validate presentation through a real OpenXR/OpenVR runtime,
@@ -22,14 +22,14 @@ Validate these paths:
 | W-OVR | Windows x64 | OpenVR fallback | D3D11 shared texture | Electron overlay is visible over a SteamVR scene app |
 | L-XR-DIRECT | Linux x64 | Direct `XR_EXTX_overlay` | EGL/OpenGL ES | Electron overlay is visible while another primary OpenXR app runs |
 | L-LAYER-GLX | Linux x64 | Implicit API layer | desktop OpenGL Xlib/GLX | One DMA-BUF-backed Electron quad is appended to the host session |
-| L-OVR | Linux x64 | OpenVR fallback | single-plane RGB DMA-BUF | Electron overlay is visible over a SteamVR scene app |
+| L-LAYER-VK | Linux x64 | Implicit API layer | Vulkan | One DMA-BUF-backed Electron quad is copied into the host session |
+| L-OVR | Linux x64 | OpenVR fallback | Vulkan overlay texture | Electron overlay is visible over a SteamVR scene app |
 
 The following are negative pass-through tests, not supported overlay paths:
 
 | ID | Platform | Host case | Required result |
 | --- | --- | --- | --- |
 | W-PASS | Windows x64 | Unsupported OpenXR graphics binding or no companion | Host continues normally without the overlay |
-| L-PASS-VK | Linux x64 | Vulkan OpenXR host | Host continues normally without the overlay |
 | L-PASS-NOCOMP | Linux x64 | OpenGL Xlib host with no Electron companion | Host continues normally without the overlay |
 
 ## Required Evidence
@@ -422,9 +422,10 @@ Expected final state is `installed=false` and `enabled=false`.
 - Development packages used by the repository and controlled host.
 - Steam and SteamVR for Linux OpenVR validation.
 
-The supported Linux API-layer path is desktop OpenGL with the OpenXR Xlib
-binding. Wayland, Xcb, Vulkan, OpenGL ES host bindings, multiplane DMA-BUF,
-explicit sync fences, and curvature are not supported by the implicit layer.
+The Linux API layer supports Vulkan and desktop OpenGL with the OpenXR Xlib
+binding. Vulkan hosts use direct DMA-BUF import and a fenced swapchain copy;
+GLX hosts use the acknowledged software snapshot fallback. Xcb, native
+Wayland host bindings, multiplane DMA-BUF, and curvature remain unsupported.
 
 For the baseline, Electron and the host must run as the same non-root desktop
 user in the same login session. Never run either process with `sudo`.
@@ -438,11 +439,47 @@ sudo apt-get update
 sudo apt-get install -y build-essential cmake ninja-build git pkg-config \
   libx11-dev libxrandr-dev libxxf86vm-dev libgl1-mesa-dev \
   libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libopenxr-dev \
-  libvulkan-dev mesa-vulkan-drivers mesa-utils vulkan-tools pciutils
+  libvulkan-dev mesa-vulkan-drivers mesa-utils vulkan-tools pciutils \
+  gnome-screenshot
 ```
 
 Install Node.js 22 x64 through the machine's normal Node version manager or
 package policy. Confirm `node --version` and `npm --version` before proceeding.
+
+### Remote Validation Session
+
+Use a dedicated non-root Linux workstation with an active graphical login.
+SSH is suitable for orchestration, but every VR, Electron, screenshot, and host
+process must join the logged-in user's desktop and D-Bus session. Do not encode
+user names, home-directory paths, display numbers, or display-manager paths in
+scripts or committed evidence.
+
+Discover the session values on the target instead:
+
+```bash
+export DISPLAY="$(systemctl --user show-environment | sed -n 's/^DISPLAY=//p')"
+export XAUTHORITY="$(systemctl --user show-environment | sed -n 's/^XAUTHORITY=//p')"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+test -n "$DISPLAY"
+test -r "$XAUTHORITY"
+test -S "$XDG_RUNTIME_DIR/bus"
+```
+
+Keep the repository in an arbitrary target directory exported as `REPO_DIR`.
+Store evidence outside source-controlled paths unless the artifact is intended
+for review:
+
+```bash
+export REPO_DIR=/absolute/path/to/electron-vr
+export VALIDATION_DIR=/absolute/path/to/validation-output
+mkdir -p "$VALIDATION_DIR"
+```
+
+For long-running remote commands, transient user services are preferred over
+SSH-owned processes. Pass the discovered session variables with `--setenv`,
+give each run a descriptive unit name, and inspect it with `systemctl --user`
+and `journalctl --user-unit`.
 
 ### Record The Machine
 
@@ -594,7 +631,7 @@ openxrCompanionConnected: true
 openxrHostProcessId: nonzero
 openxrHostApplicationName: hello_xr or the reported host name
 openxrHostGraphicsApi: opengl-xlib
-openxrProtocolVersion: 1
+openxrProtocolVersion: 2
 ```
 
 As on Windows, the current demo logs runtime information before connection.
@@ -610,6 +647,32 @@ Run the same test on each available GPU/driver family:
 
 At minimum, one hardware/driver combination is required before initial support
 can be claimed. The others remain explicitly unvalidated until executed.
+
+### L-LAYER-VULKAN: Vulkan API Layer
+
+Install and enable the layer as above, force API-layer selection only for the
+controlled Electron producer when the runtime also exposes `XR_EXTX_overlay`,
+and start a Vulkan host:
+
+In terminal A:
+
+```bash
+ELECTRON_VR_FORCE_OPENXR_API_LAYER=1 npm start \
+  2>&1 | tee "$VALIDATION_DIR/demo-linux-vulkan-layer.log"
+```
+
+In terminal B:
+
+```bash
+"$HELLO_XR" -g Vulkan \
+  2>&1 | tee "$VALIDATION_DIR/host-linux-vulkan-layer.log"
+```
+
+Required connected state includes `openxrHostGraphicsApi: vulkan` and protocol
+version 2. Capture the compositor view at least 70 seconds apart and verify the
+overlay clock and host scene both change. Confirm correct orientation, alpha,
+color, and placement. Retain service journals and check the kernel log for GPU
+faults or resets.
 
 ### L-XR-DIRECT: Direct OpenXR Overlay
 
@@ -647,7 +710,12 @@ mark this row `NOT AVAILABLE`, not `PASS`.
 
 ### L-OVR: Linux OpenVR
 
-Start SteamVR and an active SteamVR scene application. Then run:
+Start SteamVR and an active SteamVR scene application. Linux OpenVR uses public
+`TextureType_Vulkan` automatically, independent of the scene application's
+graphics API. Direct DMA-BUF import is preferred; bitmap-to-Vulkan upload is
+the automatic correctness fallback. OpenGL upload is diagnostic-only.
+
+Then run without a Vulkan enable flag:
 
 ```bash
 ELECTRON_VR_DISABLE_OPENXR=1 npm run test:e2e:runtime-info \
@@ -668,6 +736,26 @@ A skip caused by missing overlay application support is not a pass. Verify the
 animated panel over the active scene, head/world placement, visibility, size,
 alpha, and curvature. Retain SteamVR compositor and VR server logs.
 
+For synthetic testing, SteamVR's null driver may be enabled with a generic HMD
+profile and `displayDebug=true`. This validates initialization and transport,
+but it does not replace physical-headset acceptance. A scene application must
+continuously submit frames: while the null HMD reports `Waiting...`, SteamVR
+can accept overlay calls without consuming updated texture contents.
+
+Use GNOME Screenshot to capture the compositor view twice across the previous
+freeze window:
+
+```bash
+gnome-screenshot -f "$VALIDATION_DIR/openvr-vulkan-a.png"
+sleep 8
+gnome-screenshot -f "$VALIDATION_DIR/openvr-vulkan-b.png"
+```
+
+The scene and overlay clock must both change. Also confirm the Electron log
+contains `submitted first DMA-BUF through TextureType_Vulkan`. To exercise the
+fallback explicitly, set `ELECTRON_VR_OPENVR_VULKAN_SOFTWARE=1`; use
+`ELECTRON_VR_DISABLE_OPENVR_VULKAN=1` only for negative testing.
+
 ### Linux Negative Tests
 
 No companion with a supported binding:
@@ -679,20 +767,17 @@ npm run openxr-layer -- enable
 
 The host must run normally with no Electron process.
 
-Unsupported Vulkan binding:
+Unsupported native Wayland or Xcb binding:
 
 ```bash
 npm run openxr-layer -- enable
-npm start 2>&1 | tee "$VALIDATION_DIR/demo-linux-vulkan-pass-through.log"
+npm start 2>&1 | tee "$VALIDATION_DIR/demo-linux-unsupported-binding.log"
 ```
 
-In a second terminal:
+In a second terminal, launch a controlled host known to use a native Wayland
+or Xcb OpenXR binding and record its exact command in the evidence.
 
-```bash
-"$HELLO_XR" -g Vulkan 2>&1 | tee "$VALIDATION_DIR/host-linux-vulkan-pass-through.log"
-```
-
-The Vulkan host must continue normally and no injected overlay is expected.
+The unsupported host must continue normally and no injected overlay is expected.
 The Electron process may remain waiting for a compatible host.
 
 Disabled layer:
@@ -720,6 +805,9 @@ npm run openxr-layer -- status
 unset ELECTRON_VR_DISABLE_OPENXR
 unset ELECTRON_VR_DISABLE_OPENXR_API_LAYER
 unset ELECTRON_VR_FORCE_OPENXR_API_LAYER
+unset ELECTRON_VR_DISABLE_OPENVR_VULKAN
+unset ELECTRON_VR_OPENVR_VULKAN_SOFTWARE
+unset ELECTRON_VR_OPENVR_GL_UPLOAD
 unset XR_RUNTIME_JSON
 ```
 
@@ -779,8 +867,8 @@ Compare a 60-second host-only baseline with a 60-second host-plus-overlay run.
 There is no fixed release threshold yet, so retain raw measurements. Any
 repeatable frame-time regression above 1 ms, persistent reprojection increase,
 or blocking hitch should be filed before declaring the path validated. Linux
-deserves particular attention because the API layer currently uses implicit
-DMA-BUF synchronization and `glFinish()`.
+deserves particular attention because the GLX fallback uses CPU snapshots and
+`glFinish()`, while Vulkan uses DMA-BUF synchronization and a fenced GPU copy.
 
 ## Real Application Matrix
 
@@ -792,7 +880,7 @@ After `hello_xr`, run the applicable layer path against this minimum matrix:
 | Windows | Unreal OpenXR title | D3D12 | Yes |
 | Windows | SteamVR scene app | OpenVR | Yes |
 | Linux | OpenXR sample or title confirmed to use OpenGL Xlib | OpenGL | Yes |
-| Linux | OpenXR title using Vulkan | Vulkan pass-through | Yes |
+| Linux | OpenXR title using Vulkan | Vulkan overlay | Yes |
 | Linux | SteamVR scene app | OpenVR | Yes when runtime supports overlay apps |
 
 For every title, record title version, engine version if known, launch options,
@@ -813,8 +901,8 @@ Copy this table into the evidence directory as `RESULTS.md`:
 | W-PASS | | | | | | NOT RUN | | |
 | L-XR-DIRECT | | | | | | NOT RUN | | |
 | L-LAYER-GLX | | | | | | NOT RUN | | |
+| L-LAYER-VK | | | | | | NOT RUN | | |
 | L-OVR | | | | | | NOT RUN | | |
-| L-PASS-VK | | | | | | NOT RUN | | |
 | L-PASS-NOCOMP | | | | | | NOT RUN | | |
 
 Allowed result values:
@@ -831,8 +919,8 @@ Allowed result values:
 Do not describe Windows or Linux real-host support as validated until:
 
 - W-LAYER-11 and W-LAYER-12 pass on at least one physical Windows VR machine.
-- L-LAYER-GLX passes on at least one physical Linux VR machine.
-- W-PASS, L-PASS-VK, and L-PASS-NOCOMP pass.
+- L-LAYER-GLX and L-LAYER-VK pass on at least one physical Linux VR machine.
+- W-PASS and L-PASS-NOCOMP pass.
 - The required Unity/Unreal rows pass.
 - OpenVR rows either pass or remain explicitly documented as unvalidated.
 - Direct-overlay rows pass where a runtime exposing `XR_EXTX_overlay` is

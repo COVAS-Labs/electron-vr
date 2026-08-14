@@ -67,7 +67,7 @@ You can also reposition the overlay later with `overlay.setPlacement(...)`, togg
 
 `sizeMeters` must be greater than zero, `curvature` must be between `0` and `1`, and placement values should be finite numbers. `curvature: 0` keeps the overlay flat. Positive curvature uses OpenVR overlay curvature on OpenVR and `XR_KHR_composition_layer_cylinder` cylinder layers on OpenXR.
 
-On Linux, runtime selection prefers `openxr`, then falls back to `openvr`, then to `mock`. Linux OpenVR is treated as a best-effort alternate backend when a compatible OpenVR runtime is installed but the OpenXR overlay path is unavailable or disabled. It is not currently validated end to end on the main development machine or in CI.
+On Linux, runtime selection prefers `openxr`, then falls back to `openvr`, then to `mock`. Linux OpenVR automatically uses public `TextureType_Vulkan`, regardless of the game's graphics API, with bitmap-to-Vulkan fallback when direct DMA-BUF import is unavailable. `ELECTRON_VR_DISABLE_OPENVR_VULKAN=1` disables it; `ELECTRON_VR_OPENVR_GL_UPLOAD=1` explicitly selects the slower OpenGL diagnostic path.
 
 When `XR_EXTX_overlay` is unavailable, Linux x64 can use the explicitly installed API layer before falling back to OpenVR:
 
@@ -75,7 +75,7 @@ When `XR_EXTX_overlay` is unavailable, Linux x64 can use the explicitly installe
 npx electron-vr-openxr-layer install
 ```
 
-The initial Linux layer supports desktop OpenGL Xlib sessions and one single-plane linear RGB DMA-BUF overlay. Xcb, native Wayland host bindings, Vulkan, modifier-backed or multiplane buffers, explicit synchronization, and curvature are not yet supported.
+The Linux layer supports Vulkan and desktop OpenGL Xlib sessions with one single-plane linear RGB DMA-BUF overlay. Vulkan DMA-BUF import is currently validated for Ubuntu 24.04 AMD RADV with Monado and `hello_xr -g Vulkan`; GLX retains its software snapshot fallback. Xcb, native Wayland host bindings, modifier-backed or multiplane buffers, and curvature are not yet supported.
 
 On Windows x64, selection prefers a direct `XR_EXTX_overlay` session, then an installed implicit API layer for D3D11 or D3D12 hosts, then OpenVR, then mock. API-layer installation is explicit:
 

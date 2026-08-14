@@ -59,7 +59,10 @@
               "-lopenvr_api",
               "-lEGL",
               "-lGLESv2",
-              "-ldl"
+               "-lGL",
+               "-lX11",
+               "-lvulkan",
+               "-ldl"
             ]
           }
         ],
@@ -133,7 +136,8 @@
             "product_prefix": "lib",
             "sources": ["native/openxr-api-layer/layer_linux.cc"],
             "include_dirs": ["<(openxr_sdk_dir)/include"],
-            "libraries": ["-lGL", "-lEGL", "-lX11", "-ldl", "-lpthread"],
+            "defines": ["XR_USE_PLATFORM_XLIB", "XR_USE_GRAPHICS_API_OPENGL", "XR_USE_GRAPHICS_API_VULKAN"],
+            "libraries": ["-lGL", "-lEGL", "-lX11", "-lvulkan", "-ldl", "-lpthread"],
             "cflags_cc!": ["-fno-exceptions"],
             "cflags_cc": ["-std=c++17", "-fexceptions", "-fvisibility=hidden", "-Wall", "-Wextra"],
             "ldflags": ["-Wl,-z,defs", "-Wl,-z,relro", "-Wl,-z,now"],
@@ -149,6 +153,13 @@
             "sources": ["native/openxr-api-layer/layer_linux_test.cc"],
             "include_dirs": ["<(openxr_sdk_dir)/include"],
             "libraries": ["-ldl"],
+            "cflags_cc": ["-std=c++17", "-Wall", "-Wextra"]
+          },
+          {
+            "target_name": "electron_vr_vulkan_dmabuf_probe",
+            "type": "executable",
+            "sources": ["native/openxr-api-layer/vulkan_dmabuf_probe.cc"],
+            "libraries": ["-lvulkan"],
             "cflags_cc": ["-std=c++17", "-Wall", "-Wextra"]
           }
         ]

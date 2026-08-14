@@ -2,6 +2,8 @@
 
 #if defined(__linux__)
 #include <libdrm/drm_fourcc.h>
+#include <poll.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -84,6 +86,29 @@ bool SendSnapshotLocked(const int* fds, uint32_t fd_count) {
     std::memcpy(CMSG_DATA(header), fds, sizeof(int) * fd_count);
   }
   return sendmsg(g_state.client, &message, MSG_NOSIGNAL) == static_cast<ssize_t>(sizeof(g_state.snapshot));
+}
+
+bool ReceiveFrameAckLocked() {
+  pollfd descriptor{g_state.client, POLLIN, 0};
+  if (poll(&descriptor, 1, 1000) <= 0 || (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+    return false;
+  }
+  FrameAck ack{};
+  const ssize_t received = recv(g_state.client, &ack, sizeof(ack), MSG_WAITALL);
+  return received == sizeof(ack) && ack.header.magic == kProtocolMagic &&
+    ack.header.version == kProtocolVersion && ack.header.type == MessageType::kFrameAck &&
+    ack.header.byte_size == sizeof(ack) && ack.header.fd_count == 0 &&
+    ack.header.sequence == g_state.snapshot.header.sequence && ack.generation == g_state.snapshot.generation &&
+    ack.consumed != 0;
+}
+
+bool SendFrameLocked(int fd, std::string* error) {
+  if (g_state.client < 0) return true;
+  if (SendSnapshotLocked(&fd, 1) && ReceiveFrameAckLocked()) return true;
+  close(g_state.client);
+  g_state.client = -1;
+  SetError(error, "Linux API-layer frame acknowledgment failed.");
+  return false;
 }
 
 void ServerMain() {
@@ -207,11 +232,59 @@ bool SubmitOpenXRCompanionFrameLinux(const LinuxTextureInfo& texture, std::strin
   g_state.snapshot.planes[0] = {texture.planes[0].stride, texture.planes[0].offset, texture.planes[0].size};
   g_state.snapshot.revision++;
   const int fd = texture.planes[0].fd;
-  if (g_state.client >= 0 && !SendSnapshotLocked(&fd, 1)) { close(g_state.client); g_state.client = -1; }
+  if (!SendFrameLocked(fd, error)) return false;
   if (error != nullptr) error->clear();
   return true;
 #else
   (void)texture; SetError(error, "Linux OpenXR companion is available only on Linux."); return false;
+#endif
+}
+
+bool SubmitOpenXRCompanionSoftwareFrameLinux(const SoftwareFrameInfo& frame_info, std::string* error) {
+#if defined(__linux__)
+  const uint64_t stride = static_cast<uint64_t>(frame_info.width) * 4;
+  const uint64_t byte_size = stride * frame_info.height;
+  if (frame_info.width == 0 || frame_info.height == 0 || byte_size != frame_info.rgba_pixels.size()) {
+    SetError(error, "Linux API-layer software transport requires tightly packed RGBA pixels.");
+    return false;
+  }
+
+  const int fd = memfd_create("electron-vr-openxr-frame", MFD_CLOEXEC);
+  if (fd < 0 || ftruncate(fd, static_cast<off_t>(byte_size)) != 0) {
+    if (fd >= 0) close(fd);
+    SetError(error, "Failed to allocate Linux API-layer software frame: " + std::string(std::strerror(errno)));
+    return false;
+  }
+  void* mapping = mmap(nullptr, byte_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (mapping == MAP_FAILED) {
+    close(fd);
+    SetError(error, "Failed to map Linux API-layer software frame: " + std::string(std::strerror(errno)));
+    return false;
+  }
+  std::memcpy(mapping, frame_info.rgba_pixels.data(), byte_size);
+  munmap(mapping, byte_size);
+
+  std::lock_guard<std::mutex> lock(g_state.mutex);
+  if (!g_state.initialized) {
+    close(fd);
+    SetError(error, "Linux OpenXR companion is not initialized.");
+    return false;
+  }
+  g_state.snapshot.header.sequence++;
+  g_state.snapshot.generation++;
+  g_state.snapshot.width = frame_info.width;
+  g_state.snapshot.height = frame_info.height;
+  g_state.snapshot.drm_format = DRM_FORMAT_ABGR8888;
+  g_state.snapshot.plane_count = 1;
+  g_state.snapshot.modifier = DRM_FORMAT_MOD_INVALID;
+  g_state.snapshot.planes[0] = {static_cast<uint32_t>(stride), 0, byte_size};
+  g_state.snapshot.revision++;
+  const bool submitted = SendFrameLocked(fd, error);
+  close(fd);
+  if (submitted && error != nullptr) error->clear();
+  return submitted;
+#else
+  (void)frame_info; SetError(error, "Linux OpenXR companion is available only on Linux."); return false;
 #endif
 }
 
@@ -247,7 +320,9 @@ void PopulateOpenXRCompanionRuntimeInfoLinux(RuntimeInfo* info) {
   info->openxr_companion_connected = g_state.client >= 0;
   info->openxr_host_process_id = g_state.client >= 0 ? g_state.hello.process_id : 0;
   info->openxr_host_application_name = g_state.client >= 0 ? g_state.hello.application_name : "";
-  info->openxr_host_graphics_api = g_state.client >= 0 ? "opengl-xlib" : "";
+  info->openxr_host_graphics_api = g_state.client < 0 ? "" :
+    (g_state.hello.graphics_binding == kGraphicsBindingVulkan ? "vulkan" :
+      (g_state.hello.graphics_binding == kGraphicsBindingOpenGLXlib ? "opengl-xlib" : ""));
   info->openxr_protocol_version = kProtocolVersion;
 #else
   (void)info;

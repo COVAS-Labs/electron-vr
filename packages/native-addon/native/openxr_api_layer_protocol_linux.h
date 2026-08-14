@@ -5,13 +5,16 @@
 namespace electron_vr::openxr_layer_linux {
 
 constexpr uint32_t kProtocolMagic = 0x4556524c;  // EVRL
-constexpr uint16_t kProtocolVersion = 1;
+constexpr uint16_t kProtocolVersion = 2;
 constexpr uint32_t kMaxPlanes = 4;
-constexpr char kSocketName[] = "electron-vr-openxr-overlay-v1.sock";
+constexpr char kSocketName[] = "electron-vr-openxr-overlay-v2.sock";
+constexpr uint32_t kGraphicsBindingOpenGLXlib = 1000023001;
+constexpr uint32_t kGraphicsBindingVulkan = 1000025000;  // Vulkan and Vulkan2 alias this value.
 
 enum class MessageType : uint16_t {
   kHello = 1,
   kSnapshot = 2,
+  kFrameAck = 3,
 };
 
 enum class PlacementMode : uint32_t {
@@ -57,6 +60,13 @@ struct OverlaySnapshot {
   float size_meters = 1.0f;
   float curvature = 0.0f;
   Plane planes[kMaxPlanes];
+};
+
+struct FrameAck {
+  MessageHeader header;
+  uint64_t generation = 0;
+  uint32_t consumed = 0;
+  uint32_t reserved = 0;
 };
 
 static_assert(sizeof(MessageHeader) == 24, "Linux protocol header layout changed");
