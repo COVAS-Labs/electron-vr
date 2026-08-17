@@ -213,7 +213,7 @@ jobs:
 
       - name: Install consumer dependencies
         working-directory: .tmp/consumer
-        run: npm install
+        run: npm install --allow-scripts=electron
 
       - name: Run Electron smoke test
         working-directory: .tmp/consumer
@@ -293,7 +293,7 @@ jobs:
 
       - name: Install consumer dependencies
         working-directory: .tmp/consumer
-        run: npm install
+        run: npm install --allow-scripts=electron
 
       - name: Run Electron smoke test
         working-directory: .tmp/consumer
