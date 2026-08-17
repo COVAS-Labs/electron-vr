@@ -533,6 +533,8 @@ The manifest also supports `ELECTRON_VR_DISABLE_OPENXR_API_LAYER=1` as an
 advanced process-level recovery switch. Keep this in troubleshooting details,
 not first-run UI.
 
+`ELECTRON_VR_DISABLE_OPENVR=1` prevents the OpenVR/SteamVR fallback for process-level OpenXR diagnostics. Do not present it as a normal product setting.
+
 ## Startup and Refresh Policy
 
 - Probe once after Electron is ready.

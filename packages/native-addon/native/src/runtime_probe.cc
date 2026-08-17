@@ -583,6 +583,7 @@ RuntimeInfo ProbeRuntime() {
   const bool api_layer_ready = info.openxr_available && info.openxr_api_layer_installed && info.openxr_api_layer_enabled;
   const bool force_api_layer = api_layer_ready && IsTruthyEnvVar("ELECTRON_VR_FORCE_OPENXR_API_LAYER");
   const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
+  const bool openvr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENVR");
   const bool openxr_enabled = !openxr_disabled_by_env && (direct_openxr_ready || api_layer_ready);
 
   if (openxr_enabled) {
@@ -590,7 +591,7 @@ RuntimeInfo ProbeRuntime() {
     info.openxr_mode = direct_openxr_ready && !force_api_layer ? OpenXRMode::kOverlaySession : OpenXRMode::kApiLayer;
     AppendProbeMode(&info, direct_openxr_ready && !force_api_layer ? "openxr-overlay-session" : "openxr-api-layer");
     AppendProbeMode(&info, "selected-openxr");
-  } else if (info.openvr_available && info.openvr_runtime_installed) {
+  } else if (!openvr_disabled_by_env && info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
@@ -607,6 +608,8 @@ RuntimeInfo ProbeRuntime() {
     }
     if (!info.openvr_runtime_installed) {
       AppendProbeMode(&info, "openvr-runtime-not-installed");
+    } else if (openvr_disabled_by_env) {
+      AppendProbeMode(&info, "openvr-disabled-by-env");
     } else if (!info.openvr_available) {
       AppendProbeMode(&info, "openvr-library-unavailable");
     }
@@ -638,6 +641,7 @@ RuntimeInfo ProbeRuntime() {
                                    info.openxr_windows_d3d11_binding_available;
   const bool api_layer_ready = openxr_ready && info.openxr_api_layer_installed && info.openxr_api_layer_enabled;
   const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
+  const bool openvr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENVR");
   const bool openxr_enabled = !openxr_disabled_by_env && (direct_openxr_ready || api_layer_ready);
 
   if (openxr_enabled) {
@@ -645,7 +649,7 @@ RuntimeInfo ProbeRuntime() {
     info.openxr_mode = direct_openxr_ready ? OpenXRMode::kOverlaySession : OpenXRMode::kApiLayer;
     AppendProbeMode(&info, direct_openxr_ready ? "openxr-overlay-session" : "openxr-api-layer");
     AppendProbeMode(&info, "selected-openxr");
-  } else if (info.openvr_available && info.openvr_runtime_installed) {
+  } else if (!openvr_disabled_by_env && info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
@@ -666,6 +670,8 @@ RuntimeInfo ProbeRuntime() {
     }
     if (!info.openvr_runtime_installed) {
       AppendProbeMode(&info, "openvr-runtime-not-installed");
+    } else if (openvr_disabled_by_env) {
+      AppendProbeMode(&info, "openvr-disabled-by-env");
     } else if (!info.openvr_available) {
       AppendProbeMode(&info, "openvr-library-unavailable");
     }

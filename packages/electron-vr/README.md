@@ -86,6 +86,8 @@ npx electron-vr-openxr-layer status
 
 Use the same command with `enable`, `disable`, or `uninstall`. `npm install` does not register the layer. `ELECTRON_VR_DISABLE_OPENXR_API_LAYER=1` disables it for a process. The API layer supports one flat quad for D3D11 and D3D12 hosts; elevated applications and positive curvature are not yet supported.
 
+Set `ELECTRON_VR_DISABLE_OPENVR=1` to prevent the OpenVR/SteamVR fallback while diagnosing OpenXR. When no usable OpenXR overlay path is available, the bridge selects `mock` and includes `openvr-disabled-by-env` in `probeMode`.
+
 Applications can manage the same per-user installation through the public API:
 
 ```ts

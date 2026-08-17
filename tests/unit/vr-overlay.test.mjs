@@ -50,6 +50,13 @@ test("overlay placement validation rejects bad mode and coordinates", () => {
   );
 });
 
+test("runtime probe can disable the OpenVR fallback", async () => {
+  const probe = await readFile(resolve(root, "packages", "native-addon", "native", "src", "runtime_probe.cc"), "utf8");
+  assert.equal((probe.match(/ELECTRON_VR_DISABLE_OPENVR/g) ?? []).length, 2);
+  assert.equal((probe.match(/openvr-disabled-by-env/g) ?? []).length, 2);
+  assert.match(probe, /!openvr_disabled_by_env && info\.openvr_available && info\.openvr_runtime_installed/);
+});
+
 test("Linux OpenVR defaults to Vulkan with software and OpenGL fallbacks", async () => {
   const bridge = await readFile(resolve(root, "packages", "electron-vr", "src", "bridge.ts"), "utf8");
   const backend = await readFile(resolve(root, "packages", "native-addon", "native", "src", "openvr_backend.cc"), "utf8");
