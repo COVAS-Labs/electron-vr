@@ -11,6 +11,15 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
 const demoAppDir = resolve(projectRoot, "apps", "demo-electron");
 const artifactDir = resolve(projectRoot, "artifacts");
 const electronBinary = require("electron");
+const requestedGlUploadFrameTarget = Number.parseInt(process.env.ELECTRON_VR_OPENVR_GL_UPLOAD_TEST_FRAMES ?? "30", 10);
+const glUploadFrameTarget = Number.isInteger(requestedGlUploadFrameTarget) &&
+  requestedGlUploadFrameTarget > 0 && requestedGlUploadFrameTarget % 30 === 0
+  ? requestedGlUploadFrameTarget
+  : 30;
+const glUploadFramePattern = new RegExp(
+  `Linux OpenVR OpenGL upload frame count=${glUploadFrameTarget} changed=(?:[2-9]|[1-9][0-9]+)`
+);
+const vulkanSubmissionPattern = /Linux OpenVR submitted first (?:DMA-BUF|software frame) through TextureType_Vulkan\./;
 
 function sleep(milliseconds) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
@@ -113,6 +122,19 @@ test("boots the demo app with Linux OpenVR forced by disabling OpenXR", { skip: 
       await waitFor(() => combinedOutput.includes("Overlay head placement update: true"), 20000, "OpenVR placement update logging");
       await waitFor(() => combinedOutput.includes("Overlay size update: true"), 20000, "OpenVR size update logging");
       await waitFor(() => combinedOutput.includes("Overlay visibility update: true"), 20000, "OpenVR visibility update logging");
+      if (process.env.ELECTRON_VR_OPENVR_GL_UPLOAD === "1") {
+        await waitFor(
+          () => glUploadFramePattern.test(combinedOutput),
+          Math.max(20000, glUploadFrameTarget * 100),
+          `${glUploadFrameTarget} changing Linux OpenVR OpenGL frame submissions`
+        );
+      } else if (process.env.ELECTRON_VR_DISABLE_OPENVR_VULKAN !== "1") {
+        await waitFor(
+          () => vulkanSubmissionPattern.test(combinedOutput),
+          20000,
+          "first Linux OpenVR Vulkan frame submission"
+        );
+      }
     } catch {
       throw new Error(buildProcessDebugMessage("forced OpenVR overlay logging", combinedOutput, exitCode, signalCode, spawnError));
     }
@@ -122,8 +144,15 @@ test("boots the demo app with Linux OpenVR forced by disabling OpenXR", { skip: 
     assert.match(combinedOutput, /Overlay head placement update: true/);
     assert.match(combinedOutput, /Overlay size update: true/);
     assert.match(combinedOutput, /Overlay visibility update: true/);
+    if (process.env.ELECTRON_VR_OPENVR_GL_UPLOAD === "1") {
+      assert.match(combinedOutput, /VR overlay submitted first Linux frame through OpenGL upload\./);
+      assert.match(combinedOutput, glUploadFramePattern);
+    } else if (process.env.ELECTRON_VR_DISABLE_OPENVR_VULKAN !== "1") {
+      assert.match(combinedOutput, /Linux OpenVR Vulkan submission initialized on/);
+      assert.match(combinedOutput, vulkanSubmissionPattern);
+    }
     assert.doesNotMatch(combinedOutput, /Failed to initialize VR bridge/);
-    assert.doesNotMatch(combinedOutput, /UnhandledPromiseRejection|uncaught exception|Error while forwarding frame to VR bridge/i);
+    assert.doesNotMatch(combinedOutput, /UnhandledPromiseRejection|uncaught exception|Error while forwarding frame to VR bridge|Failed to submit Linux frame to VR bridge/i);
   } finally {
     child.kill("SIGTERM");
     await Promise.race([

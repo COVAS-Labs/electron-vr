@@ -1,0 +1,3 @@
+LIBRARY electron_vr_openxr_layer
+EXPORTS
+    xrNegotiateLoaderApiLayerInterface

@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, mkdir } from "node:fs/promises";
+import { access, copyFile, mkdir } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,4 +75,56 @@ export async function ensureOpenXrSdk({
   }
 
   return { sdkDir, fetched: true };
+}
+
+export async function ensureOpenXrLoader({
+  sdkDir = getOpenXrSdkDir(),
+  buildDir = resolve(repoRoot, ".openxr-loader-build")
+} = {}) {
+  await ensureOpenXrSdk({ sdkDir });
+
+  const libraryName = process.platform === "darwin" ? "libopenxr_loader.dylib" : null;
+  if (!libraryName) {
+    throw new Error(`Building a local OpenXR loader is not supported on ${process.platform}.`);
+  }
+
+  const loaderPath = resolve(buildDir, "src", "loader", libraryName);
+  if (!(await pathExists(loaderPath))) {
+    const configureResult = spawnSync("cmake", [
+      "-S", sdkDir,
+      "-B", buildDir,
+      "-DBUILD_TESTS=OFF",
+      "-DBUILD_CONFORMANCE_TESTS=OFF",
+      "-DBUILD_API_LAYERS=OFF",
+      "-DBUILD_LOADER=ON",
+      "-DDYNAMIC_LOADER=ON",
+      "-DCMAKE_OSX_DEPLOYMENT_TARGET=12.4"
+    ], {
+      cwd: repoRoot,
+      stdio: "inherit"
+    });
+    if (configureResult.status !== 0) {
+      throw new Error(`Failed to configure the OpenXR loader in ${buildDir}.`);
+    }
+
+    const buildResult = spawnSync("cmake", ["--build", buildDir, "--target", "openxr_loader", "--parallel"], {
+      cwd: repoRoot,
+      stdio: "inherit"
+    });
+    if (buildResult.status !== 0 || !(await pathExists(loaderPath))) {
+      throw new Error(`Failed to build the OpenXR loader in ${buildDir}.`);
+    }
+  }
+
+  return {
+    buildDir,
+    loaderDir: dirname(loaderPath),
+    loaderPath,
+    async copyTo(destinationDirectory) {
+      await mkdir(destinationDirectory, { recursive: true });
+      const destinationPath = resolve(destinationDirectory, libraryName);
+      await copyFile(loaderPath, destinationPath);
+      return destinationPath;
+    }
+  };
 }

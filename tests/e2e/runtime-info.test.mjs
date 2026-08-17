@@ -48,10 +48,11 @@ async function runRuntimeInfoProbe(extraEnv = {}) {
   const scriptPath = resolve(projectRoot, "tests", "fixtures", "runtime-info-smoke.mjs");
   await writeFile(scriptPath, `
     import { app } from "electron";
-    import { createVrBridge } from "../../packages/electron-vr/dist/index.js";
+    import { createVrBridge, getVRCompatibilityReport } from "../../packages/electron-vr/dist/index.js";
 
-    app.whenReady().then(() => {
+    app.whenReady().then(async () => {
       console.log("Runtime info:", createVrBridge().getRuntimeInfo());
+      console.log("Compatibility report:", await getVRCompatibilityReport());
       app.quit();
     });
     app.on("window-all-closed", () => {
@@ -102,9 +103,13 @@ async function runRuntimeInfoProbe(extraEnv = {}) {
 
   try {
     try {
-      await waitFor(() => combinedOutput.includes("Runtime info:"), 20000, "runtime info logging");
+      await waitFor(
+        () => combinedOutput.includes("Runtime info:") && combinedOutput.includes("Compatibility report:"),
+        20000,
+        "runtime info and compatibility report logging"
+      );
     } catch {
-      throw new Error(buildProcessDebugMessage("runtime info logging", combinedOutput, exitCode, signalCode, spawnError));
+      throw new Error(buildProcessDebugMessage("runtime info and compatibility report logging", combinedOutput, exitCode, signalCode, spawnError));
     }
 
     return combinedOutput;
@@ -125,17 +130,31 @@ test("runtime probe exposes OpenVR runtime installation details", async () => {
   const combinedOutput = await runRuntimeInfoProbe();
   try {
     assert.match(combinedOutput, /Runtime info:/);
+    assert.match(combinedOutput, /Compatibility report:/);
+    assert.match(combinedOutput, /readiness:/i);
+    assert.match(combinedOutput, /recommendedAction:/i);
     assert.match(combinedOutput, /openxrAvailable/i);
     assert.match(combinedOutput, /openxrOverlayExtensionAvailable/i);
+    assert.match(combinedOutput, /openxrLinuxOpenGlesBindingAvailable/i);
     assert.match(combinedOutput, /openxrWindowsD3D11BindingAvailable/i);
-    if (process.platform === "linux" && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrOverlayExtensionAvailable:\s*true/i.test(combinedOutput) && /openxrLinuxEglBindingAvailable:\s*true/i.test(combinedOutput)) {
+    assert.match(combinedOutput, /openxrWindowsD3D12BindingAvailable/i);
+    assert.match(combinedOutput, /openxrMacosMetalBindingAvailable/i);
+    if (process.platform === "linux" && !/openxr-disabled-by-env/i.test(combinedOutput) && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrLinuxEglBindingAvailable:\s*true/i.test(combinedOutput) && /openxrLinuxOpenGlesBindingAvailable:\s*true/i.test(combinedOutput)) {
       assert.match(combinedOutput, /selectedBackend:\s*'openxr'/i);
     }
-    if (process.platform === "win32" && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrOverlayExtensionAvailable:\s*true/i.test(combinedOutput) && /openxrWindowsD3D11BindingAvailable:\s*true/i.test(combinedOutput)) {
-      assert.match(combinedOutput, /selectedBackend:\s*'(openvr|mock)'/i);
+    if (process.platform === "win32" && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrWindowsD3D11BindingAvailable:\s*true/i.test(combinedOutput)) {
+      assert.match(combinedOutput, /selectedBackend:\s*'(openxr|openvr|mock)'/i);
+    }
+    if (process.platform === "darwin" && /openxrAvailable:\s*true/i.test(combinedOutput) && /openxrMacosMetalBindingAvailable:\s*true/i.test(combinedOutput)) {
+      assert.match(combinedOutput, /selectedBackend:\s*'(openxr|mock)'/i);
     }
     assert.match(combinedOutput, /openxrSessionState/i);
     assert.match(combinedOutput, /openxrSessionRunning/i);
+    assert.match(combinedOutput, /openxrMode/i);
+    assert.match(combinedOutput, /openxrApiLayerInstalled/i);
+    assert.match(combinedOutput, /openxrApiLayerEnabled/i);
+    assert.match(combinedOutput, /openxrCompanionConnected/i);
+    assert.match(combinedOutput, /openxrProtocolVersion/i);
     assert.match(combinedOutput, /openvrAvailable/i);
     assert.match(combinedOutput, /openvrRuntimeInstalled/i);
     assert.match(combinedOutput, /openvrRuntimePath/i);
@@ -165,4 +184,21 @@ test("linux runtime probe falls back to OpenVR when OpenXR is disabled", { skip:
   }
 
   assert.match(combinedOutput, /selectedBackend:\s*'mock'/i);
+});
+
+test("linux runtime probe can force an installed API layer for validation", { skip: process.platform !== "linux" }, async (context) => {
+  const combinedOutput = await runRuntimeInfoProbe({
+    ELECTRON_VR_FORCE_OPENXR_API_LAYER: "1"
+  });
+
+  const layerReady = /openxrAvailable:\s*true/i.test(combinedOutput) &&
+    /openxrApiLayerInstalled:\s*true/i.test(combinedOutput) &&
+    /openxrApiLayerEnabled:\s*true/i.test(combinedOutput);
+  if (!layerReady) {
+    context.skip("OpenXR API layer is not installed and enabled.");
+    return;
+  }
+
+  assert.match(combinedOutput, /selectedBackend:\s*'openxr'/i);
+  assert.match(combinedOutput, /openxrMode:\s*'api-layer'/i);
 });

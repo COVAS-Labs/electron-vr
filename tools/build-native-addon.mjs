@@ -4,14 +4,15 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { prepareBuildReleaseDirectory } from "./build-output.mjs";
-import { ensureOpenXrSdk } from "./openxr-sdk.mjs";
+import { ensureOpenXrLoader, ensureOpenXrSdk } from "./openxr-sdk.mjs";
 import { copyOpenVRRuntimeLibrary, prepareOpenVRRuntimeLibraryDestination } from "./openvr-runtime.mjs";
 import { ensureOpenVrSdk } from "./openvr-sdk.mjs";
 
 const require = createRequire(import.meta.url);
 const nodeGypEntrypoint = require.resolve("node-gyp/bin/node-gyp.js");
 const { sdkDir } = await ensureOpenVrSdk();
-const openxrSdk = process.platform === "win32" ? await ensureOpenXrSdk() : null;
+const openxrSdk = process.platform === "win32" || process.platform === "darwin" || process.platform === "linux" ? await ensureOpenXrSdk() : null;
+const openxrLoader = process.platform === "darwin" ? await ensureOpenXrLoader({ sdkDir: openxrSdk.sdkDir }) : null;
 const releaseDirectory = resolve(process.cwd(), "build", "Release");
 const relocationDirectory = resolve(process.cwd(), ".tmp", "openvr-runtime");
 const builtAddonPath = resolve(releaseDirectory, "vr_bridge.node");
@@ -31,7 +32,8 @@ const result = spawnSync(process.execPath, [nodeGypEntrypoint, "rebuild"], {
     env: {
       ...process.env,
       OPENVR_SDK_DIR: sdkDir,
-      ...(openxrSdk ? { OPENXR_SDK_DIR: openxrSdk.sdkDir } : {})
+      ...(openxrSdk ? { OPENXR_SDK_DIR: openxrSdk.sdkDir } : {}),
+      ...(openxrLoader ? { OPENXR_LOADER_DIR: openxrLoader.loaderDir } : {})
     }
   });
 
@@ -54,3 +56,7 @@ await copyOpenVRRuntimeLibrary({
   destinationDirectory: releaseDirectory,
   sdkDir
 });
+
+if (openxrLoader) {
+  await openxrLoader.copyTo(releaseDirectory);
+}

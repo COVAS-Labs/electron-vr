@@ -5,4 +5,5 @@ artifacts/
 .tmp/
 .openvr-sdk/
 .openxr-sdk/
+.openxr-loader-build/
 *.log
