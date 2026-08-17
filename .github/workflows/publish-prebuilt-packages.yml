@@ -63,7 +63,7 @@ jobs:
         include:
           - os: ubuntu-latest
             platform_id: linux-x64
-          - os: windows-latest
+          - os: windows-2022
             platform_id: win32-x64
 
     steps:
@@ -247,7 +247,7 @@ jobs:
     needs:
       - version
       - publish-public
-    runs-on: windows-latest
+    runs-on: windows-2022
     permissions:
       contents: read
       packages: read
