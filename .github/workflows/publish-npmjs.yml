@@ -180,6 +180,8 @@ jobs:
           import { VROverlay } from "@covas-labs/electron-vr";
 
           app.whenReady().then(async () => {
+            const compatibility = await VROverlay.getCompatibilityReport();
+            console.log("Published package compatibility:", compatibility.launch);
             const overlay = new VROverlay({
               name: "CI_Linux_Smoke",
               url: "about:blank",
@@ -260,6 +262,8 @@ jobs:
           import { VROverlay } from "@covas-labs/electron-vr";
 
           app.whenReady().then(async () => {
+            const compatibility = await VROverlay.getCompatibilityReport();
+            console.log("Published package compatibility:", compatibility.launch);
             const overlay = new VROverlay({
               name: "CI_Windows_Smoke",
               url: "about:blank",
