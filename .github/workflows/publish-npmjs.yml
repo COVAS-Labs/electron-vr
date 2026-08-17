@@ -169,6 +169,9 @@ jobs:
             "scripts": {
               "smoke": "electron --no-sandbox ./smoke-electron.mjs"
             },
+            "allowScripts": {
+              "electron": true
+            },
             "dependencies": {
               "@covas-labs/electron-vr": "${{ needs.version.outputs.package_version }}",
               "electron": "^37.6.0"
@@ -215,7 +218,7 @@ jobs:
 
       - name: Install consumer dependencies
         working-directory: .tmp/consumer
-        run: npm install --allow-scripts=electron
+        run: npm install
 
       - name: Run Electron smoke test
         working-directory: .tmp/consumer
@@ -250,6 +253,9 @@ jobs:
             "type": "module",
             "scripts": {
               "smoke": "electron ./smoke-electron.mjs"
+            },
+            "allowScripts": {
+              "electron": true
             },
             "dependencies": {
               "@covas-labs/electron-vr": "${{ needs.version.outputs.package_version }}",
@@ -297,7 +303,7 @@ jobs:
 
       - name: Install consumer dependencies
         working-directory: .tmp/consumer
-        run: npm install --allow-scripts=electron
+        run: npm install
 
       - name: Run Electron smoke test
         working-directory: .tmp/consumer
