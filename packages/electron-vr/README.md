@@ -88,6 +88,10 @@ Use the same command with `enable`, `disable`, or `uninstall`. `npm install` doe
 
 Set `ELECTRON_VR_DISABLE_OPENVR=1` to prevent the OpenVR/SteamVR fallback while diagnosing OpenXR. When no usable OpenXR overlay path is available, the bridge selects `mock` and includes `openvr-disabled-by-env` in `probeMode`.
 
+When Virtual Desktop VDXR is the active Windows OpenXR runtime, the bridge automatically avoids the OpenVR fallback and does not initialize OpenVR during probing, because that can start SteamVR and disrupt an OpenXR game. Install and enable the OpenXR API layer to use the OpenXR application-integration path, then restart the game.
+
+OpenComposite does not implement the OpenVR overlay API required by this package. When OpenComposite is the registered OpenVR runtime, the bridge reports it in diagnostics but does not select the OpenVR backend; use a compatible OpenXR runtime with the API layer instead.
+
 Applications can manage the same per-user installation through the public API:
 
 ```ts

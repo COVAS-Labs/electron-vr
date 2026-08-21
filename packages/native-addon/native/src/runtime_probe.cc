@@ -5,6 +5,8 @@
 #include "openxr_companion_linux.h"
 
 #include <array>
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -133,6 +135,32 @@ bool IsTruthyEnvVar(const char* name) {
 }
 
 #if defined(_WIN32)
+std::string ToLowerAscii(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+    return static_cast<char>(std::tolower(character));
+  });
+  return value;
+}
+
+bool IsVirtualDesktopOpenXRRuntime(const RuntimeInfo& info) {
+  const std::string runtime_name = ToLowerAscii(info.openxr_runtime_name);
+  const std::string manifest_path = ToLowerAscii(info.openxr_runtime_manifest_path);
+  const std::string library_path = ToLowerAscii(info.openxr_runtime_library_path);
+  return runtime_name.find("virtual desktop") != std::string::npos ||
+         runtime_name.find("vdxr") != std::string::npos ||
+         manifest_path.find("virtual desktop") != std::string::npos ||
+         manifest_path.find("virtualdesktop") != std::string::npos ||
+         library_path.find("virtual desktop") != std::string::npos ||
+         library_path.find("virtualdesktop") != std::string::npos;
+}
+
+bool IsOpenCompositeOpenVRRuntime(const RuntimeInfo& info) {
+  return ToLowerAscii(info.openvr_runtime_path).find("opencomposite") != std::string::npos;
+}
+#endif
+
+#if !defined(__APPLE__)
+#if defined(_WIN32)
 bool InitializeOpenVRProbe(vr::IVRSystem** system, vr::EVRInitError* init_error) {
   __try {
     *system = vr::VR_Init(init_error, vr::VRApplication_Background);
@@ -250,6 +278,7 @@ void QueryOpenVRSceneApplication(RuntimeInfo* info) {
 
   vr::VR_Shutdown();
 }
+#endif
 
 std::string ReadTextFile(const std::string& path) {
   std::ifstream stream(path);
@@ -563,7 +592,6 @@ RuntimeInfo ProbeRuntime() {
 #endif
 
   info.openvr_runtime_path = DetectOpenVRRuntimePath(&info.openvr_runtime_installed);
-  QueryOpenVRSceneApplication(&info);
 
 #if defined(__linux__)
   if (info.openxr_available) {
@@ -593,6 +621,7 @@ RuntimeInfo ProbeRuntime() {
     AppendProbeMode(&info, "selected-openxr");
   } else if (!openvr_disabled_by_env && info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
+    QueryOpenVRSceneApplication(&info);
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
     } else if (info.openxr_available && !direct_openxr_ready && !api_layer_ready) {
@@ -643,14 +672,19 @@ RuntimeInfo ProbeRuntime() {
   const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
   const bool openvr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENVR");
   const bool openxr_enabled = !openxr_disabled_by_env && (direct_openxr_ready || api_layer_ready);
+  const bool virtual_desktop_openxr = IsVirtualDesktopOpenXRRuntime(info);
+  const bool openvr_unsafe_for_active_openxr_runtime = virtual_desktop_openxr && !openxr_enabled;
+  const bool opencomposite_openvr = IsOpenCompositeOpenVRRuntime(info);
 
   if (openxr_enabled) {
     info.selected_backend = BackendKind::kOpenXR;
     info.openxr_mode = direct_openxr_ready ? OpenXRMode::kOverlaySession : OpenXRMode::kApiLayer;
     AppendProbeMode(&info, direct_openxr_ready ? "openxr-overlay-session" : "openxr-api-layer");
     AppendProbeMode(&info, "selected-openxr");
-  } else if (!openvr_disabled_by_env && info.openvr_available && info.openvr_runtime_installed) {
+  } else if (!openvr_disabled_by_env && !openvr_unsafe_for_active_openxr_runtime && !opencomposite_openvr &&
+             info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
+    QueryOpenVRSceneApplication(&info);
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
     } else if (openxr_ready && !info.openxr_overlay_extension_available && !api_layer_ready) {
@@ -672,6 +706,10 @@ RuntimeInfo ProbeRuntime() {
       AppendProbeMode(&info, "openvr-runtime-not-installed");
     } else if (openvr_disabled_by_env) {
       AppendProbeMode(&info, "openvr-disabled-by-env");
+    } else if (openvr_unsafe_for_active_openxr_runtime) {
+      AppendProbeMode(&info, "openvr-disabled-for-vdxr");
+    } else if (opencomposite_openvr) {
+      AppendProbeMode(&info, "openvr-overlay-unsupported-by-opencomposite");
     } else if (!info.openvr_available) {
       AppendProbeMode(&info, "openvr-library-unavailable");
     }
@@ -705,6 +743,7 @@ RuntimeInfo ProbeRuntime() {
 
   if (info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
+    QueryOpenVRSceneApplication(&info);
     AppendProbeMode(&info, "selected-openvr");
   } else {
     info.selected_backend = BackendKind::kMock;

@@ -57,6 +57,21 @@ test("runtime probe can disable the OpenVR fallback", async () => {
   assert.match(probe, /!openvr_disabled_by_env && info\.openvr_available && info\.openvr_runtime_installed/);
 });
 
+test("Windows VDXR avoids probing or selecting OpenVR", async () => {
+  const probe = await readFile(resolve(root, "packages", "native-addon", "native", "src", "runtime_probe.cc"), "utf8");
+  assert.match(probe, /IsVirtualDesktopOpenXRRuntime/);
+  assert.match(probe, /openvr_unsafe_for_active_openxr_runtime = virtual_desktop_openxr && !openxr_enabled/);
+  assert.match(probe, /!openvr_disabled_by_env && !openvr_unsafe_for_active_openxr_runtime/);
+  assert.equal((probe.match(/QueryOpenVRSceneApplication\(&info\);/g) ?? []).length, 3);
+});
+
+test("Windows OpenComposite is not selected for unsupported OpenVR overlays", async () => {
+  const probe = await readFile(resolve(root, "packages", "native-addon", "native", "src", "runtime_probe.cc"), "utf8");
+  assert.match(probe, /IsOpenCompositeOpenVRRuntime/);
+  assert.match(probe, /!opencomposite_openvr &&/);
+  assert.match(probe, /openvr-overlay-unsupported-by-opencomposite/);
+});
+
 test("Linux OpenVR defaults to Vulkan with software and OpenGL fallbacks", async () => {
   const bridge = await readFile(resolve(root, "packages", "electron-vr", "src", "bridge.ts"), "utf8");
   const backend = await readFile(resolve(root, "packages", "native-addon", "native", "src", "openvr_backend.cc"), "utf8");
