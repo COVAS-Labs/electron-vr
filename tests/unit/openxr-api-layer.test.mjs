@@ -157,3 +157,8 @@ test("published Linux API-layer utility reports structured status details", asyn
   assert.match(packagingSource, /console\.log\(\"manifest=\" \+ manifest\)/);
   assert.match(packagingSource, /console\.log\(\"scope=current-user\"\)/);
 });
+
+test("API-layer status checks hide their Windows child process", async () => {
+  const source = await readFile(resolve(root, "packages", "electron-vr", "src", "openxrApiLayer.ts"), "utf8");
+  assert.match(source, /windowsHide:\s*true/);
+});

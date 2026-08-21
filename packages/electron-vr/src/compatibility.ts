@@ -37,6 +37,7 @@ export interface VRCompatibilityIssue {
 export interface VRLaunchAssessment {
   verdict: VRLaunchVerdict;
   wouldWorkNow: boolean;
+  canStartNow: boolean;
   fundamentalIncompatibility: boolean;
   message: string;
   requiredActions: VRSetupAction[];
@@ -268,6 +269,7 @@ export function analyzeVRCompatibility(
     launch = {
       verdict: "works-now",
       wouldWorkNow: true,
+      canStartNow: true,
       fundamentalIncompatibility: false,
       message: "Launching the browser overlay now is expected to produce real VR output.",
       requiredActions: []
@@ -278,6 +280,7 @@ export function analyzeVRCompatibility(
     launch = {
       verdict: "action-required",
       wouldWorkNow: false,
+      canStartNow: false,
       fundamentalIncompatibility: false,
       message: "The overlay is compatible, but setup must be completed before launching it.",
       requiredActions: actions
@@ -286,6 +289,7 @@ export function analyzeVRCompatibility(
     launch = {
       verdict: "action-required",
       wouldWorkNow: false,
+      canStartNow: true,
       fundamentalIncompatibility: false,
       message: `The overlay is ready, but real VR output requires a compatible ${compatibleHostGraphicsApis.join(" or ")} OpenXR application to be started or restarted.`,
       requiredActions: ["start-openxr-app"]
@@ -294,6 +298,7 @@ export function analyzeVRCompatibility(
     launch = {
       verdict: "action-required",
       wouldWorkNow: false,
+      canStartNow: false,
       fundamentalIncompatibility: false,
       message: "Launching now would not produce real VR output. Install and configure a supported OpenXR or SteamVR runtime first.",
       requiredActions: ["install-xr-runtime"]
@@ -302,6 +307,7 @@ export function analyzeVRCompatibility(
     launch = {
       verdict: "incompatible",
       wouldWorkNow: false,
+      canStartNow: false,
       fundamentalIncompatibility: true,
       message: "This platform or execution mode cannot provide a production VR overlay with the current implementation.",
       requiredActions: []

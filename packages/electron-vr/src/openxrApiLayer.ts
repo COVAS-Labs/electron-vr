@@ -69,7 +69,8 @@ function runCommand(command: OpenXRApiLayerCommand): Promise<string> {
         ...process.env,
         ELECTRON_RUN_AS_NODE: "1"
       },
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
     });
     let stdout = "";
     let stderr = "";

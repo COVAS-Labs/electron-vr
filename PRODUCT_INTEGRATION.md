@@ -37,6 +37,7 @@ interface VRCompatibilityReport {
   launch: {
     verdict: "works-now" | "action-required" | "incompatible";
     wouldWorkNow: boolean;
+    canStartNow: boolean;
     fundamentalIncompatibility: boolean;
     message: string;
     requiredActions: VRSetupAction[];
@@ -78,6 +79,10 @@ For the primary product decision, read `report.launch` first:
   installation, or starting/restarting a compatible host can make it work.
 - `incompatible`: the current platform or mode has no production coexistence
   path in this implementation.
+
+`launch.canStartNow` is also true for `waiting-for-host`. Products may initialize
+the companion in that state so an OpenXR application started later connects and
+receives the overlay without restarting the product.
 
 `canRenderOverlay` is broader and may include a Linux desktop preview. Do not use
 it as the “will this work in VR now?” answer.

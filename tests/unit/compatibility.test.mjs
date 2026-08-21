@@ -53,6 +53,7 @@ test("compatibility report marks direct OpenXR as ready", () => {
   assert.equal(report.readiness, "ready");
   assert.equal(report.launch.verdict, "works-now");
   assert.equal(report.launch.wouldWorkNow, true);
+  assert.equal(report.launch.canStartNow, true);
   assert.equal(report.requiresApiLayer, false);
   assert.equal(report.features.curvature, "runtime-dependent");
   assert.deepEqual(report.compatibleHostGraphicsApis, ["D3D11"]);
@@ -117,6 +118,7 @@ test("compatibility report distinguishes waiting and connected API-layer hosts",
   }), { architecture: "x64" });
   assert.equal(waiting.readiness, "waiting-for-host");
   assert.equal(waiting.launch.wouldWorkNow, false);
+  assert.equal(waiting.launch.canStartNow, true);
   assert.deepEqual(waiting.launch.requiredActions, ["start-openxr-app"]);
   assert.equal(waiting.recommendedAction, "start-openxr-app");
 
@@ -132,6 +134,7 @@ test("compatibility report distinguishes waiting and connected API-layer hosts",
   }), { architecture: "x64" });
   assert.equal(detected.readiness, "ready");
   assert.equal(detected.launch.wouldWorkNow, true);
+  assert.equal(detected.launch.canStartNow, true);
   assert.equal(detected.requiresOpenXRAppRestart, false);
   assert.match(detected.summary, /Detected Elite Dangerous/);
   assert.equal(detected.diagnostics.openxrCompanionConnected, false);
