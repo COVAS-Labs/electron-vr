@@ -57,6 +57,6 @@ const executable = resolve(
   "Release",
   "electron_vr_openxr_layer_cli.exe"
 );
-const result = spawnSync(executable, process.argv.slice(2), { stdio: "inherit" });
+const result = spawnSync(executable, process.argv.slice(2), { stdio: "inherit", windowsHide: true });
 if (result.error) throw result.error;
 process.exitCode = result.status ?? 1;

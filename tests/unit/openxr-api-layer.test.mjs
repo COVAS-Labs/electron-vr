@@ -160,5 +160,9 @@ test("published Linux API-layer utility reports structured status details", asyn
 
 test("API-layer status checks hide their Windows child process", async () => {
   const source = await readFile(resolve(root, "packages", "electron-vr", "src", "openxrApiLayer.ts"), "utf8");
+  const repositoryCli = await readFile(resolve(root, "tools", "openxr-layer-cli.mjs"), "utf8");
+  const packagingSource = await readFile(resolve(root, "tools", "prepare-prebuilt-package.mjs"), "utf8");
   assert.match(source, /windowsHide:\s*true/);
+  assert.match(repositoryCli, /spawnSync\([\s\S]*windowsHide:\s*true/);
+  assert.match(packagingSource, /electron_vr_openxr_layer_cli\.exe[\s\S]*windowsHide:\s*true/);
 });

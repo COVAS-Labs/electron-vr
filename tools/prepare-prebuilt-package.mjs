@@ -102,7 +102,7 @@ if (platform === "win32" && arch === "x64") {
     `#!/usr/bin/env node
 const { spawnSync } = require("node:child_process");
 const { join } = require("node:path");
-const result = spawnSync(join(__dirname, "electron_vr_openxr_layer_cli.exe"), process.argv.slice(2), { stdio: "inherit" });
+const result = spawnSync(join(__dirname, "electron_vr_openxr_layer_cli.exe"), process.argv.slice(2), { stdio: "inherit", windowsHide: true });
 if (result.error) throw result.error;
 process.exitCode = result.status == null ? 1 : result.status;
 `,
