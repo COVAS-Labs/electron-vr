@@ -43,6 +43,7 @@ using electron_vr::openxr_layer::GraphicsApi;
 using electron_vr::openxr_layer::LayerHello;
 using electron_vr::openxr_layer::OverlaySnapshot;
 using electron_vr::openxr_layer::PlacementMode;
+using electron_vr::openxr_layer::kHostPresenceMappingPrefix;
 using electron_vr::openxr_layer::kPipeName;
 using electron_vr::openxr_layer::kProtocolMagic;
 using electron_vr::openxr_layer::kProtocolVersion;
@@ -51,6 +52,10 @@ using electron_vr::openxr_layer::kTextureSlotCount;
 constexpr char kLayerName[] = "XR_APILAYER_ELECTRON_VR_overlay";
 constexpr XrDuration kSwapchainWaitTimeout = 0;
 constexpr DWORD kMutexWaitTimeoutMs = 0;
+
+std::wstring HostPresenceMappingName() {
+  return std::wstring(kHostPresenceMappingPrefix) + std::to_wstring(GetCurrentProcessId());
+}
 
 struct DispatchTable {
   PFN_xrGetInstanceProcAddr GetInstanceProcAddr = nullptr;
@@ -165,6 +170,14 @@ class PipeClient {
 
   void Start(const LayerHello& hello) {
     Stop();
+    const std::wstring host_presence_mapping_name = HostPresenceMappingName();
+    host_presence_mapping_ = CreateFileMappingW(
+      INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(LayerHello), host_presence_mapping_name.c_str());
+    if (host_presence_mapping_ != nullptr) {
+      host_presence_ = static_cast<LayerHello*>(MapViewOfFile(
+        host_presence_mapping_, FILE_MAP_WRITE, 0, 0, sizeof(LayerHello)));
+      if (host_presence_ != nullptr) *host_presence_ = hello;
+    }
     {
       std::lock_guard<std::mutex> lock(mutex_);
       hello_ = hello;
@@ -188,6 +201,14 @@ class PipeClient {
       CloseHandle(pipe);
     }
     if (thread_.joinable()) thread_.join();
+    if (host_presence_ != nullptr) {
+      UnmapViewOfFile(host_presence_);
+      host_presence_ = nullptr;
+    }
+    if (host_presence_mapping_ != nullptr) {
+      CloseHandle(host_presence_mapping_);
+      host_presence_mapping_ = nullptr;
+    }
   }
 
   OverlaySnapshot Snapshot() const {
@@ -241,6 +262,8 @@ class PipeClient {
   std::thread thread_;
   std::atomic<bool> stop_requested_{true};
   HANDLE pipe_ = INVALID_HANDLE_VALUE;
+  HANDLE host_presence_mapping_ = nullptr;
+  LayerHello* host_presence_ = nullptr;
   LayerHello hello_{};
   OverlaySnapshot snapshot_{};
 };
@@ -882,7 +905,11 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* frame
     }
 
     const OverlaySnapshot snapshot = g_pipe_client->Snapshot();
-    if (!snapshot.visible || !IsFinitePose(snapshot) || !EnsureOverlayResources(*state, snapshot) || !CopyLatestFrame(*state, snapshot)) {
+    if (!snapshot.visible || !IsFinitePose(snapshot) || !EnsureOverlayResources(*state, snapshot)) {
+      return forward_original();
+    }
+    const bool copied_latest_frame = CopyLatestFrame(*state, snapshot);
+    if (!copied_latest_frame && state->consumed_sequence == 0) {
       return forward_original();
     }
     const XrSpace space = SelectSpace(*state, snapshot.placement_mode);

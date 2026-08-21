@@ -39,6 +39,7 @@ struct RuntimeInfo {
   bool openxr_api_layer_enabled = false;
   std::string openxr_api_layer_manifest_path;
   bool openxr_companion_connected = false;
+  bool openxr_host_detected = false;
   uint32_t openxr_host_process_id = 0;
   std::string openxr_host_application_name;
   std::string openxr_host_graphics_api;
@@ -57,6 +58,7 @@ struct RuntimeInfo {
 };
 
 RuntimeInfo ProbeRuntime();
+void PopulateOpenXRHostPresence(RuntimeInfo* info);
 const char* BackendKindToString(BackendKind kind);
 const char* OpenXRModeToString(OpenXRMode mode);
 

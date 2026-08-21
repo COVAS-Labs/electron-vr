@@ -3,10 +3,12 @@
 #include "openxr_loader_win.h"
 #include "openxr_companion.h"
 #include "openxr_companion_linux.h"
+#include "../openxr_api_layer_protocol.h"
 
 #include <array>
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -28,6 +30,7 @@
 #include <d3d11_1.h>
 #include <d3d12.h>
 #include <dxgi1_2.h>
+#include <tlhelp32.h>
 #include <windows.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -156,6 +159,58 @@ bool IsVirtualDesktopOpenXRRuntime(const RuntimeInfo& info) {
 
 bool IsOpenCompositeOpenVRRuntime(const RuntimeInfo& info) {
   return ToLowerAscii(info.openvr_runtime_path).find("opencomposite") != std::string::npos;
+}
+
+const char* GraphicsApiName(electron_vr::openxr_layer::GraphicsApi graphics_api) {
+  using electron_vr::openxr_layer::GraphicsApi;
+  switch (graphics_api) {
+    case GraphicsApi::kD3D11: return "d3d11";
+    case GraphicsApi::kD3D12: return "d3d12";
+    case GraphicsApi::kVulkan: return "vulkan";
+    case GraphicsApi::kOpenGL: return "opengl";
+    default: return "";
+  }
+}
+
+void QueryOpenXRHostPresence(RuntimeInfo* info) {
+  using electron_vr::openxr_layer::LayerHello;
+  using electron_vr::openxr_layer::kHostPresenceMappingPrefix;
+  using electron_vr::openxr_layer::kProtocolMagic;
+  using electron_vr::openxr_layer::kProtocolVersion;
+
+  HANDLE process_snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (process_snapshot == INVALID_HANDLE_VALUE) return;
+  PROCESSENTRY32W process_entry{};
+  process_entry.dwSize = sizeof(process_entry);
+  BOOL has_process = Process32FirstW(process_snapshot, &process_entry);
+  while (has_process) {
+    const std::wstring mapping_name = std::wstring(kHostPresenceMappingPrefix) + std::to_wstring(process_entry.th32ProcessID);
+    HANDLE mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, mapping_name.c_str());
+    if (mapping != nullptr) {
+      const auto* mapped = static_cast<const LayerHello*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(LayerHello)));
+      LayerHello hello{};
+      if (mapped != nullptr) std::memcpy(&hello, mapped, sizeof(hello));
+      if (mapped != nullptr) UnmapViewOfFile(mapped);
+      CloseHandle(mapping);
+      if (hello.magic == kProtocolMagic && hello.version == kProtocolVersion && hello.size == sizeof(LayerHello) &&
+          hello.process_id == process_entry.th32ProcessID) {
+        info->openxr_host_detected = true;
+        info->openxr_host_process_id = hello.process_id;
+        const auto application_name_end = std::find(
+          std::begin(hello.application_name), std::end(hello.application_name), '\0');
+        info->openxr_host_application_name.assign(hello.application_name, application_name_end);
+        info->openxr_host_graphics_api = GraphicsApiName(hello.graphics_api);
+        info->openxr_protocol_version = hello.version;
+        std::ostringstream adapter_luid;
+        adapter_luid << std::hex << static_cast<uint32_t>(hello.adapter_luid.high_part)
+                     << ':' << hello.adapter_luid.low_part;
+        info->openxr_host_adapter_luid = adapter_luid.str();
+        break;
+      }
+    }
+    has_process = Process32NextW(process_snapshot, &process_entry);
+  }
+  CloseHandle(process_snapshot);
 }
 #endif
 
@@ -566,6 +621,19 @@ bool QueryOpenXRExtensions(RuntimeInfo* info) {
 
 }  // namespace
 
+void PopulateOpenXRHostPresence(RuntimeInfo* info) {
+  if (info == nullptr) return;
+  info->openxr_host_detected = false;
+  info->openxr_host_process_id = 0;
+  info->openxr_host_application_name.clear();
+  info->openxr_host_graphics_api.clear();
+  info->openxr_host_adapter_luid.clear();
+  info->openxr_protocol_version = 0;
+#if defined(_WIN32)
+  QueryOpenXRHostPresence(info);
+#endif
+}
+
 RuntimeInfo ProbeRuntime() {
   RuntimeInfo info;
   info.platform = DetectPlatform();
@@ -663,7 +731,6 @@ RuntimeInfo ProbeRuntime() {
   if (IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR_API_LAYER")) {
     info.openxr_api_layer_enabled = false;
   }
-
   const bool openxr_ready = info.openxr_available &&
                             (info.openxr_windows_d3d11_binding_available || info.openxr_windows_d3d12_binding_available);
   const bool direct_openxr_ready = info.openxr_available && info.openxr_overlay_extension_available &&
@@ -714,6 +781,9 @@ RuntimeInfo ProbeRuntime() {
       AppendProbeMode(&info, "openvr-library-unavailable");
     }
     AppendProbeMode(&info, "selected-mock");
+  }
+  if (info.selected_backend == BackendKind::kOpenXR && info.openxr_mode == OpenXRMode::kApiLayer) {
+    PopulateOpenXRHostPresence(&info);
   }
 #elif defined(__APPLE__)
   if (info.openxr_available && !QueryOpenXRExtensions(&info)) {

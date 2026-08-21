@@ -106,6 +106,8 @@ await VROverlay.uninstallOpenXRApiLayer();
 
 The methods return `Promise<OpenXRApiLayerStatus>` and reject when the platform is unsupported or the utility fails. Installation should require explicit user consent. It affects subsequently started OpenXR applications, so restart an already running game after installing, enabling, disabling, or uninstalling the layer. These methods support Linux x64 and Windows x64 and do not require administrator/root access for the normal per-user installation.
 
+`getOpenXRApiLayerStatus()` reports `requiresUpdate: true` when the installed layer assets differ from those bundled with the package. Re-run `installOpenXRApiLayer()` after confirmation to update them.
+
 For product UI, prefer the combined readiness report instead of interpreting raw probe fields:
 
 ```ts
@@ -115,4 +117,4 @@ console.log(report.launch.verdict, report.launch.requiredActions);
 
 `report.launch.wouldWorkNow` answers whether launching a browser overlay now is expected to produce real VR output. Otherwise, the verdict distinguishes an actionable setup/runtime/host requirement from a fundamental incompatibility. The report also exposes detailed readiness states, actionable issues, and per-feature support. See `PRODUCT_INTEGRATION.md` in the repository for the recommended consent, IPC, restart, recovery, diagnostics, and production UI flow.
 
-`getRuntimeInfo()` also includes `openvrRuntimeInstalled`, `openvrRuntimePath`, `openxrMode`, API-layer installation and connection state, protocol version, and connected OpenXR host metadata. `probeMode` includes the backend-selection decision.
+`getRuntimeInfo()` also includes `openvrRuntimeInstalled`, `openvrRuntimePath`, `openxrMode`, API-layer installation state, `openxrHostDetected`, companion connection state, protocol version, and OpenXR host metadata. `openxrHostDetected` can become true before the overlay companion connects. `probeMode` includes the backend-selection decision.

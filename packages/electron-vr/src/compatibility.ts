@@ -7,6 +7,7 @@ export type VRFeatureSupport = "supported" | "unsupported" | "runtime-dependent"
 export type VRIssueSeverity = "info" | "warning" | "error";
 export type VRSetupAction =
   | "install-openxr-api-layer"
+  | "reinstall-openxr-api-layer"
   | "enable-openxr-api-layer"
   | "restart-openxr-apps"
   | "start-openxr-app"
@@ -118,6 +119,7 @@ export function analyzeVRCompatibility(
     (context.architecture ?? process.arch) === "x64";
   const layerInstalled = apiLayer?.installed ?? runtime.openxrApiLayerInstalled;
   const layerEnabled = apiLayer?.enabled ?? runtime.openxrApiLayerEnabled;
+  const layerRequiresUpdate = apiLayer?.requiresUpdate ?? false;
   let readiness: VRReadiness = "unavailable";
   let backendLabel = "No compatible VR backend";
   let summary = "No compatible XR runtime is ready.";
@@ -137,9 +139,20 @@ export function analyzeVRCompatibility(
     features = { ...realFeatures };
     compatibleHostGraphicsApis = runtime.platform === "win32" ? ["D3D11", "D3D12"] : ["Vulkan", "OpenGL Xlib/GLX"];
     backendLabel = "OpenXR application integration";
-    if (runtime.openxrCompanionConnected) {
+    if (layerRequiresUpdate) {
+      readiness = "setup-required";
+      summary = "OpenXR application integration must be updated before overlays can appear.";
+      recommendedAction = "reinstall-openxr-api-layer";
+      issues.push(issue(
+        "openxr-api-layer-update-required",
+        "warning",
+        "Update OpenXR integration",
+        "Reinstall the per-user integration and restart OpenXR applications.",
+        "reinstall-openxr-api-layer"
+      ));
+    } else if (runtime.openxrCompanionConnected || runtime.openxrHostDetected) {
       readiness = "ready";
-      summary = `Connected to ${runtime.openxrHostApplicationName || "an OpenXR application"} using ${runtime.openxrHostGraphicsApi || "a supported graphics API"}.`;
+      summary = `${runtime.openxrCompanionConnected ? "Connected to" : "Detected"} ${runtime.openxrHostApplicationName || "an OpenXR application"} using ${runtime.openxrHostGraphicsApi || "a supported graphics API"}.`;
     } else if (!layerEnabled) {
       readiness = "setup-required";
       summary = "OpenXR application integration is installed but disabled.";
@@ -304,7 +317,7 @@ export function analyzeVRCompatibility(
     canRenderOverlay,
     isRealVrBackend: runtime.selectedBackend === "openxr" || runtime.selectedBackend === "openvr",
     requiresApiLayer,
-    requiresOpenXRAppRestart: requiresApiLayer && (!runtime.openxrCompanionConnected || !layerEnabled),
+    requiresOpenXRAppRestart: requiresApiLayer && (!(runtime.openxrHostDetected || runtime.openxrCompanionConnected) || !layerEnabled),
     apiLayer,
     compatibleHostGraphicsApis,
     features,

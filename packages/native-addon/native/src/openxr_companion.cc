@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iterator>
 #include <mutex>
 #include <sstream>
@@ -32,6 +33,25 @@
 namespace vrbridge {
 
 namespace {
+
+#if defined(_WIN32)
+std::filesystem::path ManifestLibraryPath(const std::filesystem::path& manifest) {
+  std::ifstream stream(manifest, std::ios::binary);
+  if (!stream) return {};
+  const std::string contents{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+  const size_t key_position = contents.find("\"library_path\"");
+  const size_t colon = key_position == std::string::npos ? std::string::npos : contents.find(':', key_position);
+  const size_t value_start = colon == std::string::npos ? std::string::npos : contents.find('"', colon + 1);
+  const size_t value_end = value_start == std::string::npos ? std::string::npos : contents.find('"', value_start + 1);
+  if (value_start == std::string::npos || value_end == std::string::npos) return {};
+  std::string value = contents.substr(value_start + 1, value_end - value_start - 1);
+  for (size_t position = 0; (position = value.find("\\\\", position)) != std::string::npos;) {
+    value.replace(position, 2, "\\");
+    ++position;
+  }
+  return manifest.parent_path() / value;
+}
+#endif
 
 void SetError(std::string* error_message, const std::string& message) {
   if (error_message != nullptr) {
@@ -586,7 +606,7 @@ bool IsOpenXRApiLayerInstalled(bool* enabled, std::string* manifest_path) {
     if (path.find(L"electron_vr_openxr_layer.json") == std::wstring::npos) continue;
     const std::filesystem::path manifest(path);
     if (GetFileAttributesW(manifest.c_str()) == INVALID_FILE_ATTRIBUTES ||
-        GetFileAttributesW((manifest.parent_path() / L"electron_vr_openxr_layer.dll").c_str()) == INVALID_FILE_ATTRIBUTES) {
+        GetFileAttributesW(ManifestLibraryPath(manifest).c_str()) == INVALID_FILE_ATTRIBUTES) {
       continue;
     }
     found = true;
@@ -687,17 +707,6 @@ bool SubmitOpenXRCompanionFrame(uint64_t shared_handle, std::string* error_messa
     if (error_message != nullptr) error_message->clear();
     return true;
   }
-  ID3D11Query* completion_query = nullptr;
-  if (g_state.hello.graphics_api == GraphicsApi::kD3D11) {
-    D3D11_QUERY_DESC query_desc{};
-    query_desc.Query = D3D11_QUERY_EVENT;
-    const HRESULT query_result = g_state.device->CreateQuery(&query_desc, &completion_query);
-    if (FAILED(query_result) || completion_query == nullptr) {
-      slot.keyed_mutex->ReleaseSync(0);
-      SetError(error_message, "Failed to create a D3D11 completion query for the Electron texture copy.");
-      return false;
-    }
-  }
   g_state.context->CopyResource(slot.texture, g_state.source_texture);
   if (g_state.hello.graphics_api == GraphicsApi::kD3D12) {
     const HRESULT signal_result = g_state.context4->Signal(slot.fence, slot.fence_value);
@@ -707,20 +716,12 @@ bool SubmitOpenXRCompanionFrame(uint64_t shared_handle, std::string* error_messa
       return false;
     }
   } else {
-    g_state.context->End(completion_query);
     g_state.context->Flush();
-    HRESULT completion_result = S_FALSE;
-    while (completion_result == S_FALSE) {
-      completion_result = g_state.context->GetData(completion_query, nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
-      if (completion_result == S_FALSE) SwitchToThread();
-    }
-    completion_query->Release();
-    if (FAILED(completion_result)) {
-      slot.keyed_mutex->ReleaseSync(0);
-      SetError(error_message, "The D3D11 Electron texture copy did not complete successfully (" + HResultString(completion_result) + ").");
+    const HRESULT release_result = slot.keyed_mutex->ReleaseSync(1);
+    if (FAILED(release_result)) {
+      SetError(error_message, "Failed to release the D3D11 transport texture (" + HResultString(release_result) + ").");
       return false;
     }
-    slot.keyed_mutex->ReleaseSync(1);
   }
 
   const uint64_t sequence = ++g_state.snapshot.latest_sequence;
@@ -817,20 +818,17 @@ void PopulateOpenXRCompanionRuntimeInfo(RuntimeInfo* runtime_info) {
   if (runtime_info == nullptr) return;
   std::lock_guard<std::mutex> lock(g_state.mutex);
   runtime_info->openxr_companion_connected = g_state.connected;
-  runtime_info->openxr_host_process_id = g_state.connected ? g_state.hello.process_id : 0;
-  runtime_info->openxr_host_application_name = g_state.connected ? g_state.hello.application_name : "";
-  runtime_info->openxr_host_graphics_api = g_state.connected
-    ? (g_state.hello.graphics_api == GraphicsApi::kD3D12 ? "d3d12" : "d3d11")
-    : "";
   if (g_state.connected) {
+    runtime_info->openxr_host_detected = true;
+    runtime_info->openxr_host_process_id = g_state.hello.process_id;
+    runtime_info->openxr_host_application_name = g_state.hello.application_name;
+    runtime_info->openxr_host_graphics_api = g_state.hello.graphics_api == GraphicsApi::kD3D12 ? "d3d12" : "d3d11";
     std::ostringstream luid;
     luid << std::hex << static_cast<uint32_t>(g_state.hello.adapter_luid.high_part)
          << ":" << g_state.hello.adapter_luid.low_part;
     runtime_info->openxr_host_adapter_luid = luid.str();
-  } else {
-    runtime_info->openxr_host_adapter_luid.clear();
+    runtime_info->openxr_protocol_version = kProtocolVersion;
   }
-  runtime_info->openxr_protocol_version = kProtocolVersion;
 #else
   (void)runtime_info;
 #endif

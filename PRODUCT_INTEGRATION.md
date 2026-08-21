@@ -65,6 +65,11 @@ interface VRCompatibilityReport {
 }
 ```
 
+For API-layer mode, `diagnostics.openxrHostDetected` becomes true when a
+compatible OpenXR session has loaded the layer, before the Electron companion
+connects. `diagnostics.openxrCompanionConnected` becomes true after the overlay
+is initialized and its frame transport is connected.
+
 For the primary product decision, read `report.launch` first:
 
 - `works-now`: launching an Electron browser overlay now is expected to produce
@@ -91,6 +96,10 @@ await VROverlay.disableOpenXRApiLayer();
 await VROverlay.uninstallOpenXRApiLayer();
 ```
 
+`OpenXRApiLayerStatus.requiresUpdate` is true when the registered layer assets
+do not match the package managing them. Treat this like installation: ask for
+confirmation, call `installOpenXRApiLayer()` again, and restart OpenXR hosts.
+
 After every lifecycle call, request a new compatibility report. Do not mutate a
 previous report in application state.
 
@@ -98,7 +107,7 @@ previous report in application state.
 
 | State | Product meaning | Primary UI |
 | --- | --- | --- |
-| `ready` | A real backend is available, or an API-layer host is connected | “VR overlay ready” or connected application name |
+| `ready` | A real backend is available, or an API-layer host is detected | “VR overlay ready” or detected application name |
 | `setup-required` | A supported OpenXR runtime exists but per-user integration must be installed or enabled | Consent card with Enable action |
 | `waiting-for-host` | Integration is installed and enabled, but no compatible OpenXR application is connected | Calm waiting state with restart guidance |
 | `fallback-only` | No real backend is ready; Linux may still show desktop preview | “Desktop preview only” |

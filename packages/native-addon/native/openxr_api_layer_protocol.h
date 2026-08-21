@@ -8,6 +8,7 @@ constexpr uint32_t kProtocolMagic = 0x45565258;  // EVRX
 constexpr uint32_t kProtocolVersion = 2;
 constexpr uint32_t kTextureSlotCount = 3;
 constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\electron-vr-openxr-overlay-v2";
+constexpr wchar_t kHostPresenceMappingPrefix[] = L"Local\\electron-vr-openxr-host-v2-";
 
 enum class GraphicsApi : uint32_t {
   kUnknown = 0,

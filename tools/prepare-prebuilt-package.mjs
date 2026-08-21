@@ -126,7 +126,10 @@ else if (command === "enable") { if (fs.existsSync(disabled)) fs.renameSync(disa
 else if (command === "disable") { if (fs.existsSync(manifest)) fs.renameSync(manifest, disabled); }
 else if (command === "uninstall") { fs.rmSync(manifest, { force: true }); fs.rmSync(disabled, { force: true }); fs.rmSync(library, { force: true }); }
 else if (command !== "status") throw new Error("Expected install, enable, disable, status, or uninstall");
-console.log("installed=" + (fs.existsSync(library) && (fs.existsSync(manifest) || fs.existsSync(disabled)))); console.log("enabled=" + (fs.existsSync(library) && fs.existsSync(manifest))); console.log("manifest=" + manifest); console.log("scope=current-user");
+const installed = fs.existsSync(library) && (fs.existsSync(manifest) || fs.existsSync(disabled));
+const activeManifest = fs.existsSync(manifest) ? manifest : disabled;
+const current = installed && fs.readFileSync(path.join(__dirname, "libelectron_vr_openxr_layer.so")).equals(fs.readFileSync(library)) && fs.readFileSync(path.join(__dirname, "electron_vr_openxr_layer_linux.json")).equals(fs.readFileSync(activeManifest));
+console.log("installed=" + installed); console.log("enabled=" + (installed && fs.existsSync(manifest))); console.log("requires_update=" + (installed && !current)); console.log("manifest=" + manifest); console.log("scope=current-user");
 `,
     "utf8"
   );

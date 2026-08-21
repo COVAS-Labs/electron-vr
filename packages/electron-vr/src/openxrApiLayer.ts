@@ -8,6 +8,7 @@ export interface OpenXRApiLayerStatus {
   installed: boolean;
   enabled: boolean;
   registered: boolean | null;
+  requiresUpdate: boolean;
   manifestPath: string;
   scope: string;
 }
@@ -103,6 +104,7 @@ export function parseOpenXRApiLayerStatus(output: string): OpenXRApiLayerStatus 
     installed: values.get("installed") === "true",
     enabled: values.get("enabled") === "true",
     registered: values.has("registered") ? values.get("registered") === "true" : null,
+    requiresUpdate: values.get("requires_update") === "true",
     manifestPath: values.get("manifest") ?? "",
     scope: values.get("scope") ?? "current-user"
   };

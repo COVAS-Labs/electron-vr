@@ -23,6 +23,8 @@
 #include <string>
 #include <vector>
 
+#include "../openxr_api_layer_protocol.h"
+
 namespace {
 
 using Microsoft::WRL::ComPtr;
@@ -274,6 +276,19 @@ int wmain() {
   XrSession session = XR_NULL_HANDLE;
   passed &= Expect(create_session(instance, &session_info, &session) == XR_SUCCESS, "D3D12 session creation passes through");
   passed &= Expect(session == g_session && g_create_session_calls == 1, "downstream session is preserved");
+  const std::wstring host_mapping_name = std::wstring(electron_vr::openxr_layer::kHostPresenceMappingPrefix) +
+    std::to_wstring(GetCurrentProcessId());
+  HANDLE host_mapping = OpenFileMappingW(
+    FILE_MAP_READ, FALSE, host_mapping_name.c_str());
+  passed &= Expect(host_mapping != nullptr, "compatible session publishes host presence");
+  const auto* host = host_mapping == nullptr ? nullptr : static_cast<const electron_vr::openxr_layer::LayerHello*>(
+    MapViewOfFile(host_mapping, FILE_MAP_READ, 0, 0, sizeof(electron_vr::openxr_layer::LayerHello)));
+  passed &= Expect(host != nullptr && host->process_id == GetCurrentProcessId() &&
+    host->graphics_api == electron_vr::openxr_layer::GraphicsApi::kD3D12 &&
+    std::strcmp(host->application_name, "electron-vr-ci") == 0,
+    "host presence identifies the OpenXR application and graphics API");
+  if (host != nullptr) UnmapViewOfFile(host);
+  if (host_mapping != nullptr) CloseHandle(host_mapping);
 
   function = nullptr;
   request.getInstanceProcAddr(instance, "xrEndFrame", &function);
@@ -289,6 +304,9 @@ int wmain() {
   passed &= Expect(
     reinterpret_cast<PFN_xrDestroySession>(function)(session) == XR_SUCCESS && g_destroy_session_calls == 1,
     "session destruction passes through");
+  host_mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, host_mapping_name.c_str());
+  passed &= Expect(host_mapping == nullptr, "session destruction clears host presence");
+  if (host_mapping != nullptr) CloseHandle(host_mapping);
 
   function = nullptr;
   request.getInstanceProcAddr(instance, "xrDestroyInstance", &function);

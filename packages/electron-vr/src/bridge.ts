@@ -28,6 +28,7 @@ export interface RuntimeInfo {
   openxrApiLayerEnabled: boolean;
   openxrApiLayerManifestPath: string;
   openxrCompanionConnected: boolean;
+  openxrHostDetected: boolean;
   openxrHostProcessId: number;
   openxrHostApplicationName: string;
   openxrHostGraphicsApi: string;
@@ -270,6 +271,7 @@ function sanitizeRuntimeInfo(runtimeInfo: RuntimeInfo): RuntimeInfo {
     openxrApiLayerEnabled: runtimeInfo.openxrApiLayerEnabled ?? false,
     openxrApiLayerManifestPath: runtimeInfo.openxrApiLayerManifestPath ?? "",
     openxrCompanionConnected: runtimeInfo.openxrCompanionConnected ?? false,
+    openxrHostDetected: runtimeInfo.openxrHostDetected ?? false,
     openxrHostProcessId: runtimeInfo.openxrHostProcessId ?? 0,
     openxrHostApplicationName: runtimeInfo.openxrHostApplicationName ?? "",
     openxrHostGraphicsApi: runtimeInfo.openxrHostGraphicsApi ?? "",

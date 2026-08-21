@@ -278,6 +278,7 @@ Napi::Object RuntimeInfoToObject(Napi::Env env, const RuntimeInfo& info) {
   result.Set("openxrApiLayerEnabled", info.openxr_api_layer_enabled);
   result.Set("openxrApiLayerManifestPath", info.openxr_api_layer_manifest_path);
   result.Set("openxrCompanionConnected", info.openxr_companion_connected);
+  result.Set("openxrHostDetected", info.openxr_host_detected);
   result.Set("openxrHostProcessId", info.openxr_host_process_id);
   result.Set("openxrHostApplicationName", info.openxr_host_application_name);
   result.Set("openxrHostGraphicsApi", info.openxr_host_graphics_api);

@@ -133,6 +133,7 @@ test("API-layer status parser handles Windows and Linux utility output", () => {
     installed: true,
     enabled: false,
     registered: true,
+    requiresUpdate: false,
     manifestPath: "C:\\Users\\test\\electron_vr_openxr_layer.json",
     scope: "current-user (elevated OpenXR applications do not load HKCU layers)"
   });
@@ -145,6 +146,7 @@ test("API-layer status parser handles Windows and Linux utility output", () => {
     installed: false,
     enabled: false,
     registered: null,
+    requiresUpdate: false,
     manifestPath: "/home/test/.local/share/openxr/1/api_layers/implicit.d/electron_vr_openxr_layer.json",
     scope: "current-user"
   });

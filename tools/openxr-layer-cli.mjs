@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,8 +30,15 @@ if (process.platform === "linux" && process.arch === "x64") {
     rmSync(library, { force: true });
     console.log("Uninstalled.");
   } else if (command === "status") {
-    console.log(`installed=${existsSync(library) && (existsSync(manifest) || existsSync(disabledManifest))}`);
-    console.log(`enabled=${existsSync(library) && existsSync(manifest)}`);
+    const sourceLibrary = resolve(sourceDirectory, "libelectron_vr_openxr_layer.so");
+    const sourceManifest = resolve(sourceDirectory, "electron_vr_openxr_layer_linux.json");
+    const installed = existsSync(library) && (existsSync(manifest) || existsSync(disabledManifest));
+    const activeManifest = existsSync(manifest) ? manifest : disabledManifest;
+    const current = installed && readFileSync(sourceLibrary).equals(readFileSync(library)) &&
+      readFileSync(sourceManifest).equals(readFileSync(activeManifest));
+    console.log(`installed=${installed}`);
+    console.log(`enabled=${installed && existsSync(manifest)}`);
+    console.log(`requires_update=${installed && !current}`);
     console.log(`manifest=${manifest}`);
   } else {
     throw new Error("Usage: npm run openxr-layer -- <install|enable|disable|status|uninstall>");

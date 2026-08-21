@@ -99,7 +99,7 @@ RuntimeInfo BridgeState::GetRuntimeInfo() const {
 }
 
 RuntimeInfo BridgeState::GetLiveRuntimeInfo() const {
-  RuntimeInfo runtime_info = runtime_info_;
+  RuntimeInfo runtime_info = initialized_ ? runtime_info_ : ProbeRuntime();
 
   switch (runtime_info.selected_backend) {
     case BackendKind::kOpenXR:
@@ -107,6 +107,7 @@ RuntimeInfo BridgeState::GetLiveRuntimeInfo() const {
 #if defined(__linux__)
         PopulateOpenXRCompanionRuntimeInfoLinux(&runtime_info);
 #else
+        PopulateOpenXRHostPresence(&runtime_info);
         PopulateOpenXRCompanionRuntimeInfo(&runtime_info);
 #endif
       } else {

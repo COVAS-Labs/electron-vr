@@ -8,7 +8,10 @@
 #include <windows.h>
 
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -78,6 +81,73 @@ bool CopyAsset(const std::filesystem::path& source_directory, const std::filesys
   return true;
 }
 
+bool CopyAssetTo(const std::filesystem::path& source, const std::filesystem::path& target) {
+  std::error_code error;
+  std::filesystem::copy_file(source, target, std::filesystem::copy_options::overwrite_existing, error);
+  if (error) {
+    std::wcerr << L"Failed to copy " << source.filename().wstring() << L": " << error.message().c_str() << L"\n";
+    return false;
+  }
+  return true;
+}
+
+bool FilesMatch(const std::filesystem::path& first, const std::filesystem::path& second) {
+  std::error_code error;
+  if (!std::filesystem::exists(first) || !std::filesystem::exists(second) ||
+      std::filesystem::file_size(first, error) != std::filesystem::file_size(second, error) || error) {
+    return false;
+  }
+  std::ifstream first_stream(first, std::ios::binary);
+  std::ifstream second_stream(second, std::ios::binary);
+  return first_stream && second_stream && std::equal(
+    std::istreambuf_iterator<char>(first_stream), std::istreambuf_iterator<char>(),
+    std::istreambuf_iterator<char>(second_stream));
+}
+
+std::string ReadFile(const std::filesystem::path& path) {
+  std::ifstream stream(path, std::ios::binary);
+  return stream ? std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()) : std::string();
+}
+
+std::string VersionedDllName(const std::filesystem::path& source) {
+  std::ifstream stream(source, std::ios::binary);
+  uint64_t hash = 14695981039346656037ull;
+  char buffer[64 * 1024];
+  while (stream) {
+    stream.read(buffer, sizeof(buffer));
+    for (std::streamsize index = 0; index < stream.gcount(); ++index) {
+      hash ^= static_cast<unsigned char>(buffer[index]);
+      hash *= 1099511628211ull;
+    }
+  }
+  std::ostringstream name;
+  name << "electron_vr_openxr_layer_" << std::hex << hash << ".dll";
+  return name.str();
+}
+
+std::string ManifestLibraryName(const std::filesystem::path& manifest) {
+  const std::string contents = ReadFile(manifest);
+  const std::string key = "\"library_path\"";
+  const size_t key_position = contents.find(key);
+  const size_t value_start = key_position == std::string::npos ? std::string::npos : contents.find('"', contents.find(':', key_position) + 1);
+  const size_t value_end = value_start == std::string::npos ? std::string::npos : contents.find('"', value_start + 1);
+  if (value_start == std::string::npos || value_end == std::string::npos) return {};
+  std::string value = contents.substr(value_start + 1, value_end - value_start - 1);
+  const size_t separator = value.find_last_of("\\/");
+  return separator == std::string::npos ? value : value.substr(separator + 1);
+}
+
+bool WriteManifest(const std::filesystem::path& source, const std::filesystem::path& target, const std::string& dll_name) {
+  std::string contents = ReadFile(source);
+  const std::string original_name = "electron_vr_openxr_layer.dll";
+  const size_t position = contents.find(original_name);
+  if (position == std::string::npos) return false;
+  contents.replace(position, original_name.size(), dll_name);
+  std::ofstream stream(target, std::ios::binary | std::ios::trunc);
+  stream.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+  return stream.good();
+}
+
 int Install() {
   const std::filesystem::path source = ExecutableDirectory();
   const std::filesystem::path target = InstallDirectory();
@@ -87,7 +157,10 @@ int Install() {
   }
   std::error_code error;
   std::filesystem::create_directories(target, error);
-  if (error || !CopyAsset(source, target, kDllName) || !CopyAsset(source, target, kManifestName) || !CopyAsset(source, target, kProtocolName)) return 1;
+  const std::string dll_name = VersionedDllName(source / kDllName);
+  const std::filesystem::path versioned_dll = target / dll_name;
+  if (error || !CopyAssetTo(source / kDllName, versioned_dll) ||
+      !WriteManifest(source / kManifestName, target / kManifestName, dll_name) || !CopyAsset(source, target, kProtocolName)) return 1;
   if (!SetRegistration(0)) {
     std::wcerr << L"Failed to register the implicit API layer in HKCU.\n";
     return 1;
@@ -112,11 +185,19 @@ int SetEnabled(bool enabled) {
 int Status() {
   DWORD value = 1;
   const bool registered = ReadRegistration(&value);
-  const bool files_present = std::filesystem::exists(InstalledManifestPath()) &&
-                             std::filesystem::exists(InstallDirectory() / kDllName);
+  const std::filesystem::path source = ExecutableDirectory();
+  const std::string installed_dll_name = ManifestLibraryName(InstalledManifestPath());
+  const std::string expected_dll_name = VersionedDllName(source / kDllName);
+  const std::filesystem::path installed_dll = InstallDirectory() / installed_dll_name;
+  const bool files_present = std::filesystem::exists(InstalledManifestPath()) && !installed_dll_name.empty() &&
+                              std::filesystem::exists(installed_dll);
+  const bool current = files_present && installed_dll_name == expected_dll_name &&
+                       FilesMatch(source / kDllName, installed_dll) &&
+                       FilesMatch(source / kProtocolName, InstallDirectory() / kProtocolName);
   std::wcout << L"installed=" << (files_present ? L"true" : L"false") << L"\n";
   std::wcout << L"registered=" << (registered ? L"true" : L"false") << L"\n";
   std::wcout << L"enabled=" << (registered && value == 0 ? L"true" : L"false") << L"\n";
+  std::wcout << L"requires_update=" << (files_present && !current ? L"true" : L"false") << L"\n";
   std::wcout << L"manifest=" << InstalledManifestPath().wstring() << L"\n";
   std::wcout << L"scope=current-user (elevated OpenXR applications do not load HKCU layers)\n";
   return 0;

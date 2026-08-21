@@ -25,6 +25,7 @@ function runtime(overrides = {}) {
     openxrApiLayerEnabled: false,
     openxrApiLayerManifestPath: "",
     openxrCompanionConnected: false,
+    openxrHostDetected: false,
     openxrHostProcessId: 0,
     openxrHostApplicationName: "",
     openxrHostGraphicsApi: "",
@@ -74,6 +75,7 @@ test("compatibility report recommends enabling an installed layer", () => {
       installed: true,
       enabled: false,
       registered: true,
+      requiresUpdate: false,
       manifestPath: "layer.json",
       scope: "current-user"
     }
@@ -81,6 +83,29 @@ test("compatibility report recommends enabling an installed layer", () => {
   assert.equal(report.readiness, "setup-required");
   assert.equal(report.launch.verdict, "action-required");
   assert.equal(report.recommendedAction, "enable-openxr-api-layer");
+});
+
+test("compatibility report recommends reinstalling an outdated API layer", () => {
+  const report = analyzeVRCompatibility(runtime({
+    selectedBackend: "openxr",
+    openxrMode: "api-layer",
+    openxrApiLayerInstalled: true,
+    openxrApiLayerEnabled: true
+  }), {
+    architecture: "x64",
+    apiLayer: {
+      installed: true,
+      enabled: true,
+      registered: true,
+      requiresUpdate: true,
+      manifestPath: "layer.json",
+      scope: "current-user"
+    }
+  });
+  assert.equal(report.readiness, "setup-required");
+  assert.equal(report.launch.wouldWorkNow, false);
+  assert.equal(report.recommendedAction, "reinstall-openxr-api-layer");
+  assert.equal(report.issues[0].code, "openxr-api-layer-update-required");
 });
 
 test("compatibility report distinguishes waiting and connected API-layer hosts", () => {
@@ -95,12 +120,29 @@ test("compatibility report distinguishes waiting and connected API-layer hosts",
   assert.deepEqual(waiting.launch.requiredActions, ["start-openxr-app"]);
   assert.equal(waiting.recommendedAction, "start-openxr-app");
 
+  const detected = analyzeVRCompatibility(runtime({
+    selectedBackend: "openxr",
+    openxrMode: "api-layer",
+    openxrApiLayerInstalled: true,
+    openxrApiLayerEnabled: true,
+    openxrHostDetected: true,
+    openxrHostProcessId: 1234,
+    openxrHostApplicationName: "Elite Dangerous",
+    openxrHostGraphicsApi: "d3d11"
+  }), { architecture: "x64" });
+  assert.equal(detected.readiness, "ready");
+  assert.equal(detected.launch.wouldWorkNow, true);
+  assert.equal(detected.requiresOpenXRAppRestart, false);
+  assert.match(detected.summary, /Detected Elite Dangerous/);
+  assert.equal(detected.diagnostics.openxrCompanionConnected, false);
+
   const connected = analyzeVRCompatibility(runtime({
     selectedBackend: "openxr",
     openxrMode: "api-layer",
     openxrApiLayerInstalled: true,
     openxrApiLayerEnabled: true,
     openxrCompanionConnected: true,
+    openxrHostDetected: true,
     openxrHostApplicationName: "hello_xr",
     openxrHostGraphicsApi: "d3d12"
   }), { architecture: "x64" });
