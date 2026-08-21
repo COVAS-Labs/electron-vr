@@ -11,28 +11,35 @@
     <main class="hud-shell">
       <section class="hero-panel">
         <p class="eyebrow">VR Overlay Bridge</p>
-        <h1>Shared-texture Electron panel for OpenXR or OpenVR.</h1>
+        <h1>Live XR transport telemetry.</h1>
         <p class="lede">
-          This demo window renders offscreen, keeps alpha intact, and forwards each frame into the native addon scaffold.
+          This offscreen panel reports the host, runtime, graphics API, protocol, and frame path currently carrying it into VR.
         </p>
       </section>
 
       <section class="metrics-grid">
         <article class="metric-card accent-cyan">
-          <span class="metric-label">Session</span>
+          <span class="metric-label">Connection</span>
           <strong id="session-status">Awaiting compositor</strong>
-          <p>Zero-copy handoff path staged for native import.</p>
+          <p id="host-value">No host detected</p>
         </article>
         <article class="metric-card accent-amber">
-          <span class="metric-label">Platform</span>
+          <span class="metric-label">Runtime</span>
           <strong id="platform-value">Detecting</strong>
-          <p>Electron preload injects runtime versions for quick inspection.</p>
+          <p id="runtime-value">Probing native backend</p>
         </article>
         <article class="metric-card accent-lime">
-          <span class="metric-label">Refresh</span>
+          <span class="metric-label">Clock</span>
           <strong id="clock-value">--:--:--</strong>
           <p>Lightweight UI motion helps verify steady paint delivery.</p>
         </article>
+      </section>
+
+      <section class="details-grid">
+        <article><span>Graphics API</span><strong id="api-value">Unknown</strong></article>
+        <article><span>Frame transport</span><strong id="transport-value">Detecting</strong></article>
+        <article><span>Protocol</span><strong id="protocol-value">N/A</strong></article>
+        <article><span>Frame progress</span><strong id="frames-value">0 / 0</strong></article>
       </section>
 
       <section class="signal-panel">

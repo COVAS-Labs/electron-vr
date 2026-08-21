@@ -42,7 +42,7 @@ body {
 .hud-shell {
   position: relative;
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto auto 1fr;
   gap: 24px;
   width: 100%;
   height: 100%;
@@ -97,6 +97,37 @@ body {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 20px;
+}
+
+.details-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.details-grid article {
+  min-width: 0;
+  padding: 14px 16px;
+  border-left: 2px solid rgba(124, 231, 255, 0.55);
+  background: rgba(7, 13, 22, 0.56);
+}
+
+.details-grid span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.details-grid strong {
+  display: block;
+  overflow: hidden;
+  color: var(--cyan);
+  font-size: 0.95rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .metric-card {
@@ -223,6 +254,7 @@ body {
   }
 
   .metrics-grid,
+  .details-grid,
   .signal-panel {
     grid-template-columns: 1fr;
   }

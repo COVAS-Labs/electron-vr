@@ -1,4 +1,4 @@
-import { app } from "electron";
+import { app, ipcMain } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -13,6 +13,42 @@ let overlay: VROverlay | null = null;
 let diagnosticsTimer: ReturnType<typeof setInterval> | null = null;
 
 app.commandLine.appendSwitch("enable-features", "SharedImages");
+
+function getTransportLabel(info: ReturnType<VROverlay["getRuntimeInfo"]>): string {
+  if (info.selectedBackend === "openxr" && info.openxrMode === "api-layer") {
+    if (info.openxrHostGraphicsApi === "d3d11" && info.openxrProtocolVersion >= 3) {
+      return "Direct Electron texture lease";
+    }
+    return info.openxrHostGraphicsApi === "d3d12"
+      ? "Shared D3D11 ring + D3D12 fence"
+      : "OpenXR API-layer shared texture";
+  }
+  if (info.selectedBackend === "openxr") return "Direct OpenXR shared texture";
+  if (info.selectedBackend === "openvr") return process.platform === "linux"
+    ? "OpenVR Vulkan / DMA-BUF"
+    : "OpenVR shared texture";
+  return info.selectedBackend === "mock" ? "Native mock preview" : "No frame transport";
+}
+
+ipcMain.handle("overlay-demo:get-diagnostics", () => {
+  const info = overlay?.getRuntimeInfo();
+  if (!info) return null;
+  return {
+    platform: info.platform,
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    backend: info.selectedBackend,
+    mode: info.openxrMode,
+    runtime: info.openxrRuntimeName || (info.selectedBackend === "openvr" ? "OpenVR runtime" : "None"),
+    hostApplication: info.openxrHostApplicationName || info.openvrSceneApplicationName || "No host detected",
+    graphicsApi: info.openxrHostGraphicsApi || (info.selectedBackend === "openvr" ? "OpenVR" : "None"),
+    transport: getTransportLabel(info),
+    connected: info.openxrCompanionConnected || info.selectedBackend === "openvr",
+    protocol: info.openxrProtocolVersion,
+    submitted: info.openxrSubmittedFrameSequence,
+    consumed: info.openxrConsumedFrameSequence
+  };
+});
 
 app.on("ready", async () => {
   console.log("Using Electron shared texture overlay path.");

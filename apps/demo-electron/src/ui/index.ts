@@ -3,11 +3,11 @@ export {};
 declare global {
   interface Window {
     overlayDemo?: {
-      environment?: {
-        platform?: string;
-        electron?: string;
-        chrome?: string;
-      };
+      getDiagnostics(): Promise<{
+        platform: string; electron: string; chrome: string; backend: string; mode: string;
+        runtime: string; hostApplication: string; graphicsApi: string; transport: string;
+        connected: boolean; protocol: number; submitted: number; consumed: number;
+      } | null>;
     };
   }
 }
@@ -15,17 +15,25 @@ declare global {
 const sessionStatus = document.querySelector<HTMLElement>("#session-status");
 const platformValue = document.querySelector<HTMLElement>("#platform-value");
 const clockValue = document.querySelector<HTMLElement>("#clock-value");
+const hostValue = document.querySelector<HTMLElement>("#host-value");
+const runtimeValue = document.querySelector<HTMLElement>("#runtime-value");
+const apiValue = document.querySelector<HTMLElement>("#api-value");
+const transportValue = document.querySelector<HTMLElement>("#transport-value");
+const protocolValue = document.querySelector<HTMLElement>("#protocol-value");
+const framesValue = document.querySelector<HTMLElement>("#frames-value");
 
-if (sessionStatus) {
-  sessionStatus.textContent = "Frames streaming";
-}
-
-if (platformValue) {
-  const environment = window.overlayDemo?.environment;
-  const platform = environment?.platform ?? "unknown";
-  const electron = environment?.electron ?? "?";
-  platformValue.textContent = `${platform} / Electron ${electron}`;
-}
+const updateDiagnostics = async () => {
+  const diagnostics = await window.overlayDemo?.getDiagnostics();
+  if (!diagnostics) return;
+  if (sessionStatus) sessionStatus.textContent = diagnostics.connected ? "Connected" : "Waiting for host";
+  if (hostValue) hostValue.textContent = diagnostics.hostApplication;
+  if (platformValue) platformValue.textContent = `${diagnostics.backend.toUpperCase()} / ${diagnostics.mode}`;
+  if (runtimeValue) runtimeValue.textContent = `${diagnostics.runtime} on ${diagnostics.platform} · Electron ${diagnostics.electron}`;
+  if (apiValue) apiValue.textContent = diagnostics.graphicsApi.toUpperCase();
+  if (transportValue) transportValue.textContent = diagnostics.transport;
+  if (protocolValue) protocolValue.textContent = diagnostics.protocol ? `v${diagnostics.protocol}` : "N/A";
+  if (framesValue) framesValue.textContent = `${diagnostics.submitted} submitted / ${diagnostics.consumed} consumed`;
+};
 
 const updateClock = () => {
   if (!clockValue) {
@@ -40,4 +48,6 @@ const updateClock = () => {
 };
 
 updateClock();
+void updateDiagnostics();
 window.setInterval(updateClock, 1000);
+window.setInterval(() => void updateDiagnostics(), 1000);

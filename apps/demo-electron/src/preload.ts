@@ -1,9 +1,5 @@
-import { contextBridge } from "electron";
+import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("overlayDemo", {
-  environment: {
-    platform: process.platform,
-    electron: process.versions.electron,
-    chrome: process.versions.chrome
-  }
+  getDiagnostics: () => ipcRenderer.invoke("overlay-demo:get-diagnostics")
 });
