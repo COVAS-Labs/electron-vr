@@ -10,6 +10,7 @@ const overlayUrl = pathToFileURL(join(currentDir, "ui", "index.html"))
 const preloadPath = fileURLToPath(new URL("./preload.js", import.meta.url));
 
 let overlay: VROverlay | null = null;
+let diagnosticsTimer: ReturnType<typeof setInterval> | null = null;
 
 app.commandLine.appendSwitch("enable-features", "SharedImages");
 
@@ -62,6 +63,14 @@ app.on("ready", async () => {
 
   const visible = overlay.setVisible(true);
   console.log(`Overlay visibility update: ${visible}`);
+  diagnosticsTimer = setInterval(() => {
+    const info = overlay?.getRuntimeInfo();
+    if (info) {
+      console.log(
+        `VR transport: connected=${info.openxrCompanionConnected} host=${info.openxrHostGraphicsApi || "none"} submitted=${info.openxrSubmittedFrameSequence} consumed=${info.openxrConsumedFrameSequence}`
+      );
+    }
+  }, 2000);
 });
 
 app.on("window-all-closed", () => {
@@ -71,6 +80,8 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  if (diagnosticsTimer) clearInterval(diagnosticsTimer);
+  diagnosticsTimer = null;
   overlay?.destroy();
   overlay = null;
 });

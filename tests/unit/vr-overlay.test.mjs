@@ -72,7 +72,7 @@ test("Windows OpenXR layer publishes host presence before companion connection",
   const bridge = await readFile(resolve(root, "packages", "native-addon", "native", "src", "bridge.cc"), "utf8");
   assert.match(protocol, /kHostPresenceMappingPrefix/);
   assert.match(layer, /CreateFileMappingW/);
-  assert.match(layer, /host_presence_ = hello/);
+  assert.match(layer, /host_presence_->hello = hello/);
   assert.match(probe, /OpenFileMappingW/);
   assert.match(probe, /openxr_host_detected = true/);
   assert.match(bridge, /PopulateOpenXRHostPresence/);
@@ -89,6 +89,18 @@ test("Windows OpenXR layer retains the last frame while a newer texture is pendi
   const layer = await readFile(resolve(root, "packages", "native-addon", "native", "openxr-api-layer", "layer.cc"), "utf8");
   assert.match(layer, /const bool copied_latest_frame = CopyLatestFrame/);
   assert.match(layer, /!copied_latest_frame && state->consumed_sequence == 0/);
+});
+
+test("Windows D3D11 API-layer transport hands Electron textures directly to the host", async () => {
+  const companion = await readFile(resolve(root, "packages", "native-addon", "native", "src", "openxr_companion.cc"), "utf8");
+  const layer = await readFile(resolve(root, "packages", "native-addon", "native", "openxr-api-layer", "layer.cc"), "utf8");
+  const bridge = await readFile(resolve(root, "packages", "electron-vr", "src", "bridge.ts"), "utf8");
+  assert.match(companion, /TextureTransport::kDirectElectronTexture/);
+  assert.match(companion, /DuplicateHandle\([\s\S]*shared_handle/);
+  assert.match(layer, /PollDirectTextureCompletions/);
+  assert.match(layer, /D3D11_ASYNC_GETDATA_DONOTFLUSH/);
+  assert.match(companion, /snapshot\.connection_id = NewConnectionId\(\)/);
+  assert.match(bridge, /windowsOpenXRTextures/);
 });
 
 test("Windows OpenComposite is not selected for unsupported OpenVR overlays", async () => {

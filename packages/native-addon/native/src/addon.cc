@@ -284,6 +284,8 @@ Napi::Object RuntimeInfoToObject(Napi::Env env, const RuntimeInfo& info) {
   result.Set("openxrHostGraphicsApi", info.openxr_host_graphics_api);
   result.Set("openxrHostAdapterLuid", info.openxr_host_adapter_luid);
   result.Set("openxrProtocolVersion", info.openxr_protocol_version);
+  result.Set("openxrSubmittedFrameSequence", Napi::Number::New(env, static_cast<double>(info.openxr_submitted_frame_sequence)));
+  result.Set("openxrConsumedFrameSequence", Napi::Number::New(env, static_cast<double>(info.openxr_consumed_frame_sequence)));
   result.Set("openvrAvailable", info.openvr_available);
   result.Set("openvrRuntimeInstalled", info.openvr_runtime_installed);
   result.Set("openvrRuntimePath", info.openvr_runtime_path);

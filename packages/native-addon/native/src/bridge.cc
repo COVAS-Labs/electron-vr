@@ -107,7 +107,7 @@ RuntimeInfo BridgeState::GetLiveRuntimeInfo() const {
 #if defined(__linux__)
         PopulateOpenXRCompanionRuntimeInfoLinux(&runtime_info);
 #else
-        PopulateOpenXRHostPresence(&runtime_info);
+        if (!initialized_) PopulateOpenXRHostPresence(&runtime_info);
         PopulateOpenXRCompanionRuntimeInfo(&runtime_info);
 #endif
       } else {

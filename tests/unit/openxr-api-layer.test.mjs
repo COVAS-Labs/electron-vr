@@ -22,7 +22,7 @@ test("API-layer protocol and source retain the Direct3D single-overlay contract"
   const protocol = JSON.parse(await readFile(resolve(layerDirectory, "protocol.json"), "utf8"));
   const source = await readFile(resolve(layerDirectory, "layer.cc"), "utf8");
   const harness = await readFile(resolve(layerDirectory, "layer_test.cc"), "utf8");
-  assert.equal(protocol.version, 2);
+  assert.equal(protocol.version, 3);
   assert.equal(protocol.textureSlots, 3);
   assert.deepEqual(protocol.graphicsApis, ["d3d11", "d3d12"]);
   assert.match(source, /xrNegotiateLoaderApiLayerInterface/);

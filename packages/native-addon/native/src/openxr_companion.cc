@@ -63,9 +63,12 @@ void SetError(std::string* error_message, const std::string& message) {
 
 using electron_vr::openxr_layer::AdapterLuid;
 using electron_vr::openxr_layer::GraphicsApi;
+using electron_vr::openxr_layer::HostPresence;
 using electron_vr::openxr_layer::LayerHello;
 using electron_vr::openxr_layer::OverlaySnapshot;
 using electron_vr::openxr_layer::PlacementMode;
+using electron_vr::openxr_layer::TextureTransport;
+using electron_vr::openxr_layer::kHostPresenceMappingPrefix;
 using electron_vr::openxr_layer::kPipeName;
 using electron_vr::openxr_layer::kProtocolMagic;
 using electron_vr::openxr_layer::kProtocolVersion;
@@ -120,6 +123,51 @@ struct CompanionState {
 };
 
 CompanionState g_state;
+
+uint64_t NewConnectionId() {
+  uint64_t id = (GetTickCount64() << 16) ^ GetCurrentProcessId() ^ g_state.connection_generation;
+  return id == 0 ? 1 : id;
+}
+
+struct HostProgress {
+  uint64_t consumed_sequence = 0;
+  std::array<uint64_t, kTextureSlotCount> opened_sequences{};
+};
+
+HostProgress ReadHostProgress(uint32_t process_id, uint64_t connection_id) {
+  HostProgress progress;
+  const std::wstring mapping_name = std::wstring(kHostPresenceMappingPrefix) + std::to_wstring(process_id);
+  HANDLE mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, mapping_name.c_str());
+  if (mapping == nullptr) return progress;
+  const auto* presence = static_cast<const HostPresence*>(
+    MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(HostPresence)));
+  if (presence != nullptr && static_cast<uint64_t>(presence->acknowledged_connection_id) == connection_id) {
+    progress.consumed_sequence = static_cast<uint64_t>(presence->consumed_sequence);
+  }
+  if (presence != nullptr && static_cast<uint64_t>(presence->opened_connection_id) == connection_id) {
+    for (uint32_t index = 0; index < kTextureSlotCount; ++index) {
+      progress.opened_sequences[index] = static_cast<uint64_t>(presence->opened_sequences[index]);
+    }
+  }
+  if (presence != nullptr) UnmapViewOfFile(presence);
+  CloseHandle(mapping);
+  return progress;
+}
+
+void CloseRemoteHandle(HANDLE target_process, uint64_t remote_value) {
+  if (target_process == nullptr || remote_value == 0) return;
+  HANDLE local_duplicate = nullptr;
+  if (DuplicateHandle(
+        target_process,
+        reinterpret_cast<HANDLE>(static_cast<uintptr_t>(remote_value)),
+        GetCurrentProcess(),
+        &local_duplicate,
+        0,
+        FALSE,
+        DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS) && local_duplicate != nullptr) {
+    CloseHandle(local_duplicate);
+  }
+}
 
 bool WriteExact(HANDLE pipe, const void* data, DWORD size) {
   const uint8_t* cursor = static_cast<const uint8_t*>(data);
@@ -207,7 +255,17 @@ PSECURITY_DESCRIPTOR CreatePipeSecurityDescriptor() {
 void CloseTextureResourcesLocked() {
   ReleaseCom(&g_state.source_texture);
   g_state.source_handle = 0;
-  for (TextureSlotState& slot : g_state.slots) {
+  const HostProgress progress = ReadHostProgress(
+    g_state.hello.process_id, g_state.snapshot.connection_id);
+  HANDLE target_process = g_state.hello.process_id == 0 ||
+      g_state.snapshot.texture_transport != TextureTransport::kDirectElectronTexture
+    ? nullptr
+    : OpenProcess(PROCESS_DUP_HANDLE, FALSE, g_state.hello.process_id);
+  for (uint32_t index = 0; index < kTextureSlotCount; ++index) {
+    TextureSlotState& slot = g_state.slots[index];
+    if (progress.opened_sequences[index] != slot.sequence) {
+      CloseRemoteHandle(target_process, slot.remote_handle);
+    }
     ReleaseCom(&slot.keyed_mutex);
     ReleaseCom(&slot.fence);
     ReleaseCom(&slot.texture);
@@ -223,13 +281,13 @@ void CloseTextureResourcesLocked() {
     slot.remote_fence_handle = 0;
     slot.sequence = 0;
   }
+  if (target_process != nullptr) CloseHandle(target_process);
   ReleaseCom(&g_state.context);
   ReleaseCom(&g_state.context4);
   ReleaseCom(&g_state.device5);
   ReleaseCom(&g_state.device1);
   ReleaseCom(&g_state.device);
   g_state.snapshot.texture_generation++;
-  g_state.snapshot.latest_sequence = 0;
   g_state.snapshot.width = 0;
   g_state.snapshot.height = 0;
   g_state.snapshot.dxgi_format = 0;
@@ -534,9 +592,11 @@ void ServerThreadMain() {
     uint64_t sent_revision = UINT64_MAX;
     {
       std::lock_guard<std::mutex> lock(g_state.mutex);
+      CloseTextureResourcesLocked();
       g_state.hello = hello;
       g_state.connected = true;
       g_state.connection_generation++;
+      g_state.snapshot.connection_id = NewConnectionId();
       g_state.snapshot.revision++;
     }
 
@@ -637,6 +697,7 @@ bool InitializeOpenXRCompanion(const InitializeOptions& options, std::string* er
   {
     std::lock_guard<std::mutex> lock(g_state.mutex);
     g_state.snapshot = {};
+    g_state.snapshot.connection_id = NewConnectionId();
     ApplyOptionsLocked(options);
     g_state.initialized = true;
     g_state.stop_requested.store(false);
@@ -688,6 +749,73 @@ bool SubmitOpenXRCompanionFrame(uint64_t shared_handle, std::string* error_messa
     SetError(error_message, "Electron shared texture must use a BGRA8 or RGBA8 format for the D3D11 API-layer transport.");
     return false;
   }
+
+  const bool direct_transport = g_state.hello.graphics_api == GraphicsApi::kD3D11;
+  if (direct_transport) {
+    const HostProgress progress = ReadHostProgress(
+      g_state.hello.process_id, g_state.snapshot.connection_id);
+    const uint64_t consumed_sequence = progress.consumed_sequence;
+    HANDLE target_process = OpenProcess(PROCESS_DUP_HANDLE, FALSE, g_state.hello.process_id);
+    if (target_process == nullptr) {
+      SetError(error_message, "Failed to open the OpenXR host process for direct texture handoff.");
+      return false;
+    }
+    for (uint32_t index = 0; index < kTextureSlotCount; ++index) {
+      TextureSlotState& candidate = g_state.slots[index];
+      if (candidate.sequence != 0 && candidate.sequence <= consumed_sequence) {
+        if (progress.opened_sequences[index] != candidate.sequence) {
+          CloseRemoteHandle(target_process, candidate.remote_handle);
+        }
+        candidate.remote_handle = 0;
+      }
+    }
+    uint32_t selected_slot = kTextureSlotCount;
+    for (uint32_t offset = 0; offset < kTextureSlotCount; ++offset) {
+      const uint32_t index = (g_state.next_slot + offset) % kTextureSlotCount;
+      if (g_state.slots[index].sequence == 0 || g_state.slots[index].sequence <= consumed_sequence) {
+        selected_slot = index;
+        break;
+      }
+    }
+    if (selected_slot == kTextureSlotCount) {
+      CloseHandle(target_process);
+      if (error_message != nullptr) error_message->clear();
+      return true;
+    }
+
+    HANDLE remote_handle = nullptr;
+    const bool duplicated = DuplicateHandle(
+      GetCurrentProcess(),
+      reinterpret_cast<HANDLE>(static_cast<uintptr_t>(shared_handle)),
+      target_process,
+      &remote_handle,
+      0,
+      FALSE,
+      DUPLICATE_SAME_ACCESS);
+    CloseHandle(target_process);
+    if (!duplicated || remote_handle == nullptr) {
+      SetError(error_message, "Failed to duplicate Electron's shared texture into the OpenXR host process.");
+      return false;
+    }
+
+    const uint64_t sequence = ++g_state.snapshot.latest_sequence;
+    TextureSlotState& slot = g_state.slots[selected_slot];
+    slot.remote_handle = reinterpret_cast<uint64_t>(remote_handle);
+    slot.sequence = sequence;
+    g_state.snapshot.texture_transport = TextureTransport::kDirectElectronTexture;
+    g_state.snapshot.width = source_desc.Width;
+    g_state.snapshot.height = source_desc.Height;
+    g_state.snapshot.dxgi_format = static_cast<uint32_t>(source_desc.Format);
+    g_state.snapshot.latest_slot = selected_slot;
+    g_state.snapshot.slots[selected_slot].handle = slot.remote_handle;
+    g_state.snapshot.slots[selected_slot].sequence = sequence;
+    g_state.snapshot.revision++;
+    g_state.next_slot = (selected_slot + 1) % kTextureSlotCount;
+    if (error_message != nullptr) error_message->clear();
+    return true;
+  }
+
+  g_state.snapshot.texture_transport = TextureTransport::kCopiedRing;
   if (!CreateTextureRingLocked(source_desc, error_message)) return false;
 
   TextureSlotState& slot = g_state.slots[g_state.next_slot];
@@ -828,6 +956,9 @@ void PopulateOpenXRCompanionRuntimeInfo(RuntimeInfo* runtime_info) {
          << ":" << g_state.hello.adapter_luid.low_part;
     runtime_info->openxr_host_adapter_luid = luid.str();
     runtime_info->openxr_protocol_version = kProtocolVersion;
+    runtime_info->openxr_submitted_frame_sequence = g_state.snapshot.latest_sequence;
+    runtime_info->openxr_consumed_frame_sequence = ReadHostProgress(
+      g_state.hello.process_id, g_state.snapshot.connection_id).consumed_sequence;
   }
 #else
   (void)runtime_info;

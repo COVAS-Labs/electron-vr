@@ -34,6 +34,8 @@ export interface RuntimeInfo {
   openxrHostGraphicsApi: string;
   openxrHostAdapterLuid: string;
   openxrProtocolVersion: number;
+  openxrSubmittedFrameSequence: number;
+  openxrConsumedFrameSequence: number;
   openvrAvailable: boolean;
   openvrRuntimeInstalled: boolean;
   openvrRuntimePath: string;
@@ -277,6 +279,8 @@ function sanitizeRuntimeInfo(runtimeInfo: RuntimeInfo): RuntimeInfo {
     openxrHostGraphicsApi: runtimeInfo.openxrHostGraphicsApi ?? "",
     openxrHostAdapterLuid: runtimeInfo.openxrHostAdapterLuid ?? "",
     openxrProtocolVersion: runtimeInfo.openxrProtocolVersion ?? 0,
+    openxrSubmittedFrameSequence: runtimeInfo.openxrSubmittedFrameSequence ?? 0,
+    openxrConsumedFrameSequence: runtimeInfo.openxrConsumedFrameSequence ?? 0,
     openvrSceneApplicationState: runtimeInfo.openvrSceneApplicationState ?? "",
     openvrSceneProcessId: runtimeInfo.openvrSceneProcessId ?? 0,
     openvrSceneApplicationKey: runtimeInfo.openvrSceneApplicationKey ?? "",
@@ -377,6 +381,7 @@ export class VrBridge {
   private linuxOpenVRVisibleTexture: SharedTexturePayload | null = null;
   private windowsReadbackInFlight = false;
   private windowsReadbackPending = false;
+  private windowsOpenXRTextures: Array<{ sequence: number; texture: SharedTexturePayload }> = [];
   private linuxReadbackInFlight = false;
   private linuxReadbackPending = false;
   private invalidationTimer: ReturnType<typeof setInterval> | null = null;
@@ -412,6 +417,8 @@ export class VrBridge {
     }
 
     this.linuxReadbackPending = false;
+    for (const retained of this.windowsOpenXRTextures) releaseTexture(retained.texture);
+    this.windowsOpenXRTextures = [];
 
     const offscreenContents = this.attachedWindow.webContents as unknown as OffscreenWebContents;
     offscreenContents.removeListener("paint", this.onPaint);
@@ -678,6 +685,18 @@ export class VrBridge {
     }
 
     const runtimeInfo = this.getRuntimeInfo();
+    if (process.platform === "win32" && this.windowsOpenXRTextures.length > 0) {
+      const consumedSequence = runtimeInfo.openxrConsumedFrameSequence;
+      const pending: typeof this.windowsOpenXRTextures = [];
+      for (const retained of this.windowsOpenXRTextures) {
+        if (retained.sequence <= consumedSequence) {
+          releaseTexture(retained.texture);
+        } else {
+          pending.push(retained);
+        }
+      }
+      this.windowsOpenXRTextures = pending;
+    }
     if (process.platform === "linux" &&
         runtimeInfo.selectedBackend === "openvr" &&
         isTruthyEnvironmentVariable("ELECTRON_VR_OPENVR_VULKAN_SOFTWARE")) {
@@ -764,9 +783,22 @@ export class VrBridge {
                 "Windows shared texture submission failed; falling back to software RGBA upload."
               );
             }
-          } else if (!this.loggedFirstWindowsSubmit) {
-            this.loggedFirstWindowsSubmit = true;
-            console.log("VR overlay submitted first Windows frame to the native bridge.");
+          } else {
+            if (runtimeInfo.selectedBackend === "openxr" && runtimeInfo.openxrMode === "api-layer" &&
+                runtimeInfo.openxrHostGraphicsApi === "d3d11") {
+              const updatedRuntimeInfo = this.getRuntimeInfo();
+              if (updatedRuntimeInfo.openxrSubmittedFrameSequence > runtimeInfo.openxrSubmittedFrameSequence) {
+                this.windowsOpenXRTextures.push({
+                  sequence: updatedRuntimeInfo.openxrSubmittedFrameSequence,
+                  texture
+                });
+                releaseCurrentTexture = false;
+              }
+            }
+            if (!this.loggedFirstWindowsSubmit) {
+              this.loggedFirstWindowsSubmit = true;
+              console.log("VR overlay submitted first Windows frame to the native bridge.");
+            }
           }
         } else if (this.getSelectedBackend() === "openvr") {
           this.useWindowsSoftwareFallback(

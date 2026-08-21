@@ -45,6 +45,8 @@ struct RuntimeInfo {
   std::string openxr_host_graphics_api;
   std::string openxr_host_adapter_luid;
   uint32_t openxr_protocol_version = 0;
+  uint64_t openxr_submitted_frame_sequence = 0;
+  uint64_t openxr_consumed_frame_sequence = 0;
   bool openvr_available = false;
   bool openvr_runtime_installed = false;
   std::string openvr_runtime_path;

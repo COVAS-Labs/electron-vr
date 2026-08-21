@@ -85,7 +85,7 @@ const metadata = {
       manifest: "electron_vr_openxr_layer.json",
       library: "electron_vr_openxr_layer.dll",
       cli: "electron_vr_openxr_layer_cli.exe",
-      protocolVersion: 2
+      protocolVersion: 3
     }
   } : platform === "linux" && arch === "x64" ? {
     openxrApiLayer: {

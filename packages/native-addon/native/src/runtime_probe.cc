@@ -173,6 +173,7 @@ const char* GraphicsApiName(electron_vr::openxr_layer::GraphicsApi graphics_api)
 }
 
 void QueryOpenXRHostPresence(RuntimeInfo* info) {
+  using electron_vr::openxr_layer::HostPresence;
   using electron_vr::openxr_layer::LayerHello;
   using electron_vr::openxr_layer::kHostPresenceMappingPrefix;
   using electron_vr::openxr_layer::kProtocolMagic;
@@ -187,11 +188,12 @@ void QueryOpenXRHostPresence(RuntimeInfo* info) {
     const std::wstring mapping_name = std::wstring(kHostPresenceMappingPrefix) + std::to_wstring(process_entry.th32ProcessID);
     HANDLE mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, mapping_name.c_str());
     if (mapping != nullptr) {
-      const auto* mapped = static_cast<const LayerHello*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(LayerHello)));
-      LayerHello hello{};
-      if (mapped != nullptr) std::memcpy(&hello, mapped, sizeof(hello));
+      const auto* mapped = static_cast<const HostPresence*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(HostPresence)));
+      HostPresence presence{};
+      if (mapped != nullptr) std::memcpy(&presence, mapped, sizeof(presence));
       if (mapped != nullptr) UnmapViewOfFile(mapped);
       CloseHandle(mapping);
+      const LayerHello& hello = presence.hello;
       if (hello.magic == kProtocolMagic && hello.version == kProtocolVersion && hello.size == sizeof(LayerHello) &&
           hello.process_id == process_entry.th32ProcessID) {
         info->openxr_host_detected = true;
@@ -201,6 +203,7 @@ void QueryOpenXRHostPresence(RuntimeInfo* info) {
         info->openxr_host_application_name.assign(hello.application_name, application_name_end);
         info->openxr_host_graphics_api = GraphicsApiName(hello.graphics_api);
         info->openxr_protocol_version = hello.version;
+        info->openxr_consumed_frame_sequence = static_cast<uint64_t>(presence.consumed_sequence);
         std::ostringstream adapter_luid;
         adapter_luid << std::hex << static_cast<uint32_t>(hello.adapter_luid.high_part)
                      << ':' << hello.adapter_luid.low_part;
@@ -629,6 +632,7 @@ void PopulateOpenXRHostPresence(RuntimeInfo* info) {
   info->openxr_host_graphics_api.clear();
   info->openxr_host_adapter_luid.clear();
   info->openxr_protocol_version = 0;
+  info->openxr_consumed_frame_sequence = 0;
 #if defined(_WIN32)
   QueryOpenXRHostPresence(info);
 #endif

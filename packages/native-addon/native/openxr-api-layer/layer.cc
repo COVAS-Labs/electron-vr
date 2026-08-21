@@ -40,9 +40,11 @@ namespace {
 
 using Microsoft::WRL::ComPtr;
 using electron_vr::openxr_layer::GraphicsApi;
+using electron_vr::openxr_layer::HostPresence;
 using electron_vr::openxr_layer::LayerHello;
 using electron_vr::openxr_layer::OverlaySnapshot;
 using electron_vr::openxr_layer::PlacementMode;
+using electron_vr::openxr_layer::TextureTransport;
 using electron_vr::openxr_layer::kHostPresenceMappingPrefix;
 using electron_vr::openxr_layer::kPipeName;
 using electron_vr::openxr_layer::kProtocolMagic;
@@ -88,9 +90,11 @@ struct InstanceState {
 struct ImportedSlot {
   ComPtr<ID3D11Texture2D> texture11;
   ComPtr<IDXGIKeyedMutex> keyed_mutex;
+  ComPtr<ID3D11Query> completion_query;
   ComPtr<ID3D12Resource> texture12;
   ComPtr<ID3D12Fence> fence12;
   uint64_t acknowledged_fence_value = 0;
+  uint64_t sequence = 0;
 };
 
 struct D3D12AllocatorState {
@@ -124,6 +128,7 @@ struct SessionState {
   uint64_t pending_generation = 0;
   uint64_t resource_retirement_value12 = 0;
   uint64_t consumed_sequence = 0;
+  uint64_t direct_connection_id = 0;
   uint32_t width = 0;
   uint32_t height = 0;
   DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
@@ -172,12 +177,16 @@ class PipeClient {
     Stop();
     const std::wstring host_presence_mapping_name = HostPresenceMappingName();
     host_presence_mapping_ = CreateFileMappingW(
-      INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(LayerHello), host_presence_mapping_name.c_str());
+      INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(HostPresence), host_presence_mapping_name.c_str());
     if (host_presence_mapping_ != nullptr) {
-      host_presence_ = static_cast<LayerHello*>(MapViewOfFile(
-        host_presence_mapping_, FILE_MAP_WRITE, 0, 0, sizeof(LayerHello)));
-      if (host_presence_ != nullptr) *host_presence_ = hello;
+      host_presence_ = static_cast<HostPresence*>(MapViewOfFile(
+        host_presence_mapping_, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(HostPresence)));
+      if (host_presence_ != nullptr) {
+        std::memset(host_presence_, 0, sizeof(HostPresence));
+        host_presence_->hello = hello;
+      }
     }
+    acknowledged_sequence_.store(0);
     {
       std::lock_guard<std::mutex> lock(mutex_);
       hello_ = hello;
@@ -216,6 +225,33 @@ class PipeClient {
     return snapshot_;
   }
 
+  void AcknowledgeConsumed(uint64_t connection_id, uint64_t sequence) {
+    uint64_t acknowledged = acknowledged_sequence_.load();
+    while (sequence > acknowledged &&
+           !acknowledged_sequence_.compare_exchange_weak(acknowledged, sequence)) {}
+    if (host_presence_ != nullptr && sequence >= acknowledged_sequence_.load()) {
+      InterlockedExchange64(&host_presence_->consumed_sequence, static_cast<LONG64>(sequence));
+      InterlockedExchange64(&host_presence_->acknowledged_connection_id, static_cast<LONG64>(connection_id));
+    }
+  }
+
+  void AcknowledgeOpened(uint64_t connection_id, uint32_t slot, uint64_t sequence) {
+    if (host_presence_ == nullptr || slot >= kTextureSlotCount) return;
+    InterlockedExchange64(&host_presence_->opened_sequences[slot], static_cast<LONG64>(sequence));
+    InterlockedExchange64(&host_presence_->opened_connection_id, static_cast<LONG64>(connection_id));
+  }
+
+  void BeginConnection(uint64_t connection_id) {
+    acknowledged_sequence_.store(0);
+    if (host_presence_ == nullptr) return;
+    InterlockedExchange64(&host_presence_->consumed_sequence, 0);
+    InterlockedExchange64(&host_presence_->acknowledged_connection_id, static_cast<LONG64>(connection_id));
+    for (uint32_t index = 0; index < kTextureSlotCount; ++index) {
+      InterlockedExchange64(&host_presence_->opened_sequences[index], 0);
+    }
+    InterlockedExchange64(&host_presence_->opened_connection_id, static_cast<LONG64>(connection_id));
+  }
+
  private:
   void Run() {
     while (!stop_requested_.load()) {
@@ -223,9 +259,9 @@ class PipeClient {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         continue;
       }
-      HANDLE pipe = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
-      if (pipe == INVALID_HANDLE_VALUE) continue;
-      LayerHello hello{};
+        HANDLE pipe = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (pipe == INVALID_HANDLE_VALUE) continue;
+        LayerHello hello{};
       {
         std::lock_guard<std::mutex> lock(mutex_);
         pipe_ = pipe;
@@ -261,9 +297,10 @@ class PipeClient {
   mutable std::mutex mutex_;
   std::thread thread_;
   std::atomic<bool> stop_requested_{true};
+  std::atomic<uint64_t> acknowledged_sequence_{0};
   HANDLE pipe_ = INVALID_HANDLE_VALUE;
   HANDLE host_presence_mapping_ = nullptr;
-  LayerHello* host_presence_ = nullptr;
+  HostPresence* host_presence_ = nullptr;
   LayerHello hello_{};
   OverlaySnapshot snapshot_{};
 };
@@ -354,8 +391,9 @@ void DestroyOverlayResources(SessionState& state) {
   }
   state.image_acquired = false;
   state.image_waited = false;
-  for (ImportedSlot& slot : state.imported_slots) {
-    slot.keyed_mutex.Reset();
+      for (ImportedSlot& slot : state.imported_slots) {
+        slot.completion_query.Reset();
+        slot.keyed_mutex.Reset();
     slot.texture11.Reset();
     slot.texture12.Reset();
     slot.fence12.Reset();
@@ -506,6 +544,46 @@ bool OpenImportedTextures(SessionState& state, const OverlaySnapshot& snapshot) 
   return true;
 }
 
+bool OpenDirectElectronTexture(SessionState& state, const OverlaySnapshot& snapshot) {
+  if (state.graphics_api != GraphicsApi::kD3D11 || state.device11_1 == nullptr ||
+      snapshot.latest_slot >= kTextureSlotCount || snapshot.latest_sequence == 0) {
+    return false;
+  }
+  ImportedSlot& slot = state.imported_slots[snapshot.latest_slot];
+  if (slot.sequence == snapshot.latest_sequence) {
+    return slot.texture11 != nullptr;
+  }
+
+  const HANDLE handle = reinterpret_cast<HANDLE>(
+    static_cast<uintptr_t>(snapshot.slots[snapshot.latest_slot].handle));
+  if (handle == nullptr) return false;
+  ImportedSlot imported;
+  const HRESULT open_result = state.device11_1->OpenSharedResource1(
+    handle, IID_PPV_ARGS(&imported.texture11));
+  CloseHandle(handle);
+  g_pipe_client->AcknowledgeOpened(
+    snapshot.connection_id, snapshot.latest_slot, snapshot.latest_sequence);
+  if (FAILED(open_result) || imported.texture11 == nullptr) {
+    imported.sequence = snapshot.latest_sequence;
+    slot = std::move(imported);
+    g_pipe_client->AcknowledgeConsumed(snapshot.connection_id, snapshot.latest_sequence);
+    return false;
+  }
+  D3D11_TEXTURE2D_DESC desc{};
+  imported.texture11->GetDesc(&desc);
+  if (desc.Width != snapshot.width || desc.Height != snapshot.height ||
+      desc.Format != static_cast<DXGI_FORMAT>(snapshot.dxgi_format) ||
+      desc.MipLevels != 1 || desc.ArraySize != 1 || desc.SampleDesc.Count != 1) {
+    imported.sequence = snapshot.latest_sequence;
+    slot = std::move(imported);
+    g_pipe_client->AcknowledgeConsumed(snapshot.connection_id, snapshot.latest_sequence);
+    return false;
+  }
+  imported.sequence = snapshot.latest_sequence;
+  slot = std::move(imported);
+  return true;
+}
+
 bool CreateOverlaySwapchain(SessionState& state, const OverlaySnapshot& snapshot) {
   uint32_t format_count = 0;
   const DispatchTable& dispatch = state.instance->dispatch;
@@ -561,9 +639,16 @@ bool CreateOverlaySwapchain(SessionState& state, const OverlaySnapshot& snapshot
 bool EnsureOverlayResources(SessionState& state, const OverlaySnapshot& snapshot) {
   if (!state.compatible || snapshot.width == 0 || snapshot.height == 0 || snapshot.latest_sequence == 0) return false;
   if (state.rejected_generation == snapshot.texture_generation) return false;
+  const bool direct_texture = snapshot.texture_transport == TextureTransport::kDirectElectronTexture;
+  if (direct_texture && state.direct_connection_id != snapshot.connection_id) {
+    g_pipe_client->BeginConnection(snapshot.connection_id);
+    for (ImportedSlot& slot : state.imported_slots) slot = {};
+    state.direct_connection_id = snapshot.connection_id;
+    state.consumed_sequence = 0;
+  }
   const bool changed = state.width != snapshot.width || state.height != snapshot.height ||
                        state.format != static_cast<DXGI_FORMAT>(snapshot.dxgi_format) ||
-                       state.imported_generation != snapshot.texture_generation;
+                       (!direct_texture && state.imported_generation != snapshot.texture_generation);
   if (changed) {
     if (state.image_acquired) {
       XrSwapchainImageWaitInfo wait_info{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
@@ -587,7 +672,11 @@ bool EnsureOverlayResources(SessionState& state, const OverlaySnapshot& snapshot
     }
     DestroyOverlayResources(state);
   }
-  if (!OpenImportedTextures(state, snapshot)) return false;
+  if (direct_texture) {
+    if (!OpenDirectElectronTexture(state, snapshot)) return false;
+  } else if (!OpenImportedTextures(state, snapshot)) {
+    return false;
+  }
   return state.swapchain != XR_NULL_HANDLE || CreateOverlaySwapchain(state, snapshot);
 }
 
@@ -692,7 +781,24 @@ bool CopyLatestFrame(SessionState& state, const OverlaySnapshot& snapshot) {
 
   bool copied = false;
   ImportedSlot& source = state.imported_slots[snapshot.latest_slot];
-  if (state.graphics_api == GraphicsApi::kD3D11 && source.keyed_mutex != nullptr && source.texture11 != nullptr) {
+  if (state.graphics_api == GraphicsApi::kD3D11 &&
+      snapshot.texture_transport == TextureTransport::kDirectElectronTexture && source.texture11 != nullptr) {
+    if (state.acquired_image_index < state.images11.size() && state.images11[state.acquired_image_index].texture != nullptr) {
+      if (source.completion_query == nullptr) {
+        D3D11_QUERY_DESC query_desc{};
+        query_desc.Query = D3D11_QUERY_EVENT;
+        if (FAILED(state.device11->CreateQuery(&query_desc, &source.completion_query))) {
+          source.completion_query.Reset();
+        }
+      }
+      if (source.completion_query != nullptr) {
+        state.context11->CopyResource(state.images11[state.acquired_image_index].texture, source.texture11.Get());
+        state.context11->End(source.completion_query.Get());
+        state.context11->Flush();
+        copied = true;
+      }
+    }
+  } else if (state.graphics_api == GraphicsApi::kD3D11 && source.keyed_mutex != nullptr && source.texture11 != nullptr) {
     const HRESULT mutex_result = source.keyed_mutex->AcquireSync(1, kMutexWaitTimeoutMs);
     if (mutex_result == S_OK) {
       if (state.acquired_image_index < state.images11.size() && state.images11[state.acquired_image_index].texture != nullptr) {
@@ -709,8 +815,26 @@ bool CopyLatestFrame(SessionState& state, const OverlaySnapshot& snapshot) {
   const XrResult release_result = dispatch.ReleaseSwapchainImage(state.swapchain, &release_info);
   state.image_acquired = false;
   state.image_waited = false;
-  if (copied && XR_SUCCEEDED(release_result)) state.consumed_sequence = snapshot.latest_sequence;
+  if (copied && XR_SUCCEEDED(release_result)) {
+    state.consumed_sequence = snapshot.latest_sequence;
+  }
   return copied && XR_SUCCEEDED(release_result);
+}
+
+void PollDirectTextureCompletions(SessionState& state) {
+  uint64_t completed_sequence = 0;
+  for (ImportedSlot& slot : state.imported_slots) {
+    if (slot.completion_query == nullptr || slot.sequence == 0) continue;
+    const HRESULT result = state.context11->GetData(
+      slot.completion_query.Get(), nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+    if (result == S_OK) {
+      completed_sequence = std::max(completed_sequence, slot.sequence);
+      slot.completion_query.Reset();
+    }
+  }
+  if (completed_sequence > 0) {
+    g_pipe_client->AcknowledgeConsumed(state.direct_connection_id, completed_sequence);
+  }
 }
 
 bool IsFinitePose(const OverlaySnapshot& snapshot) {
@@ -897,6 +1021,7 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* frame
     const auto state = FindSession(session);
     if (state == nullptr) return XR_ERROR_HANDLE_INVALID;
     const auto forward_original = [&] { return state->instance->dispatch.EndFrame(session, frame_end_info); };
+    if (state->graphics_api == GraphicsApi::kD3D11) PollDirectTextureCompletions(*state);
     if (frame_end_info == nullptr || frame_end_info->type != XR_TYPE_FRAME_END_INFO ||
         (frame_end_info->layerCount > 0 && frame_end_info->layers == nullptr) ||
         frame_end_info->layerCount == UINT32_MAX ||

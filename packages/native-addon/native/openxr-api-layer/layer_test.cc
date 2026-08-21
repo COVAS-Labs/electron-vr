@@ -281,11 +281,11 @@ int wmain() {
   HANDLE host_mapping = OpenFileMappingW(
     FILE_MAP_READ, FALSE, host_mapping_name.c_str());
   passed &= Expect(host_mapping != nullptr, "compatible session publishes host presence");
-  const auto* host = host_mapping == nullptr ? nullptr : static_cast<const electron_vr::openxr_layer::LayerHello*>(
-    MapViewOfFile(host_mapping, FILE_MAP_READ, 0, 0, sizeof(electron_vr::openxr_layer::LayerHello)));
-  passed &= Expect(host != nullptr && host->process_id == GetCurrentProcessId() &&
-    host->graphics_api == electron_vr::openxr_layer::GraphicsApi::kD3D12 &&
-    std::strcmp(host->application_name, "electron-vr-ci") == 0,
+  const auto* host = host_mapping == nullptr ? nullptr : static_cast<const electron_vr::openxr_layer::HostPresence*>(
+    MapViewOfFile(host_mapping, FILE_MAP_READ, 0, 0, sizeof(electron_vr::openxr_layer::HostPresence)));
+  passed &= Expect(host != nullptr && host->hello.process_id == GetCurrentProcessId() &&
+    host->hello.graphics_api == electron_vr::openxr_layer::GraphicsApi::kD3D12 &&
+    std::strcmp(host->hello.application_name, "electron-vr-ci") == 0,
     "host presence identifies the OpenXR application and graphics API");
   if (host != nullptr) UnmapViewOfFile(host);
   if (host_mapping != nullptr) CloseHandle(host_mapping);
