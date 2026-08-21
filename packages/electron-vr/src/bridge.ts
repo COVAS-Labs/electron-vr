@@ -143,6 +143,20 @@ interface VrBridgeAddon {
   shutdownVR(): void;
   isInitialized(): boolean;
   getLastError(): string | null;
+  getOpenXRApiLayerStatus?(sourceDirectory: string): NativeOpenXRApiLayerStatus;
+  installOpenXRApiLayer?(sourceDirectory: string): NativeOpenXRApiLayerStatus;
+  enableOpenXRApiLayer?(sourceDirectory: string): NativeOpenXRApiLayerStatus;
+  disableOpenXRApiLayer?(sourceDirectory: string): NativeOpenXRApiLayerStatus;
+  uninstallOpenXRApiLayer?(sourceDirectory: string): NativeOpenXRApiLayerStatus;
+}
+
+export interface NativeOpenXRApiLayerStatus {
+  installed: boolean;
+  enabled: boolean;
+  registered: boolean;
+  requiresUpdate: boolean;
+  manifestPath: string;
+  scope: string;
 }
 
 let cachedAddon: VrBridgeAddon | null = null;
@@ -260,6 +274,24 @@ function loadVrBridgeAddon(): VrBridgeAddon {
       }
     }
   }
+}
+
+export function runNativeOpenXRApiLayerCommand(
+  command: "status" | "install" | "enable" | "disable" | "uninstall",
+  sourceDirectory: string
+): NativeOpenXRApiLayerStatus {
+  const addon = loadVrBridgeAddon();
+  const method = command === "status"
+    ? addon.getOpenXRApiLayerStatus
+    : command === "install"
+      ? addon.installOpenXRApiLayer
+      : command === "enable"
+        ? addon.enableOpenXRApiLayer
+        : command === "disable"
+          ? addon.disableOpenXRApiLayer
+          : addon.uninstallOpenXRApiLayer;
+  if (!method) throw new Error("The native OpenXR API-layer management API is unavailable.");
+  return method.call(addon, sourceDirectory);
 }
 
 function sanitizeRuntimeInfo(runtimeInfo: RuntimeInfo): RuntimeInfo {

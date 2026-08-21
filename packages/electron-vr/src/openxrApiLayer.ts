@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runNativeOpenXRApiLayerCommand } from "./bridge.js";
 
 export interface OpenXRApiLayerStatus {
   installed: boolean;
@@ -44,6 +45,23 @@ function resolvePrebuiltCli(): string | null {
     }
   }
   return null;
+}
+
+function resolveWindowsLayerAssets(): string {
+  const currentDir = dirname(fileURLToPath(import.meta.url));
+  const repositoryAssets = resolve(currentDir, "..", "..", "native-addon", "build", "Release");
+  if (existsSync(resolve(repositoryAssets, "electron_vr_openxr_layer.dll"))) return repositoryAssets;
+
+  const requires = [createRequire(import.meta.url), createRequire(resolve(process.cwd(), "package.json"))];
+  for (const require of requires) {
+    try {
+      const directory = dirname(require.resolve(PREBUILT_PACKAGES.win32));
+      if (existsSync(resolve(directory, "electron_vr_openxr_layer.dll"))) return directory;
+    } catch {
+      // Try the next package resolution context.
+    }
+  }
+  throw new Error("The Windows OpenXR API-layer assets are unavailable.");
 }
 
 function resolveCli(): string {
@@ -112,10 +130,16 @@ export function parseOpenXRApiLayerStatus(output: string): OpenXRApiLayerStatus 
 }
 
 export async function getOpenXRApiLayerStatus(): Promise<OpenXRApiLayerStatus> {
+  if (process.platform === "win32") {
+    return runNativeOpenXRApiLayerCommand("status", resolveWindowsLayerAssets());
+  }
   return parseOpenXRApiLayerStatus(await runCommand("status"));
 }
 
 async function runLifecycleCommand(command: Exclude<OpenXRApiLayerCommand, "status">): Promise<OpenXRApiLayerStatus> {
+  if (process.platform === "win32") {
+    return runNativeOpenXRApiLayerCommand(command, resolveWindowsLayerAssets());
+  }
   await runCommand(command);
   return getOpenXRApiLayerStatus();
 }

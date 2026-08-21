@@ -6,6 +6,9 @@
 #include <napi.h>
 
 #include "bridge.h"
+#if defined(_WIN32)
+#include "openxr_registration.h"
+#endif
 
 namespace vrbridge {
 
@@ -405,6 +408,57 @@ Napi::Value GetLastErrorWrapped(const Napi::CallbackInfo& info) {
   return Napi::String::New(info.Env(), last_error);
 }
 
+#if defined(_WIN32)
+std::string ReadSourceDirectory(const Napi::CallbackInfo& info) {
+  if (info.Length() != 1 || !info[0].IsString()) {
+    throw Napi::TypeError::New(info.Env(), "OpenXR API-layer operation expects its asset directory.");
+  }
+  return info[0].As<Napi::String>().Utf8Value();
+}
+
+Napi::Object OpenXRStatusToObject(Napi::Env env, const OpenXRApiLayerStatus& status) {
+  Napi::Object result = Napi::Object::New(env);
+  result.Set("installed", status.installed);
+  result.Set("enabled", status.enabled);
+  result.Set("registered", status.registered);
+  result.Set("requiresUpdate", status.requires_update);
+  result.Set("manifestPath", status.manifest_path);
+  result.Set("scope", status.scope);
+  return result;
+}
+
+Napi::Value GetOpenXRApiLayerStatusWrapped(const Napi::CallbackInfo& info) {
+  return OpenXRStatusToObject(info.Env(), GetOpenXRApiLayerStatus(ReadSourceDirectory(info)));
+}
+
+Napi::Value InstallOpenXRApiLayerWrapped(const Napi::CallbackInfo& info) {
+  std::string error;
+  if (!InstallOpenXRApiLayer(ReadSourceDirectory(info), &error)) throw Napi::Error::New(info.Env(), error);
+  return OpenXRStatusToObject(info.Env(), GetOpenXRApiLayerStatus(ReadSourceDirectory(info)));
+}
+
+Napi::Value EnableOpenXRApiLayerWrapped(const Napi::CallbackInfo& info) {
+  const std::string source = ReadSourceDirectory(info);
+  std::string error;
+  if (!SetOpenXRApiLayerEnabled(true, &error)) throw Napi::Error::New(info.Env(), error);
+  return OpenXRStatusToObject(info.Env(), GetOpenXRApiLayerStatus(source));
+}
+
+Napi::Value DisableOpenXRApiLayerWrapped(const Napi::CallbackInfo& info) {
+  const std::string source = ReadSourceDirectory(info);
+  std::string error;
+  if (!SetOpenXRApiLayerEnabled(false, &error)) throw Napi::Error::New(info.Env(), error);
+  return OpenXRStatusToObject(info.Env(), GetOpenXRApiLayerStatus(source));
+}
+
+Napi::Value UninstallOpenXRApiLayerWrapped(const Napi::CallbackInfo& info) {
+  const std::string source = ReadSourceDirectory(info);
+  std::string error;
+  if (!UninstallOpenXRApiLayer(&error)) throw Napi::Error::New(info.Env(), error);
+  return OpenXRStatusToObject(info.Env(), GetOpenXRApiLayerStatus(source));
+}
+#endif
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("getRuntimeInfo", Napi::Function::New(env, GetRuntimeInfoWrapped));
   exports.Set("initializeVR", Napi::Function::New(env, InitializeVRWrapped));
@@ -417,6 +471,13 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("shutdownVR", Napi::Function::New(env, ShutdownVRWrapped));
   exports.Set("isInitialized", Napi::Function::New(env, IsInitializedWrapped));
   exports.Set("getLastError", Napi::Function::New(env, GetLastErrorWrapped));
+#if defined(_WIN32)
+  exports.Set("getOpenXRApiLayerStatus", Napi::Function::New(env, GetOpenXRApiLayerStatusWrapped));
+  exports.Set("installOpenXRApiLayer", Napi::Function::New(env, InstallOpenXRApiLayerWrapped));
+  exports.Set("enableOpenXRApiLayer", Napi::Function::New(env, EnableOpenXRApiLayerWrapped));
+  exports.Set("disableOpenXRApiLayer", Napi::Function::New(env, DisableOpenXRApiLayerWrapped));
+  exports.Set("uninstallOpenXRApiLayer", Napi::Function::New(env, UninstallOpenXRApiLayerWrapped));
+#endif
   return exports;
 }
 

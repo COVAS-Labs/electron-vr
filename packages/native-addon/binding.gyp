@@ -72,6 +72,7 @@
             "include_dirs": [
               "<(openxr_sdk_dir)/include"
             ],
+            "sources": ["native/src/openxr_registration.cc"],
             "defines": [
               "NOMINMAX",
               "WIN32_LEAN_AND_MEAN"
@@ -79,7 +80,8 @@
             "libraries": [
               "<(openvr_sdk_dir)/lib/win64/openvr_api.lib",
               "d3d11.lib",
-              "dxgi.lib"
+              "dxgi.lib",
+              "advapi32.lib"
             ],
             "msvs_settings": {
               "VCCLCompilerTool": {
