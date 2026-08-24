@@ -155,6 +155,10 @@ test("runtime probe exposes OpenVR runtime installation details", async () => {
     assert.match(combinedOutput, /openxrApiLayerEnabled/i);
     assert.match(combinedOutput, /openxrCompanionConnected/i);
     assert.match(combinedOutput, /openxrProtocolVersion/i);
+    assert.match(combinedOutput, /libovrHostDetected/i);
+    assert.match(combinedOutput, /libovrHostProcessId/i);
+    assert.match(combinedOutput, /libovrHostApplicationName/i);
+    assert.match(combinedOutput, /libovrHostBinaryPath/i);
     assert.match(combinedOutput, /openvrAvailable/i);
     assert.match(combinedOutput, /openvrRuntimeInstalled/i);
     assert.match(combinedOutput, /openvrRuntimePath/i);

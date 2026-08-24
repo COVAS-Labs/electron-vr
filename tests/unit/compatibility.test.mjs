@@ -31,6 +31,10 @@ function runtime(overrides = {}) {
     openxrHostGraphicsApi: "",
     openxrHostAdapterLuid: "",
     openxrProtocolVersion: 0,
+    libovrHostDetected: false,
+    libovrHostProcessId: 0,
+    libovrHostApplicationName: "",
+    libovrHostBinaryPath: "",
     openvrAvailable: false,
     openvrRuntimeInstalled: false,
     openvrRuntimePath: "",
@@ -153,6 +157,27 @@ test("compatibility report distinguishes waiting and connected API-layer hosts",
   assert.equal(connected.launch.verdict, "works-now");
   assert.match(connected.summary, /hello_xr/);
   assert.equal(connected.features.curvature, "unsupported");
+});
+
+test("compatibility report rejects a detected native LibOVR host", () => {
+  const report = analyzeVRCompatibility(runtime({
+    selectedBackend: "openxr",
+    openxrMode: "api-layer",
+    openxrApiLayerInstalled: true,
+    openxrApiLayerEnabled: true,
+    libovrHostDetected: true,
+    libovrHostProcessId: 1234,
+    libovrHostApplicationName: "EliteDangerous64.exe",
+    libovrHostBinaryPath: "C:\\Games\\EliteDangerous64.exe"
+  }), { architecture: "x64" });
+  assert.equal(report.readiness, "unavailable");
+  assert.equal(report.launch.verdict, "incompatible");
+  assert.equal(report.launch.wouldWorkNow, false);
+  assert.equal(report.launch.canStartNow, false);
+  assert.deepEqual(report.launch.requiredActions, ["use-supported-openxr-host"]);
+  assert.equal(report.recommendedAction, "use-supported-openxr-host");
+  assert.equal(report.issues[0].code, "libovr-host-unsupported");
+  assert.match(report.summary, /EliteDangerous64\.exe.*LibOVR/);
 });
 
 test("compatibility report treats OpenVR as ready with optional OpenXR setup", () => {

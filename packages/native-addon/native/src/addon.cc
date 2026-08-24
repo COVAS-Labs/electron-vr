@@ -289,6 +289,10 @@ Napi::Object RuntimeInfoToObject(Napi::Env env, const RuntimeInfo& info) {
   result.Set("openxrProtocolVersion", info.openxr_protocol_version);
   result.Set("openxrSubmittedFrameSequence", Napi::Number::New(env, static_cast<double>(info.openxr_submitted_frame_sequence)));
   result.Set("openxrConsumedFrameSequence", Napi::Number::New(env, static_cast<double>(info.openxr_consumed_frame_sequence)));
+  result.Set("libovrHostDetected", info.libovr_host_detected);
+  result.Set("libovrHostProcessId", info.libovr_host_process_id);
+  result.Set("libovrHostApplicationName", info.libovr_host_application_name);
+  result.Set("libovrHostBinaryPath", info.libovr_host_binary_path);
   result.Set("openvrAvailable", info.openvr_available);
   result.Set("openvrRuntimeInstalled", info.openvr_runtime_installed);
   result.Set("openvrRuntimePath", info.openvr_runtime_path);

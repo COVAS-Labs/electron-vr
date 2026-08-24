@@ -161,6 +161,70 @@ bool IsOpenCompositeOpenVRRuntime(const RuntimeInfo& info) {
   return ToLowerAscii(info.openvr_runtime_path).find("opencomposite") != std::string::npos;
 }
 
+std::string WideToUtf8(const std::wstring& value) {
+  if (value.empty()) return {};
+  const int size = WideCharToMultiByte(
+    CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+  if (size <= 0) return {};
+  std::string result(static_cast<size_t>(size), '\0');
+  WideCharToMultiByte(
+    CP_UTF8, 0, value.data(), static_cast<int>(value.size()), result.data(), size, nullptr, nullptr);
+  return result;
+}
+
+std::string ProcessBinaryPath(DWORD process_id) {
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+  if (process == nullptr) return {};
+  std::vector<wchar_t> buffer(32768, L'\0');
+  DWORD size = static_cast<DWORD>(buffer.size());
+  const bool queried = QueryFullProcessImageNameW(process, 0, buffer.data(), &size) != FALSE;
+  CloseHandle(process);
+  return queried ? WideToUtf8(std::wstring(buffer.data(), size)) : std::string();
+}
+
+bool ProcessLoadsLibOVR(DWORD process_id) {
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, process_id);
+  if (snapshot == INVALID_HANDLE_VALUE) return false;
+  MODULEENTRY32W module{};
+  module.dwSize = sizeof(module);
+  BOOL has_module = Module32FirstW(snapshot, &module);
+  bool found = false;
+  while (has_module) {
+    const std::string module_name = ToLowerAscii(WideToUtf8(module.szModule));
+    if (module_name == "libovrrt64_1.dll" || module_name == "libovrrt32_1.dll" ||
+        module_name == "libovrrt_1.dll") {
+      found = true;
+      break;
+    }
+    has_module = Module32NextW(snapshot, &module);
+  }
+  CloseHandle(snapshot);
+  return found;
+}
+
+void QueryLibOVRHost(RuntimeInfo* info) {
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) return;
+  PROCESSENTRY32W process{};
+  process.dwSize = sizeof(process);
+  BOOL has_process = Process32FirstW(snapshot, &process);
+  while (has_process) {
+    if (ProcessLoadsLibOVR(process.th32ProcessID)) {
+      const std::string binary_path = ProcessBinaryPath(process.th32ProcessID);
+      if (ToLowerAscii(binary_path).find("\\oculus\\support\\") == std::string::npos) {
+        info->libovr_host_detected = true;
+        info->libovr_host_process_id = process.th32ProcessID;
+        info->libovr_host_application_name = WideToUtf8(process.szExeFile);
+        info->libovr_host_binary_path = binary_path;
+        AppendProbeMode(info, "libovr-host-detected");
+        break;
+      }
+    }
+    has_process = Process32NextW(snapshot, &process);
+  }
+  CloseHandle(snapshot);
+}
+
 const char* GraphicsApiName(electron_vr::openxr_layer::GraphicsApi graphics_api) {
   using electron_vr::openxr_layer::GraphicsApi;
   switch (graphics_api) {
@@ -789,6 +853,7 @@ RuntimeInfo ProbeRuntime() {
   if (info.selected_backend == BackendKind::kOpenXR && info.openxr_mode == OpenXRMode::kApiLayer) {
     PopulateOpenXRHostPresence(&info);
   }
+  QueryLibOVRHost(&info);
 #elif defined(__APPLE__)
   if (info.openxr_available && !QueryOpenXRExtensions(&info)) {
     info.openxr_available = false;

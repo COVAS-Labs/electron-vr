@@ -36,6 +36,10 @@ export interface RuntimeInfo {
   openxrProtocolVersion: number;
   openxrSubmittedFrameSequence: number;
   openxrConsumedFrameSequence: number;
+  libovrHostDetected: boolean;
+  libovrHostProcessId: number;
+  libovrHostApplicationName: string;
+  libovrHostBinaryPath: string;
   openvrAvailable: boolean;
   openvrRuntimeInstalled: boolean;
   openvrRuntimePath: string;
@@ -313,6 +317,10 @@ function sanitizeRuntimeInfo(runtimeInfo: RuntimeInfo): RuntimeInfo {
     openxrProtocolVersion: runtimeInfo.openxrProtocolVersion ?? 0,
     openxrSubmittedFrameSequence: runtimeInfo.openxrSubmittedFrameSequence ?? 0,
     openxrConsumedFrameSequence: runtimeInfo.openxrConsumedFrameSequence ?? 0,
+    libovrHostDetected: runtimeInfo.libovrHostDetected ?? false,
+    libovrHostProcessId: runtimeInfo.libovrHostProcessId ?? 0,
+    libovrHostApplicationName: runtimeInfo.libovrHostApplicationName ?? "",
+    libovrHostBinaryPath: runtimeInfo.libovrHostBinaryPath ?? "",
     openvrSceneApplicationState: runtimeInfo.openvrSceneApplicationState ?? "",
     openvrSceneProcessId: runtimeInfo.openvrSceneProcessId ?? 0,
     openvrSceneApplicationKey: runtimeInfo.openvrSceneApplicationKey ?? "",

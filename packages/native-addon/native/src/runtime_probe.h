@@ -47,6 +47,10 @@ struct RuntimeInfo {
   uint32_t openxr_protocol_version = 0;
   uint64_t openxr_submitted_frame_sequence = 0;
   uint64_t openxr_consumed_frame_sequence = 0;
+  bool libovr_host_detected = false;
+  uint32_t libovr_host_process_id = 0;
+  std::string libovr_host_application_name;
+  std::string libovr_host_binary_path;
   bool openvr_available = false;
   bool openvr_runtime_installed = false;
   std::string openvr_runtime_path;

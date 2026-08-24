@@ -128,8 +128,25 @@ export function analyzeVRCompatibility(
   let compatibleHostGraphicsApis: string[] = [];
   let requiresApiLayer = false;
   let recommendedAction: VRSetupAction = "none";
+  const supportedHostDetected = runtime.openxrCompanionConnected || runtime.openxrHostDetected ||
+    runtime.openvrSceneProcessId !== 0;
+  const unsupportedLibOVRHost = runtime.libovrHostDetected && !supportedHostDetected &&
+    runtime.openxrMode !== "overlay-session";
 
-  if (runtime.selectedBackend === "openxr" && runtime.openxrMode === "overlay-session") {
+  if (unsupportedLibOVRHost) {
+    const applicationName = runtime.libovrHostApplicationName || "A VR application";
+    readiness = "unavailable";
+    backendLabel = "Unsupported native Oculus application";
+    summary = `${applicationName} is using native Oculus/LibOVR, which electron-vr cannot overlay.`;
+    recommendedAction = "use-supported-openxr-host";
+    issues.push(issue(
+      "libovr-host-unsupported",
+      "error",
+      "Native Oculus application detected",
+      "Relaunch the application through OpenXR or a supported OpenVR runtime. Native LibOVR applications do not expose a cross-application overlay API.",
+      "use-supported-openxr-host"
+    ));
+  } else if (runtime.selectedBackend === "openxr" && runtime.openxrMode === "overlay-session") {
     readiness = "ready";
     backendLabel = "OpenXR direct overlay";
     summary = "The active OpenXR runtime supports a direct overlay session.";
@@ -265,7 +282,16 @@ export function analyzeVRCompatibility(
   const canRenderOverlay = readiness === "ready" || readiness === "waiting-for-host" ||
     (readiness === "fallback-only" && runtime.platform === "linux" && runtime.selectedBackend === "mock");
   let launch: VRLaunchAssessment;
-  if (readiness === "ready" && (runtime.selectedBackend === "openxr" || runtime.selectedBackend === "openvr")) {
+  if (unsupportedLibOVRHost) {
+    launch = {
+      verdict: "incompatible",
+      wouldWorkNow: false,
+      canStartNow: false,
+      fundamentalIncompatibility: true,
+      message: "The running VR application uses native Oculus/LibOVR and cannot host an electron-vr overlay.",
+      requiredActions: ["use-supported-openxr-host"]
+    };
+  } else if (readiness === "ready" && (runtime.selectedBackend === "openxr" || runtime.selectedBackend === "openvr")) {
     launch = {
       verdict: "works-now",
       wouldWorkNow: true,
