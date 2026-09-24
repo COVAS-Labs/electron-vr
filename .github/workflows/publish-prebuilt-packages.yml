@@ -350,6 +350,26 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Download Windows OpenXR layer
+        uses: actions/download-artifact@v7
+        with:
+          name: prebuilt-win32-x64
+          path: artifacts/release/openxr-layer
+
+      - name: Package Windows OpenXR layer
+        shell: bash
+        run: |
+          archive="$RUNNER_TEMP/electron-vr-openxr-layer-win32-x64.zip"
+          checksum="$archive.sha256"
+          cd artifacts/release/openxr-layer
+          zip -9 -j "$archive" \
+            electron_vr_openxr_layer_cli.exe \
+            electron_vr_openxr_layer.dll \
+            electron_vr_openxr_layer.json \
+            protocol.json
+          cd "$RUNNER_TEMP"
+          sha256sum "$(basename "$archive")" > "$(basename "$checksum")"
+
       - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -366,3 +386,15 @@ jobs:
               --title "$RELEASE_TAG" \
               --notes "Stable release for $RELEASE_TAG."
           fi
+
+      - name: Upload Windows OpenXR layer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.release_tag }}
+        shell: bash
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            "$RUNNER_TEMP/electron-vr-openxr-layer-win32-x64.zip" \
+            "$RUNNER_TEMP/electron-vr-openxr-layer-win32-x64.zip.sha256" \
+            tools/install-openxr-layer.ps1 \
+            --clobber

@@ -111,14 +111,24 @@ The packaged Windows and Linux builds bundle the OpenVR runtime library they nee
 
 Windows x64 packages include an implicit OpenXR API layer for D3D11 and D3D12 applications. Installation is explicit; `npm install` never changes global OpenXR registration.
 
-For a packaged consumer application:
+Users without Node.js can install the latest release from a normal, non-administrator PowerShell window:
 
 ```powershell
-npx electron-vr-openxr-layer install
-npx electron-vr-openxr-layer status
-npx electron-vr-openxr-layer disable
-npx electron-vr-openxr-layer enable
-npx electron-vr-openxr-layer uninstall
+$installer = Join-Path $env:TEMP "install-openxr-layer.ps1"
+Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/COVAS-Labs/electron-vr/releases/latest/download/install-openxr-layer.ps1" -OutFile $installer
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
+```
+
+The script downloads the standalone Windows release asset, verifies its published SHA-256 checksum, installs it for the current user, and prints its status. Restart running OpenXR applications afterward.
+
+For a packaged consumer application that already has Node.js and the platform package installed:
+
+```powershell
+npx --no-install electron-vr-openxr-layer install
+npx --no-install electron-vr-openxr-layer status
+npx --no-install electron-vr-openxr-layer disable
+npx --no-install electron-vr-openxr-layer enable
+npx --no-install electron-vr-openxr-layer uninstall
 ```
 
 From this repository, use `npm run openxr-layer -- <command>` after `npm run rebuild:electron`.

@@ -1,13 +1,35 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { parseOpenXRApiLayerStatus } from "../../packages/electron-vr/dist/openxrApiLayer.js";
+import {
+  parseOpenXRApiLayerStatus,
+  resolveWindowsLayerAssetDirectory
+} from "../../packages/electron-vr/dist/openxrApiLayer.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const layerDirectory = resolve(root, "packages", "native-addon", "native", "openxr-api-layer");
+
+test("Windows API-layer assets resolve from app.asar.unpacked", async () => {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "electron-vr-asar-"));
+  try {
+    const virtualDirectory = join(temporaryDirectory, "resources", "app.asar", "node_modules", "prebuilt");
+    const unpackedDirectory = join(temporaryDirectory, "resources", "app.asar.unpacked", "node_modules", "prebuilt");
+    await mkdir(unpackedDirectory, { recursive: true });
+    await Promise.all([
+      writeFile(join(unpackedDirectory, "electron_vr_openxr_layer.dll"), "dll"),
+      writeFile(join(unpackedDirectory, "electron_vr_openxr_layer.json"), "{}"),
+      writeFile(join(unpackedDirectory, "protocol.json"), "{}")
+    ]);
+
+    assert.equal(resolveWindowsLayerAssetDirectory(virtualDirectory), unpackedDirectory);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
 
 test("implicit API-layer manifest has a recovery switch and matching name", async () => {
   const manifest = JSON.parse(await readFile(resolve(layerDirectory, "electron_vr_openxr_layer.json"), "utf8"));

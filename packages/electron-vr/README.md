@@ -80,11 +80,12 @@ The Linux layer supports Vulkan and desktop OpenGL Xlib sessions with one single
 On Windows x64, selection prefers a direct `XR_EXTX_overlay` session, then an installed implicit API layer for D3D11 or D3D12 hosts, then OpenVR, then mock. API-layer installation is explicit:
 
 ```powershell
-npx electron-vr-openxr-layer install
-npx electron-vr-openxr-layer status
+$installer = Join-Path $env:TEMP "install-openxr-layer.ps1"
+Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/COVAS-Labs/electron-vr/releases/latest/download/install-openxr-layer.ps1" -OutFile $installer
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
 
-Use the same command with `enable`, `disable`, or `uninstall`. `npm install` does not register the layer. `ELECTRON_VR_DISABLE_OPENXR_API_LAYER=1` disables it for a process. The API layer supports one flat quad for D3D11 and D3D12 hosts; elevated applications and positive curvature are not yet supported.
+This Node-free installer downloads the latest standalone Windows release asset, verifies its SHA-256 checksum, installs it for the current user, and prints its status. Applications with the platform package installed can instead run `npx --no-install electron-vr-openxr-layer <install|status|enable|disable|uninstall>`. `npm install` does not register the layer. `ELECTRON_VR_DISABLE_OPENXR_API_LAYER=1` disables it for a process. The API layer supports one flat quad for D3D11 and D3D12 hosts; elevated applications and positive curvature are not yet supported.
 
 Set `ELECTRON_VR_DISABLE_OPENVR=1` to prevent the OpenVR/SteamVR fallback while diagnosing OpenXR. When no usable OpenXR overlay path is available, the bridge selects `mock` and includes `openvr-disabled-by-env` in `probeMode`.
 

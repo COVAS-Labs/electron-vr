@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runNativeOpenXRApiLayerCommand } from "./bridge.js";
 
@@ -20,6 +20,25 @@ const PREBUILT_PACKAGES = {
   linux: "@covas-labs/electron-vr-prebuilt-linux-x64",
   win32: "@covas-labs/electron-vr-prebuilt-win32-x64"
 } as const;
+
+const WINDOWS_LAYER_ASSETS = [
+  "electron_vr_openxr_layer.dll",
+  "electron_vr_openxr_layer.json",
+  "protocol.json"
+] as const;
+
+function hasWindowsLayerAssets(directory: string): boolean {
+  return WINDOWS_LAYER_ASSETS.every((asset) => existsSync(resolve(directory, asset)));
+}
+
+export function resolveWindowsLayerAssetDirectory(directory: string): string | null {
+  const asarSegment = `${sep}app.asar${sep}`;
+  if (directory.includes(asarSegment)) {
+    const unpackedDirectory = directory.replace(asarSegment, `${sep}app.asar.unpacked${sep}`);
+    if (hasWindowsLayerAssets(unpackedDirectory)) return unpackedDirectory;
+  }
+  return hasWindowsLayerAssets(directory) ? directory : null;
+}
 
 function assertSupportedPlatform(): void {
   if ((process.platform !== "linux" && process.platform !== "win32") || process.arch !== "x64") {
@@ -50,13 +69,15 @@ function resolvePrebuiltCli(): string | null {
 function resolveWindowsLayerAssets(): string {
   const currentDir = dirname(fileURLToPath(import.meta.url));
   const repositoryAssets = resolve(currentDir, "..", "..", "native-addon", "build", "Release");
-  if (existsSync(resolve(repositoryAssets, "electron_vr_openxr_layer.dll"))) return repositoryAssets;
+  const resolvedRepositoryAssets = resolveWindowsLayerAssetDirectory(repositoryAssets);
+  if (resolvedRepositoryAssets) return resolvedRepositoryAssets;
 
   const requires = [createRequire(import.meta.url), createRequire(resolve(process.cwd(), "package.json"))];
   for (const require of requires) {
     try {
       const directory = dirname(require.resolve(PREBUILT_PACKAGES.win32));
-      if (existsSync(resolve(directory, "electron_vr_openxr_layer.dll"))) return directory;
+      const resolvedDirectory = resolveWindowsLayerAssetDirectory(directory);
+      if (resolvedDirectory) return resolvedDirectory;
     } catch {
       // Try the next package resolution context.
     }
