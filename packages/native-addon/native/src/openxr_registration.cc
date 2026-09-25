@@ -59,6 +59,28 @@ bool FilesMatch(const std::filesystem::path& first, const std::filesystem::path&
   return ReadFile(first) == ReadFile(second);
 }
 
+bool ClearReadOnly(const std::filesystem::path& path, std::error_code& error) {
+  const DWORD attributes = GetFileAttributesW(path.c_str());
+  if (attributes == INVALID_FILE_ATTRIBUTES) {
+    if (GetLastError() == ERROR_FILE_NOT_FOUND) return true;
+    error = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+    return false;
+  }
+  if ((attributes & FILE_ATTRIBUTE_READONLY) == 0) return true;
+  if (SetFileAttributesW(path.c_str(), attributes & ~FILE_ATTRIBUTE_READONLY) != 0) return true;
+  error = std::error_code(static_cast<int>(GetLastError()), std::system_category());
+  return false;
+}
+
+bool CopyFileIfChanged(const std::filesystem::path& source, const std::filesystem::path& target, std::error_code& error) {
+  error.clear();
+  if (FilesMatch(source, target)) return ClearReadOnly(target, error);
+  if (!ClearReadOnly(target, error)) return false;
+  std::filesystem::copy_file(source, target, std::filesystem::copy_options::overwrite_existing, error);
+  if (error) return false;
+  return ClearReadOnly(target, error);
+}
+
 std::string VersionedDllName(const std::filesystem::path& source) {
   std::ifstream stream(source, std::ios::binary);
   uint64_t hash = 14695981039346656037ull;
@@ -108,7 +130,7 @@ OpenXRApiLayerStatus GetOpenXRApiLayerStatus(const std::string& source_directory
   status.registered = ReadRegistration(&value);
   status.enabled = status.registered && value == 0;
   status.manifest_path = ManifestPath().string();
-  const std::filesystem::path source(source_directory);
+  const std::filesystem::path source = std::filesystem::u8path(source_directory);
   const std::string installed_name = ManifestLibraryName();
   const std::filesystem::path installed_dll = InstallDirectory() / installed_name;
   status.installed = std::filesystem::exists(ManifestPath()) && !installed_name.empty() && std::filesystem::exists(installed_dll);
@@ -119,19 +141,35 @@ OpenXRApiLayerStatus GetOpenXRApiLayerStatus(const std::string& source_directory
 }
 
 bool InstallOpenXRApiLayer(const std::string& source_directory, std::string* error) {
-  const std::filesystem::path source(source_directory);
+  const std::filesystem::path source = std::filesystem::u8path(source_directory);
   const std::filesystem::path target = InstallDirectory();
-  std::error_code filesystem_error;
-  std::filesystem::create_directories(target, filesystem_error);
-  const std::string dll_name = VersionedDllName(source / kDllName);
-  std::filesystem::copy_file(source / kDllName, target / dll_name, std::filesystem::copy_options::overwrite_existing, filesystem_error);
-  if (filesystem_error || !WriteManifest(source / kManifestName, dll_name)) {
-    SetError(error, "Failed to copy the OpenXR API-layer assets.");
+  if (target.empty()) {
+    SetError(error, "Failed to locate the current user's local application-data directory.");
     return false;
   }
-  std::filesystem::copy_file(source / kProtocolName, target / kProtocolName, std::filesystem::copy_options::overwrite_existing, filesystem_error);
-  if (filesystem_error || !SetRegistration(0)) {
-    SetError(error, "Failed to register the OpenXR API layer.");
+  std::error_code filesystem_error;
+  std::filesystem::create_directories(target, filesystem_error);
+  if (filesystem_error) {
+    SetError(error, "Failed to create the OpenXR API-layer directory: " + filesystem_error.message());
+    return false;
+  }
+  const std::string dll_name = VersionedDllName(source / kDllName);
+  const std::filesystem::path source_dll = source / kDllName;
+  const std::filesystem::path target_dll = target / dll_name;
+  if (!CopyFileIfChanged(source_dll, target_dll, filesystem_error)) {
+    SetError(error, "Failed to copy the OpenXR API-layer DLL: " + filesystem_error.message());
+    return false;
+  }
+  if (!WriteManifest(source / kManifestName, dll_name)) {
+    SetError(error, "Failed to write the OpenXR API-layer manifest.");
+    return false;
+  }
+  if (!CopyFileIfChanged(source / kProtocolName, target / kProtocolName, filesystem_error)) {
+    SetError(error, "Failed to copy the OpenXR API-layer protocol: " + filesystem_error.message());
+    return false;
+  }
+  if (!SetRegistration(0)) {
+    SetError(error, "Failed to register the OpenXR API layer for the current user.");
     return false;
   }
   if (error) error->clear();
