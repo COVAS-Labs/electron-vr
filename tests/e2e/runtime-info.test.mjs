@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -168,6 +169,40 @@ test("runtime probe exposes OpenVR runtime installation details", async () => {
     assert.match(combinedOutput, /openvrSceneApplicationName/i);
   } finally {
     await writeFile(resolve(artifactDir, `runtime-info-${process.platform}.log`), combinedOutput, "utf8");
+  }
+});
+
+test("Linux Flatpak selects the host API layer without a sandbox OpenXR runtime", { skip: process.platform !== "linux" }, async () => {
+  const home = await mkdtemp(join(tmpdir(), "electron-vr-flatpak-probe-"));
+  const dataHome = join(home, "data");
+  const layerDirectory = join(dataHome, "openxr", "1", "api_layers", "implicit.d");
+  const releaseDirectory = resolve(projectRoot, "packages", "native-addon", "build", "Release");
+  const openvrRegistry = join(home, ".config", "openvr");
+  const env = {
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, "sandbox-config"),
+    XDG_DATA_HOME: dataHome,
+    XR_RUNTIME_JSON: join(home, "missing-runtime.json")
+  };
+
+  try {
+    await mkdir(openvrRegistry, { recursive: true });
+    await writeFile(join(openvrRegistry, "openvrpaths.vrpath"), '{"runtime":["/host/SteamVR"]}');
+    const withoutLayer = await runRuntimeInfoProbe(env);
+    assert.match(withoutLayer, /selectedBackend:\s*'mock'/);
+    assert.match(withoutLayer, /openvr-registry-unavailable-in-sandbox/);
+    assert.match(withoutLayer, /recommendedAction:\s*'install-openxr-api-layer'/);
+
+    await mkdir(layerDirectory, { recursive: true });
+    await copyFile(join(releaseDirectory, "libelectron_vr_openxr_layer.so"), join(layerDirectory, "libelectron_vr_openxr_layer.so"));
+    await copyFile(join(releaseDirectory, "electron_vr_openxr_layer_linux.json"), join(layerDirectory, "electron_vr_openxr_layer.json"));
+    const withLayer = await runRuntimeInfoProbe(env);
+    assert.match(withLayer, /openxrAvailable:\s*false/);
+    assert.match(withLayer, /selectedBackend:\s*'openxr'/);
+    assert.match(withLayer, /openxrMode:\s*'api-layer'/);
+    assert.match(withLayer, /readiness:\s*'waiting-for-host'/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
   }
 });
 

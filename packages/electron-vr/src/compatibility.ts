@@ -221,7 +221,8 @@ export function analyzeVRCompatibility(
       ));
     }
   } else {
-    const canInstallLayer = platformSupportsLayer && runtime.openxrAvailable &&
+    const canInstallLayer = platformSupportsLayer && (runtime.openxrAvailable ||
+      (runtime.platform === "linux" && runtime.openvrRuntimeInstalled)) &&
       (runtime.platform === "linux" || runtime.openxrWindowsD3D11BindingAvailable || runtime.openxrWindowsD3D12BindingAvailable);
     if (canInstallLayer && !layerInstalled) {
       readiness = "setup-required";

@@ -584,6 +584,14 @@ std::string DetectOpenVRRuntimePath(bool* installed) {
   return runtime_path;
 }
 
+#if defined(__linux__)
+bool CanAccessOpenVRRegistryLinux() {
+  const char* config_home = std::getenv("XDG_CONFIG_HOME");
+  if (config_home == nullptr || config_home[0] == '\0') return true;
+  return std::filesystem::exists(std::filesystem::path(config_home) / "openvr/openvrpaths.vrpath");
+}
+#endif
+
 #if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
 bool HasExtension(const std::vector<XrExtensionProperties>& extensions, const char* name) {
   for (const XrExtensionProperties& extension : extensions) {
@@ -744,7 +752,10 @@ RuntimeInfo ProbeRuntime() {
     &info.openxr_api_layer_enabled, &info.openxr_api_layer_manifest_path);
   const bool direct_openxr_ready = info.openxr_available && info.openxr_overlay_extension_available &&
                              info.openxr_linux_egl_binding_available && info.openxr_linux_opengl_es_binding_available;
-  const bool api_layer_ready = info.openxr_available && info.openxr_api_layer_installed && info.openxr_api_layer_enabled;
+  // The companion only opens an IPC socket. The host application loads the OpenXR runtime,
+  // which may be unavailable inside a Flatpak even when its host API layer is installed.
+  const bool api_layer_ready = info.openxr_api_layer_installed && info.openxr_api_layer_enabled;
+  const bool openvr_runtime_accessible = info.openvr_runtime_installed && CanAccessOpenVRRegistryLinux();
   const bool force_api_layer = api_layer_ready && IsTruthyEnvVar("ELECTRON_VR_FORCE_OPENXR_API_LAYER");
   const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
   const bool openvr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENVR");
@@ -755,7 +766,7 @@ RuntimeInfo ProbeRuntime() {
     info.openxr_mode = direct_openxr_ready && !force_api_layer ? OpenXRMode::kOverlaySession : OpenXRMode::kApiLayer;
     AppendProbeMode(&info, direct_openxr_ready && !force_api_layer ? "openxr-overlay-session" : "openxr-api-layer");
     AppendProbeMode(&info, "selected-openxr");
-  } else if (!openvr_disabled_by_env && info.openvr_available && info.openvr_runtime_installed) {
+  } else if (!openvr_disabled_by_env && info.openvr_available && openvr_runtime_accessible) {
     info.selected_backend = BackendKind::kOpenVR;
     QueryOpenVRSceneApplication(&info);
     if (openxr_disabled_by_env) {
@@ -773,6 +784,8 @@ RuntimeInfo ProbeRuntime() {
     }
     if (!info.openvr_runtime_installed) {
       AppendProbeMode(&info, "openvr-runtime-not-installed");
+    } else if (!openvr_runtime_accessible) {
+      AppendProbeMode(&info, "openvr-registry-unavailable-in-sandbox");
     } else if (openvr_disabled_by_env) {
       AppendProbeMode(&info, "openvr-disabled-by-env");
     } else if (!info.openvr_available) {
