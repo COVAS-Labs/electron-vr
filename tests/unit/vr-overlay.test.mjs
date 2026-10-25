@@ -54,7 +54,7 @@ test("runtime probe can disable the OpenVR fallback", async () => {
   const probe = await readFile(resolve(root, "packages", "native-addon", "native", "src", "runtime_probe.cc"), "utf8");
   assert.equal((probe.match(/ELECTRON_VR_DISABLE_OPENVR/g) ?? []).length, 2);
   assert.equal((probe.match(/openvr-disabled-by-env/g) ?? []).length, 2);
-  assert.match(probe, /!openvr_disabled_by_env && info\.openvr_available && info\.openvr_runtime_installed/);
+  assert.match(probe, /!openvr_disabled_by_env && info\.openvr_available && openvr_runtime_accessible/);
 });
 
 test("Windows VDXR avoids probing or selecting OpenVR", async () => {

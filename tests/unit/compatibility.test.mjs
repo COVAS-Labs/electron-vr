@@ -207,6 +207,18 @@ test("compatibility report labels Linux mock as desktop fallback", () => {
   assert.equal(report.features.headLockedPlacement, "unsupported");
 });
 
+test("Linux Flatpak recommends host integration when its OpenVR registry is sandboxed", () => {
+  const report = analyzeVRCompatibility(runtime({
+    platform: "linux",
+    openxrAvailable: false,
+    openvrRuntimeInstalled: true,
+    openvrRuntimePath: "/home/user/.local/share/Steam/steamapps/common/SteamVR"
+  }), { architecture: "x64" });
+  assert.equal(report.readiness, "setup-required");
+  assert.equal(report.recommendedAction, "install-openxr-api-layer");
+  assert.equal(report.launch.canStartNow, false);
+});
+
 test("compatibility report marks unsupported production platforms incompatible", () => {
   const report = analyzeVRCompatibility(runtime({
     platform: "darwin",
