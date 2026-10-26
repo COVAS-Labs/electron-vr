@@ -155,6 +155,7 @@ test("compatibility report distinguishes waiting and connected API-layer hosts",
   }), { architecture: "x64" });
   assert.equal(connected.readiness, "ready");
   assert.equal(connected.launch.verdict, "works-now");
+  assert.equal(connected.launch.canStartNow, true);
   assert.match(connected.summary, /hello_xr/);
   assert.equal(connected.features.curvature, "unsupported");
 });

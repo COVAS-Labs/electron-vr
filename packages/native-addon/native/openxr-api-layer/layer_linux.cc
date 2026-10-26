@@ -250,6 +250,31 @@ void SocketMain(LayerHello hello) {
         SendFrameAck(socket_fd, snapshot, false);
         continue;
       }
+      if (hello.graphics_binding == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR && snapshot.software_frame) {
+        void* mapping = mmap(nullptr, snapshot.planes[0].size, PROT_READ, MAP_SHARED, received_fd, 0);
+        if (mapping == MAP_FAILED) {
+          close(received_fd);
+          SendFrameAck(socket_fd, snapshot, false);
+          continue;
+        }
+        auto pixels = std::make_shared<std::vector<uint8_t>>(pixel_bytes);
+        std::memcpy(pixels->data(), static_cast<const uint8_t*>(mapping) + snapshot.planes[0].offset, pixel_bytes);
+        munmap(mapping, snapshot.planes[0].size);
+        close(received_fd);
+        std::unique_lock<std::mutex> lock(g_frame_mutex);
+        g_frame.snapshot = snapshot;
+        g_frame.pixels = pixels;
+        g_frame.consumed = false;
+        last_copy = now;
+        const bool resolved = g_frame_condition.wait_for(lock, kMaximumFrameWait, [&] {
+          return g_stop.load() || g_frame.pixels != pixels;
+        });
+        if (!resolved && g_frame.pixels == pixels) g_frame.pixels.reset();
+        const bool consumed = !g_stop.load() && g_frame.snapshot.header.sequence == snapshot.header.sequence && g_frame.consumed;
+        lock.unlock();
+        SendFrameAck(socket_fd, snapshot, consumed);
+        continue;
+      }
       if (hello.graphics_binding == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR) {
         std::unique_lock<std::mutex> lock(g_frame_mutex);
         if (g_frame.dmabuf_fd >= 0) {
@@ -461,6 +486,10 @@ bool InitializeVulkanGraphics(SessionState& state) {
     vkGetDeviceProcAddr(binding.device, "vkGetMemoryFdPropertiesKHR"));
   state.get_image_memory_requirements2 = reinterpret_cast<PFN_vkGetImageMemoryRequirements2KHR>(
     vkGetDeviceProcAddr(binding.device, "vkGetImageMemoryRequirements2KHR"));
+  if (state.get_image_memory_requirements2 == nullptr) {
+    state.get_image_memory_requirements2 = reinterpret_cast<PFN_vkGetImageMemoryRequirements2KHR>(
+      vkGetDeviceProcAddr(binding.device, "vkGetImageMemoryRequirements2"));
+  }
   VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
   pool.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
   pool.queueFamilyIndex = binding.queueFamilyIndex;
@@ -725,6 +754,108 @@ bool RenderVulkanFrame(SessionState& state, const OverlaySnapshot& snapshot, int
   return success;
 }
 
+bool RenderVulkanSoftwareFrame(SessionState& state, const OverlaySnapshot& snapshot, const std::vector<uint8_t>& pixels) {
+  const VkDevice device = state.vulkan_binding.device;
+  const VkDeviceSize bytes = static_cast<VkDeviceSize>(snapshot.planes[0].stride) * snapshot.height;
+  if (snapshot.width == 0 || snapshot.height == 0 || snapshot.planes[0].stride < snapshot.width * 4ULL ||
+      pixels.size() < bytes || VulkanFormat(snapshot) == VK_FORMAT_UNDEFINED || !EnsureSwapchain(state, snapshot)) return false;
+  VkBuffer staging = VK_NULL_HANDLE;
+  VkDeviceMemory memory = VK_NULL_HANDLE;
+  VkCommandBuffer command = VK_NULL_HANDLE;
+  VkFence fence = VK_NULL_HANDLE;
+  bool success = false;
+  do {
+    VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    buffer_info.size = bytes;
+    buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device, &buffer_info, nullptr, &staging) != VK_SUCCESS) break;
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device, staging, &requirements);
+    uint32_t type = state.vulkan_memory_properties.memoryTypeCount;
+    for (uint32_t i = 0; i < state.vulkan_memory_properties.memoryTypeCount; ++i) {
+      if ((requirements.memoryTypeBits & (1U << i)) &&
+          (state.vulkan_memory_properties.memoryTypes[i].propertyFlags &
+            (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+            (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) { type = i; break; }
+    }
+    if (type == state.vulkan_memory_properties.memoryTypeCount) break;
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = type;
+    if (vkAllocateMemory(device, &allocation, nullptr, &memory) != VK_SUCCESS ||
+        vkBindBufferMemory(device, staging, memory, 0) != VK_SUCCESS) break;
+    void* mapped = nullptr;
+    if (vkMapMemory(device, memory, 0, bytes, 0, &mapped) != VK_SUCCESS) break;
+    std::memcpy(mapped, pixels.data(), bytes);
+    vkUnmapMemory(device, memory);
+    XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+    if (XR_FAILED(state.instance->dispatch.AcquireSwapchainImage(state.swapchain, &acquire, &state.image_index))) break;
+    state.image_acquired = true;
+    XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO}; wait.timeout = XR_INFINITE_DURATION;
+    if (XR_FAILED(state.instance->dispatch.WaitSwapchainImage(state.swapchain, &wait)) ||
+        state.image_index >= state.vulkan_images.size()) break;
+    state.image_waited = true;
+    VkCommandBufferAllocateInfo command_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    command_info.commandPool = state.vulkan_command_pool;
+    command_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    command_info.commandBufferCount = 1;
+    if (vkAllocateCommandBuffers(device, &command_info, &command) != VK_SUCCESS) break;
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(command, &begin) != VK_SUCCESS) break;
+    VkBufferMemoryBarrier host_write{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+    host_write.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+    host_write.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    host_write.srcQueueFamilyIndex = host_write.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    host_write.buffer = staging;
+    host_write.size = bytes;
+    VkImageMemoryBarrier destination{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    destination.srcAccessMask = 0;
+    destination.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    destination.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    destination.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    destination.srcQueueFamilyIndex = destination.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    destination.image = state.vulkan_images[state.image_index].image;
+    destination.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+      0, nullptr, 1, &host_write, 1, &destination);
+    VkBufferImageCopy copy{};
+    copy.bufferRowLength = snapshot.planes[0].stride / 4;
+    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.imageExtent = {snapshot.width, snapshot.height, 1};
+    vkCmdCopyBufferToImage(command, staging, destination.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+    destination.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    destination.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    destination.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    destination.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+      0, nullptr, 0, nullptr, 1, &destination);
+    if (vkEndCommandBuffer(command) != VK_SUCCESS) break;
+    VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    if (vkCreateFence(device, &fence_info, nullptr, &fence) != VK_SUCCESS) break;
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount = 1; submit.pCommandBuffers = &command;
+    if (vkQueueSubmit(state.vulkan_queue, 1, &submit, fence) != VK_SUCCESS ||
+        vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) break;
+    success = true;
+  } while (false);
+  if (state.image_acquired) {
+    if (!state.image_waited) {
+      XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO}; wait.timeout = XR_INFINITE_DURATION;
+      state.instance->dispatch.WaitSwapchainImage(state.swapchain, &wait);
+    }
+    XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    state.instance->dispatch.ReleaseSwapchainImage(state.swapchain, &release);
+    state.image_acquired = state.image_waited = false;
+  }
+  if (fence) vkDestroyFence(device, fence, nullptr);
+  if (command) vkFreeCommandBuffers(device, state.vulkan_command_pool, 1, &command);
+  if (staging) vkDestroyBuffer(device, staging, nullptr);
+  if (memory) vkFreeMemory(device, memory, nullptr);
+  return success;
+}
+
 bool RenderFrame(SessionState& state, const OverlaySnapshot& snapshot, const std::vector<uint8_t>& pixels) {
   if (pixels.size() < static_cast<uint64_t>(snapshot.planes[0].stride) * snapshot.height ||
       !EnsureSwapchain(state, snapshot)) return false;
@@ -926,9 +1057,22 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* info)
         g_frame.consumed = consumed;
         g_frame_condition.notify_all();
       }
+    } else if (state->graphics_api == SessionState::GraphicsApi::kVulkan && frame.pixels) {
+      bool consumed = !snapshot.visible || snapshot.generation == state->rendered_generation;
+      if (state->graphics_initialized && snapshot.visible && snapshot.generation != 0 &&
+          snapshot.generation != state->rendered_generation) {
+        consumed = RenderVulkanSoftwareFrame(*state, snapshot, *frame.pixels);
+        if (consumed) state->rendered_generation = snapshot.generation;
+      }
+      std::lock_guard<std::mutex> lock(g_frame_mutex);
+      if (g_frame.snapshot.header.sequence == snapshot.header.sequence && g_frame.pixels == frame.pixels) {
+        g_frame.consumed = consumed;
+        g_frame.pixels.reset();
+        g_frame_condition.notify_all();
+      }
     } else if (state->graphics_initialized && snapshot.visible && snapshot.generation != 0 &&
                snapshot.generation != state->rendered_generation && frame.pixels && RenderFrame(*state, snapshot, *frame.pixels)) {
-        state->rendered_generation = snapshot.generation;
+      state->rendered_generation = snapshot.generation;
     }
     const XrSpace space = snapshot.placement_mode == PlacementMode::kHead ? state->view_space :
       (state->stage_space ? state->stage_space : state->local_space);

@@ -115,11 +115,12 @@ test("Linux API-layer software frames use acknowledged memfd snapshots", async (
   assert.match(layer, /bool consumed = !snapshot\.visible/);
 });
 
-test("Linux API-layer selects shared DMA-BUF only for Vulkan hosts", async () => {
+test("Linux API-layer keeps DMA-BUF for Vulkan textures and reads back missing textures", async () => {
   const bridge = await readFile(resolve(root, "packages", "electron-vr", "src", "bridge.ts"), "utf8");
   const companion = await readFile(resolve(root, "packages", "native-addon", "native", "src", "openxr_companion_linux.cc"), "utf8");
   const binding = await readFile(resolve(root, "packages", "native-addon", "binding.gyp"), "utf8");
-  assert.match(bridge, /openxrCompanionConnected && runtimeInfo\.openxrHostGraphicsApi === "opengl-xlib"/);
+  assert.match(bridge, /runtimeInfo\.openxrHostGraphicsApi === "opengl-xlib" \|\| runtimeInfo\.openxrHostGraphicsApi === "vulkan"/);
+  assert.match(bridge, /runtimeInfo\.openxrHostGraphicsApi === "vulkan"\) \{\s*this\.submitLinuxOpenXRSoftwareFrame\(nativeImage\)/);
   assert.match(bridge, /!runtimeInfo\.openxrCompanionConnected \|\| runtimeInfo\.openxrHostGraphicsApi === "opengl-xlib"/);
   assert.match(companion, /kGraphicsBindingVulkan \? "vulkan"/);
   assert.match(companion, /kGraphicsBindingOpenGLXlib \? "opengl-xlib"/);

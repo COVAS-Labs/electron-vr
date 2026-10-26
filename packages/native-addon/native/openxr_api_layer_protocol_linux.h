@@ -5,9 +5,9 @@
 namespace electron_vr::openxr_layer_linux {
 
 constexpr uint32_t kProtocolMagic = 0x4556524c;  // EVRL
-constexpr uint16_t kProtocolVersion = 2;
+constexpr uint16_t kProtocolVersion = 3;
 constexpr uint32_t kMaxPlanes = 4;
-constexpr char kSocketName[] = "electron-vr-openxr-overlay-v2.sock";
+constexpr char kSocketName[] = "electron-vr-openxr-overlay-v3.sock";
 constexpr uint32_t kGraphicsBindingOpenGLXlib = 1000023001;
 constexpr uint32_t kGraphicsBindingVulkan = 1000025000;  // Vulkan and Vulkan2 alias this value.
 
@@ -60,6 +60,7 @@ struct OverlaySnapshot {
   float size_meters = 1.0f;
   float curvature = 0.0f;
   Plane planes[kMaxPlanes];
+  uint32_t software_frame = 0;
 };
 
 struct FrameAck {

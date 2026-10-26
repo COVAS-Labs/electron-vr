@@ -640,7 +640,8 @@ export class VrBridge {
         }
         const runtimeInfo = this.getRuntimeInfo();
         if (runtimeInfo.selectedBackend === "openxr" && runtimeInfo.openxrMode === "api-layer") {
-          if (runtimeInfo.openxrCompanionConnected && runtimeInfo.openxrHostGraphicsApi === "opengl-xlib") {
+          if (runtimeInfo.openxrCompanionConnected &&
+              (runtimeInfo.openxrHostGraphicsApi === "opengl-xlib" || runtimeInfo.openxrHostGraphicsApi === "vulkan")) {
             this.submitLinuxOpenXRSoftwareFrame(image, false);
           }
           return;
@@ -769,6 +770,13 @@ export class VrBridge {
         } else if (!isTruthyEnvironmentVariable("ELECTRON_VR_DISABLE_OPENVR_VULKAN")) {
           this.submitLinuxBitmapFrame(nativeImage, false);
         }
+        return;
+      }
+
+      if (process.platform === "linux" &&
+          runtimeInfo.selectedBackend === "openxr" && runtimeInfo.openxrMode === "api-layer" &&
+          runtimeInfo.openxrCompanionConnected && runtimeInfo.openxrHostGraphicsApi === "vulkan") {
+        this.submitLinuxOpenXRSoftwareFrame(nativeImage);
         return;
       }
 

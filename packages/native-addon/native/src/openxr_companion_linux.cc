@@ -230,6 +230,7 @@ bool SubmitOpenXRCompanionFrameLinux(const LinuxTextureInfo& texture, std::strin
   g_state.snapshot.plane_count = 1;
   g_state.snapshot.modifier = ParseModifier(texture.modifier);
   g_state.snapshot.planes[0] = {texture.planes[0].stride, texture.planes[0].offset, texture.planes[0].size};
+  g_state.snapshot.software_frame = 0;
   g_state.snapshot.revision++;
   const int fd = texture.planes[0].fd;
   if (!SendFrameLocked(fd, error)) return false;
@@ -278,6 +279,7 @@ bool SubmitOpenXRCompanionSoftwareFrameLinux(const SoftwareFrameInfo& frame_info
   g_state.snapshot.plane_count = 1;
   g_state.snapshot.modifier = DRM_FORMAT_MOD_INVALID;
   g_state.snapshot.planes[0] = {static_cast<uint32_t>(stride), 0, byte_size};
+  g_state.snapshot.software_frame = 1;
   g_state.snapshot.revision++;
   const bool submitted = SendFrameLocked(fd, error);
   close(fd);
