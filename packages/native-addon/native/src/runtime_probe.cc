@@ -396,6 +396,17 @@ void QueryOpenVRSceneApplication(RuntimeInfo* info) {
         info->openvr_scene_application_key,
         vr::VRApplicationProperty_BinaryPath_String);
     }
+#if defined(_WIN32)
+    if (info->openvr_scene_application_name.empty()) {
+      const std::string binary_path = ProcessBinaryPath(info->openvr_scene_process_id);
+      if (!binary_path.empty()) {
+        info->openvr_scene_application_name = std::filesystem::path(binary_path).filename().string();
+        if (info->openvr_scene_application_binary_path.empty()) {
+          info->openvr_scene_application_binary_path = binary_path;
+        }
+      }
+    }
+#endif
   }
 
   vr::VR_Shutdown();
@@ -823,16 +834,28 @@ RuntimeInfo ProbeRuntime() {
   const bool virtual_desktop_openxr = IsVirtualDesktopOpenXRRuntime(info);
   const bool openvr_unsafe_for_active_openxr_runtime = virtual_desktop_openxr && !openxr_enabled;
   const bool opencomposite_openvr = IsOpenCompositeOpenVRRuntime(info);
+  // The system's default OpenXR runtime does not identify the API used by the
+  // current game. Check the layer's live host and SteamVR's current scene before
+  // choosing an overlay backend. Merely having the layer installed must not
+  // hide a running SteamVR game.
+  if (openxr_enabled && api_layer_ready) {
+    PopulateOpenXRHostPresence(&info);
+  }
+  const bool openvr_usable = !openvr_disabled_by_env && !openvr_unsafe_for_active_openxr_runtime &&
+                             !opencomposite_openvr && info.openvr_available && info.openvr_runtime_installed;
+  if (openvr_usable && !info.openxr_host_detected && vr::VR_IsHmdPresent()) {
+    QueryOpenVRSceneApplication(&info);
+  }
+  const bool steamvr_scene_active = info.openvr_scene_process_id != 0;
 
-  if (openxr_enabled) {
+  if (openxr_enabled && (!steamvr_scene_active || info.openxr_host_detected)) {
     info.selected_backend = BackendKind::kOpenXR;
     info.openxr_mode = direct_openxr_ready ? OpenXRMode::kOverlaySession : OpenXRMode::kApiLayer;
     AppendProbeMode(&info, direct_openxr_ready ? "openxr-overlay-session" : "openxr-api-layer");
     AppendProbeMode(&info, "selected-openxr");
-  } else if (!openvr_disabled_by_env && !openvr_unsafe_for_active_openxr_runtime && !opencomposite_openvr &&
-             info.openvr_available && info.openvr_runtime_installed) {
+  } else if (openvr_usable) {
     info.selected_backend = BackendKind::kOpenVR;
-    QueryOpenVRSceneApplication(&info);
+    if (!steamvr_scene_active) QueryOpenVRSceneApplication(&info);
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
     } else if (openxr_ready && !info.openxr_overlay_extension_available && !api_layer_ready) {
@@ -862,9 +885,6 @@ RuntimeInfo ProbeRuntime() {
       AppendProbeMode(&info, "openvr-library-unavailable");
     }
     AppendProbeMode(&info, "selected-mock");
-  }
-  if (info.selected_backend == BackendKind::kOpenXR && info.openxr_mode == OpenXRMode::kApiLayer) {
-    PopulateOpenXRHostPresence(&info);
   }
   QueryLibOVRHost(&info);
 #elif defined(__APPLE__)

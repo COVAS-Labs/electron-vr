@@ -57,12 +57,13 @@ test("runtime probe can disable the OpenVR fallback", async () => {
   assert.match(probe, /!openvr_disabled_by_env && info\.openvr_available && openvr_runtime_accessible/);
 });
 
-test("Windows VDXR avoids probing or selecting OpenVR", async () => {
+test("Windows VDXR avoids OpenVR when OpenXR is unavailable, but checks a live SteamVR scene", async () => {
   const probe = await readFile(resolve(root, "packages", "native-addon", "native", "src", "runtime_probe.cc"), "utf8");
   assert.match(probe, /IsVirtualDesktopOpenXRRuntime/);
   assert.match(probe, /openvr_unsafe_for_active_openxr_runtime = virtual_desktop_openxr && !openxr_enabled/);
   assert.match(probe, /!openvr_disabled_by_env && !openvr_unsafe_for_active_openxr_runtime/);
-  assert.equal((probe.match(/QueryOpenVRSceneApplication\(&info\);/g) ?? []).length, 3);
+  assert.match(probe, /openvr_usable && !info\.openxr_host_detected && vr::VR_IsHmdPresent\(\)/);
+  assert.match(probe, /openxr_enabled && \(!steamvr_scene_active \|\| info\.openxr_host_detected\)/);
 });
 
 test("Windows OpenXR layer publishes host presence before companion connection", async () => {

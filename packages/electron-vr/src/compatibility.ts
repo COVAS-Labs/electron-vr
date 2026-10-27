@@ -208,7 +208,9 @@ export function analyzeVRCompatibility(
   } else if (runtime.selectedBackend === "openvr") {
     readiness = "ready";
     backendLabel = "SteamVR/OpenVR overlay";
-    summary = "A registered OpenVR runtime is ready for native overlays.";
+    summary = runtime.openvrSceneProcessId
+      ? `Detected ${runtime.openvrSceneApplicationName || runtime.openvrSceneApplicationKey || "a VR application"} in SteamVR. Using the SteamVR/OpenVR overlay.`
+      : "A registered OpenVR runtime is ready for native overlays.";
     features = openVRFeatures();
     compatibleHostGraphicsApis = runtime.platform === "win32" ? ["SteamVR/OpenVR"] : ["SteamVR/OpenVR with single-plane RGB DMA-BUF"];
     if (runtime.openxrAvailable && platformSupportsLayer && !layerInstalled) {

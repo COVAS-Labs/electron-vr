@@ -193,6 +193,24 @@ test("compatibility report treats OpenVR as ready with optional OpenXR setup", (
   assert.equal(report.issues[0].code, "openxr-api-layer-optional");
 });
 
+test("SteamVR scene status names the running game even when the default OpenXR runtime is VirtualDesktopXR", () => {
+  const report = analyzeVRCompatibility(runtime({
+    openxrRuntimeName: "VirtualDesktopXR (Bundled)",
+    openxrApiLayerInstalled: true,
+    openxrApiLayerEnabled: true,
+    openvrAvailable: true,
+    openvrRuntimeInstalled: true,
+    openvrSceneProcessId: 15260,
+    openvrSceneApplicationName: "Elite Dangerous",
+    selectedBackend: "openvr"
+  }), { architecture: "x64" });
+  assert.equal(report.backend, "openvr");
+  assert.equal(report.readiness, "ready");
+  assert.equal(report.launch.wouldWorkNow, true);
+  assert.match(report.summary, /Detected Elite Dangerous in SteamVR.*SteamVR\/OpenVR overlay/);
+  assert.equal(report.requiresOpenXRAppRestart, false);
+});
+
 test("compatibility report labels Linux mock as desktop fallback", () => {
   const report = analyzeVRCompatibility(runtime({
     platform: "linux",
