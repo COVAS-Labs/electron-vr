@@ -75,7 +75,9 @@ When `XR_EXTX_overlay` is unavailable, Linux x64 can use the explicitly installe
 npx electron-vr-openxr-layer install
 ```
 
-The Linux layer supports Vulkan and desktop OpenGL Xlib sessions with one single-plane linear RGB DMA-BUF overlay. Vulkan DMA-BUF import is currently validated for Ubuntu 24.04 AMD RADV with Monado and `hello_xr -g Vulkan`; GLX retains its software snapshot fallback. Xcb, native Wayland host bindings, modifier-backed or multiplane buffers, and curvature are not yet supported.
+The Linux layer supports Vulkan and desktop OpenGL Xlib sessions with one single-plane linear RGB DMA-BUF overlay. Vulkan DMA-BUF import has been exercised on Ubuntu 24.04 AMD RADV with Monado, `hello_xr -g Vulkan`, and Elite Dangerous through Proton; GLX retains its software snapshot fallback. Xcb, native Wayland host bindings, modifier-backed or multiplane buffers, and curvature are not yet supported.
+
+The Linux companion uses a per-user abstract Unix socket. Steam/Proton and Flatpak processes that share a network namespace can connect without exposing a socket directory through Steam's filesystem sandbox. The connection still verifies the peer's user ID.
 
 On Windows x64, selection prefers a direct `XR_EXTX_overlay` session, then an installed implicit API layer for D3D11 or D3D12 hosts, then OpenVR, then mock. API-layer installation is explicit:
 

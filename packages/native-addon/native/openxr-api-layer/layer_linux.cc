@@ -138,11 +138,6 @@ std::thread g_socket_thread;
 std::mutex g_socket_mutex;
 int g_socket = -1;
 
-std::string SocketPath() {
-  const char* runtime = std::getenv("XDG_RUNTIME_DIR");
-  return runtime == nullptr ? std::string() : std::string(runtime) + "/electron-vr/" + kSocketName;
-}
-
 bool SyncDmabuf(int fd, uint64_t flags) {
   dma_buf_sync sync{};
   sync.flags = flags;
@@ -170,15 +165,13 @@ void CloseFrame() {
 }
 
 void SocketMain(LayerHello hello) {
-  const std::string path = SocketPath();
   std::chrono::steady_clock::time_point last_copy;
-  while (!g_stop.load() && !path.empty()) {
+  while (!g_stop.load()) {
     const int socket_fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
     if (socket_fd < 0) return;
     sockaddr_un address{};
-    address.sun_family = AF_UNIX;
-    std::strncpy(address.sun_path, path.c_str(), sizeof(address.sun_path) - 1);
-    if (connect(socket_fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    const socklen_t address_length = MakeSocketAddress(&address);
+    if (connect(socket_fd, reinterpret_cast<sockaddr*>(&address), address_length) != 0) {
       close(socket_fd);
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
       continue;

@@ -5,7 +5,6 @@
 #include <poll.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -42,16 +41,9 @@ struct State {
   bool initialized = false;
   LayerHello hello{};
   OverlaySnapshot snapshot{};
-  std::string socket_path;
 };
 
 State g_state;
-
-std::string RuntimeDirectory() {
-  const char* runtime = std::getenv("XDG_RUNTIME_DIR");
-  if (runtime == nullptr || runtime[0] == '\0') return {};
-  return std::string(runtime) + "/electron-vr";
-}
 
 uint32_t ParseFormat(const std::string& format) {
   if (format == "rgba" || format == "ABGR8888") return DRM_FORMAT_ABGR8888;
@@ -183,24 +175,15 @@ bool InitializeOpenXRCompanionLinux(const InitializeOptions& options, std::strin
 #if defined(__linux__)
   if (options.curvature != 0.0f) { SetError(error, "Linux API-layer curvature is not supported yet."); return false; }
   ShutdownOpenXRCompanionLinux();
-  const std::string directory = RuntimeDirectory();
-  if (directory.empty()) { SetError(error, "XDG_RUNTIME_DIR is required for Linux OpenXR API-layer IPC."); return false; }
-  std::error_code filesystem_error;
-  std::filesystem::create_directories(directory, filesystem_error);
-  chmod(directory.c_str(), 0700);
-  g_state.socket_path = directory + "/" + kSocketName;
-  unlink(g_state.socket_path.c_str());
   g_state.server = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
   if (g_state.server < 0) { SetError(error, "Failed to create Linux OpenXR companion socket."); return false; }
   sockaddr_un address{};
-  address.sun_family = AF_UNIX;
-  std::strncpy(address.sun_path, g_state.socket_path.c_str(), sizeof(address.sun_path) - 1);
-  if (bind(g_state.server, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0 || listen(g_state.server, 1) != 0) {
+  const socklen_t address_length = MakeSocketAddress(&address);
+  if (bind(g_state.server, reinterpret_cast<sockaddr*>(&address), address_length) != 0 || listen(g_state.server, 1) != 0) {
     SetError(error, "Failed to bind Linux OpenXR companion socket: " + std::string(std::strerror(errno)));
     ShutdownOpenXRCompanionLinux();
     return false;
   }
-  chmod(g_state.socket_path.c_str(), 0600);
   g_state.snapshot = {};
   g_state.snapshot.visible = options.visible ? 1U : 0U;
   g_state.snapshot.size_meters = options.size_meters;
@@ -344,7 +327,6 @@ void ShutdownOpenXRCompanionLinux() {
   std::lock_guard<std::mutex> lock(g_state.mutex);
   if (g_state.client >= 0) close(g_state.client);
   g_state.client = -1; g_state.initialized = false;
-  if (!g_state.socket_path.empty()) unlink(g_state.socket_path.c_str());
 #endif
 }
 

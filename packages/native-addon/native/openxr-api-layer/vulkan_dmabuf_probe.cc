@@ -437,25 +437,14 @@ bool ImportAndChecksum(VulkanState& state, const OverlaySnapshot& snapshot, int 
 }
 
 bool Connect(ScopedFd* socket_fd, std::string* error) {
-  const char* runtime = std::getenv("XDG_RUNTIME_DIR");
-  if (runtime == nullptr || runtime[0] == '\0') {
-    *error = "XDG_RUNTIME_DIR is not set";
-    return false;
-  }
-  const std::string path = std::string(runtime) + "/electron-vr/" + kSocketName;
   sockaddr_un address{};
-  if (path.size() >= sizeof(address.sun_path)) {
-    *error = "companion socket path is too long";
-    return false;
-  }
+  const socklen_t address_length = MakeSocketAddress(&address);
   socket_fd->value = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
   if (socket_fd->value < 0) {
     *error = "socket failed: " + std::string(std::strerror(errno));
     return false;
   }
-  address.sun_family = AF_UNIX;
-  std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
-  if (connect(socket_fd->value, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+  if (connect(socket_fd->value, reinterpret_cast<sockaddr*>(&address), address_length) != 0) {
     *error = "connect failed: " + std::string(std::strerror(errno));
     return false;
   }

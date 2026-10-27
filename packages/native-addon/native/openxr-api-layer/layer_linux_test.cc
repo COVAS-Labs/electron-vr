@@ -4,6 +4,8 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_loader_negotiation.h>
 
+#include "../openxr_api_layer_protocol_linux.h"
+
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -50,10 +52,38 @@ XrResult XRAPI_CALL CreateInstance(const XrInstanceCreateInfo*, const XrApiLayer
   if (layer->nextInfo != nullptr) return XR_ERROR_VALIDATION_FAILURE; *instance = g_instance; return XR_SUCCESS;
 }
 bool Expect(bool value, const char* message) { if (!value) std::cerr << "FAILED: " << message << '\n'; return value; }
+
+bool TestAbstractCompanionAddress() {
+  sockaddr_un address{};
+  const socklen_t base_length = electron_vr::openxr_layer_linux::MakeSocketAddress(&address);
+  const std::string suffix = "-test-" + std::to_string(getpid());
+  const size_t used = base_length - offsetof(sockaddr_un, sun_path);
+  if (address.sun_family != AF_UNIX || address.sun_path[0] != '\0' ||
+      used + suffix.size() > sizeof(address.sun_path)) return Expect(false, "uses a per-user abstract socket");
+  std::memcpy(address.sun_path + used, suffix.data(), suffix.size());
+  const socklen_t length = base_length + suffix.size();
+
+  const int server = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+  if (server < 0) return Expect(false, "creates abstract socket server");
+  const bool listening = bind(server, reinterpret_cast<sockaddr*>(&address), length) == 0 && listen(server, 1) == 0;
+  const int client = listening ? socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0) : -1;
+  const bool connected = client >= 0 && connect(client, reinterpret_cast<sockaddr*>(&address), length) == 0;
+  const int peer = connected ? accept4(server, nullptr, nullptr, SOCK_CLOEXEC) : -1;
+  ucred credentials{};
+  socklen_t credentials_size = sizeof(credentials);
+  const bool authenticated = peer >= 0 &&
+    getsockopt(peer, SOL_SOCKET, SO_PEERCRED, &credentials, &credentials_size) == 0 &&
+    credentials.uid == geteuid();
+  if (peer >= 0) close(peer);
+  if (client >= 0) close(client);
+  close(server);
+  return Expect(authenticated, "connects to abstract companion socket with matching UID");
+}
 }  // namespace
 
 int main() {
   bool passed = true;
+  passed &= TestAbstractCompanionAddress();
   void* library = dlopen("./libelectron_vr_openxr_layer.so", RTLD_NOW | RTLD_LOCAL);
   const char* load_error = library == nullptr ? dlerror() : nullptr;
   passed &= Expect(library != nullptr, load_error ? load_error : "loads Linux API layer"); if (!library) return 1;

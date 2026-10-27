@@ -631,7 +631,7 @@ openxrCompanionConnected: true
 openxrHostProcessId: nonzero
 openxrHostApplicationName: hello_xr or the reported host name
 openxrHostGraphicsApi: opengl-xlib
-openxrProtocolVersion: 2
+openxrProtocolVersion: 4
 ```
 
 As on Windows, the current demo logs runtime information before connection.
@@ -668,11 +668,16 @@ In terminal B:
   2>&1 | tee "$VALIDATION_DIR/host-linux-vulkan-layer.log"
 ```
 
-Required connected state includes `openxrHostGraphicsApi: vulkan` and protocol
-version 2. Capture the compositor view at least 70 seconds apart and verify the
+Required connected state includes `openxrHostGraphicsApi: vulkan` and Linux protocol
+version 4. Capture the compositor view at least 70 seconds apart and verify the
 overlay clock and host scene both change. Confirm correct orientation, alpha,
 color, and placement. Retain service journals and check the kernel log for GPU
 faults or resets.
+
+For a Steam/Proton host, repeat with a Flatpak producer and without importing
+`$XDG_RUNTIME_DIR/electron-vr` into Steam's filesystem sandbox. Confirm that
+the host still connects and that a changing overlay appears alongside the VR
+scene. Test both an OpenComposite game and a native OpenXR game when available.
 
 ### L-XR-DIRECT: Direct OpenXR Overlay
 
