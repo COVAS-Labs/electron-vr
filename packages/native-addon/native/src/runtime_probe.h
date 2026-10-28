@@ -42,6 +42,9 @@ struct RuntimeInfo {
   bool openxr_host_detected = false;
   uint32_t openxr_host_process_id = 0;
   std::string openxr_host_application_name;
+  std::string openxr_host_runtime_name;
+  std::string openxr_host_runtime_version;
+  uint64_t openxr_host_session_started_at_ms = 0;
   std::string openxr_host_graphics_api;
   std::string openxr_host_adapter_luid;
   uint32_t openxr_protocol_version = 0;
@@ -53,6 +56,12 @@ struct RuntimeInfo {
   std::string libovr_host_binary_path;
   bool openvr_available = false;
   bool openvr_runtime_installed = false;
+  bool openvr_host_relay_available = false;
+  bool openvr_host_relay_active = false;
+  bool openvr_host_relay_connected = false;
+  uint64_t openvr_submitted_frame_sequence = 0;
+  uint64_t openvr_consumed_frame_sequence = 0;
+  uint64_t openvr_texture_submission_count = 0;
   std::string openvr_runtime_path;
   std::string openvr_scene_application_state;
   uint32_t openvr_scene_process_id = 0;
@@ -63,7 +72,7 @@ struct RuntimeInfo {
   std::string probe_mode = "stub";
 };
 
-RuntimeInfo ProbeRuntime();
+RuntimeInfo ProbeRuntime(bool query_openvr_scene = true);
 void PopulateOpenXRHostPresence(RuntimeInfo* info);
 const char* BackendKindToString(BackendKind kind);
 const char* OpenXRModeToString(OpenXRMode mode);

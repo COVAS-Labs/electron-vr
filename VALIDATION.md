@@ -931,3 +931,34 @@ Do not describe Windows or Linux real-host support as validated until:
 - Direct-overlay rows pass where a runtime exposing `XR_EXTX_overlay` is
   actually available; otherwise they remain `NOT AVAILABLE`.
 - All evidence is linked from the release or pull request.
+
+## Linux scene-selection development validation (2026-10-28)
+
+Machine: `lucatower`, Ubuntu 24.04, AMD RX 6700 XT / RADV. The COVAS:NEXT
+development payload was installed as a real Flatpak with its normal network,
+IPC, filesystem, and PID namespaces. Native assets were built for Electron
+38.8.6 and staged into the unpacked prebuilt package. Host runtimes were
+SteamVR with its null HMD driver and Monado's simulated HMD, not a physical
+headset or WiVRn session.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Discover a supported OpenXR host before overlay initialization | PASS | Native harness and `tests/e2e/linux-host-discovery.test.mjs` |
+| Read the game's runtime without a usable sandbox-local OpenXR runtime | PASS | Flatpak probe reported host runtime `7.5.3` from the fixture, and Monado runtime/version from `hello_xr` |
+| Select SteamVR after COVAS starts in the API-layer waiting state | PASS | Packaged Flatpak switched to the host presenter when a real OpenVR scene started |
+| Sustained SteamVR texture submission | PASS (simulated HMD) | Five-minute sample recorded more than 11,000 actual texture submissions; IPC sequence numbers were tracked separately because they are per-connection |
+| Switch OpenVR → OpenXR → OpenVR without restarting COVAS | PASS | Monado `hello_xr -g Vulkan` connected, consumed frames, and reported its actual runtime; SteamVR resumed after it exited |
+| Switch a curved OpenVR configuration to a flat API-layer host | PASS | A bridge initialized with curvature `0.2` selected the controlled OpenXR host and returned to SteamVR without failing initialization |
+| Game exit does not leave a stale running-game message | PASS | Scene PID cleared; status returned to listening without requesting an OpenXR restart |
+| Runtime crash/restart recovery | PASS | Presenter process recovered after vrserver termination; a scene launched after runtime readiness resumed texture submissions without restarting COVAS |
+| Copy VR diagnostics | PASS | Clipboard JSON contained app/package versions, selected backend, host evidence, and separate IPC/SteamVR counters |
+| Presenter exits with the Flatpak | PASS | No host presenter remained after app termination |
+| Fresh Elite / EDVR end-to-end run | BLOCKED | Direct Elite launch reached a launcher-login failure. No fresh Elite/EDVR pass is claimed for these changes |
+| Physical headset / WiVRn | NOT AVAILABLE | This machine used simulated HMDs |
+
+Evidence and test scripts are retained on the test machine under
+`/tmp/electron-vr-linux-selection/`, with snapshots and restoration checks in
+its private `evidence/` directory. The prior COVAS Flatpak deployment, host
+layer, game graphics settings/DLL, OpenVR registry, and SteamVR settings were
+restored after the tests. This development validation does not replace the
+physical-hardware release gates above.

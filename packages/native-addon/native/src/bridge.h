@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -78,7 +79,7 @@ struct SoftwareFrameInfo {
 
 class BridgeState {
  public:
-  RuntimeInfo GetRuntimeInfo() const;
+  RuntimeInfo GetRuntimeInfo();
   bool Initialize(const InitializeOptions& options);
   bool SubmitSharedTexture(const SharedTextureSubmission& texture_submission);
   bool SubmitSoftwareFrame(const SoftwareFrameInfo& frame_info);
@@ -93,6 +94,9 @@ class BridgeState {
  private:
   void SetLastError(std::string message);
   RuntimeInfo GetLiveRuntimeInfo() const;
+  bool InitializeWithRuntime(const InitializeOptions& options, const RuntimeInfo& runtime);
+  void RefreshLinuxBackend();
+  std::chrono::steady_clock::time_point last_backend_check_{};
 
   RuntimeInfo runtime_info_ = ProbeRuntime();
   InitializeOptions options_;

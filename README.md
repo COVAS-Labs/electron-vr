@@ -57,14 +57,14 @@ app.on("before-quit", () => {
 });
 ```
 
-The package probes OpenXR capability and chooses backends based on the available platform graphics binding. Runtimes that expose `XR_EXTX_overlay` use a direct overlay session. On Windows, runtimes without that extension can use the separately installed implicit API layer, which appends the Electron quad to the primary application's existing OpenXR session.
+The package checks live game signals before falling back to installed runtime capabilities. A detected OpenXR integration host selects its API-layer path; an active SteamVR scene can select OpenVR even when an OpenXR integration is installed. Without a live scene, selection uses the available platform graphics bindings:
 
 - `openxr` on Linux when `XR_EXTX_overlay`, `XR_MNDX_egl_enable`, and `XR_KHR_opengl_enable` are available
 - `openxr` on Windows when a D3D11 overlay session or the installed API-layer companion is available
 - `openvr` when the OpenXR overlay path is unavailable or explicitly disabled and a Linux OpenVR runtime is installed
 - `mock` otherwise
 
-Linux OpenXR remains the preferred path when the overlay extension is available. Linux OpenVR uses public `TextureType_Vulkan` automatically on the GPU reported by SteamVR, independent of the game's graphics API, and falls back from direct DMA-BUF import to bitmap-to-Vulkan upload. Set `ELECTRON_VR_DISABLE_OPENXR=1` to force Linux onto the OpenVR-or-mock selection branch while debugging. `ELECTRON_VR_DISABLE_OPENVR_VULKAN=1` disables the default Vulkan path; `ELECTRON_VR_OPENVR_GL_UPLOAD=1` explicitly selects the CPU-readback OpenGL diagnostic path.
+Linux OpenXR is the capability fallback when no live game determines the overlay path. Linux OpenVR uses public `TextureType_Vulkan` automatically on the GPU reported by SteamVR, independent of the game's graphics API, and falls back from direct DMA-BUF import to bitmap-to-Vulkan upload. Set `ELECTRON_VR_DISABLE_OPENXR=1` to force Linux onto the OpenVR-or-mock selection branch while debugging. `ELECTRON_VR_DISABLE_OPENVR_VULKAN=1` disables the default Vulkan path; `ELECTRON_VR_OPENVR_GL_UPLOAD=1` explicitly selects the CPU-readback OpenGL diagnostic path.
 
 Linux x64 packages also include an explicit implicit-API-layer fallback for runtimes without `XR_EXTX_overlay`:
 
@@ -77,7 +77,9 @@ The Linux fallback supports Vulkan and desktop OpenGL Xlib host sessions with on
 
 The Linux companion communicates over a per-user abstract Unix socket, which works across Flatpak and Steam Runtime filesystem namespaces when they share the network namespace. In addition to `hello_xr`, this path has been exercised with Elite Dangerous under Proton and OpenComposite or EDVR against Monado's simulated HMD; WiVRn and physical-headset rendering remain unvalidated.
 
-Native Wayland sessions can use this path when the OpenXR host runs through XWayland and supplies `XrGraphicsBindingOpenGLXlibKHR`; Electron may remain native Wayland for DMA-BUF export. For controlled testing only, `ELECTRON_VR_FORCE_OPENXR_API_LAYER=1` selects an installed and enabled layer even when the runtime also exposes `XR_EXTX_overlay`; normal product launches should retain automatic direct-overlay priority.
+Linux game discovery has its own read-only endpoint and reports `xrGetInstanceProperties` runtime information before the overlay connects. It does not require visibility of the host process list. Flatpak SteamVR presentation uses the bundled `electron_vr_openvr_host` presenter outside the PID namespace, with authenticated image-FD transport into the host. See the [package integration notes](packages/electron-vr/README.md) for presenter launch/lifecycle requirements and diagnostic fields. A waiting Linux API-layer overlay can switch to a SteamVR scene, and an initialized OpenVR overlay can switch to a detected OpenXR host without recreating its Electron window.
+
+Native Wayland sessions can use this path when the OpenXR host runs through XWayland and supplies `XrGraphicsBindingOpenGLXlibKHR`; Electron may remain native Wayland for DMA-BUF export. For controlled testing only, `ELECTRON_VR_FORCE_OPENXR_API_LAYER=1` selects an installed and enabled layer even when the runtime also exposes `XR_EXTX_overlay`; normal product launches should retain automatic scene-based selection.
 
 On macOS, OpenXR uses `XR_KHR_metal_enable` and imports Electron shared textures from their `IOSurface` handles. The Khronos loader is built automatically from `.openxr-sdk`, copied beside the native addon, and loaded through the addon's `@loader_path` rpath.
 

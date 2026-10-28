@@ -542,6 +542,8 @@ std::string ExtractFirstRuntimePath(const std::string& json_text) {
 }
 
 std::string GetOpenVRPathsFilePath() {
+  const char* override_path = std::getenv("VR_PATHREG_OVERRIDE");
+  if (override_path && override_path[0]) return override_path;
 #if defined(_WIN32)
   const char* local_app_data = std::getenv("LOCALAPPDATA");
   if (local_app_data == nullptr || local_app_data[0] == '\0') {
@@ -597,6 +599,8 @@ std::string DetectOpenVRRuntimePath(bool* installed) {
 
 #if defined(__linux__)
 bool CanAccessOpenVRRegistryLinux() {
+  const char* override_path = std::getenv("VR_PATHREG_OVERRIDE");
+  if (override_path && override_path[0]) return std::filesystem::exists(override_path);
   const char* config_home = std::getenv("XDG_CONFIG_HOME");
   if (config_home == nullptr || config_home[0] == '\0') return true;
   return std::filesystem::exists(std::filesystem::path(config_home) / "openvr/openvrpaths.vrpath");
@@ -718,10 +722,12 @@ void PopulateOpenXRHostPresence(RuntimeInfo* info) {
   info->openxr_consumed_frame_sequence = 0;
 #if defined(_WIN32)
   QueryOpenXRHostPresence(info);
+#elif defined(__linux__)
+  PopulateOpenXRHostPresenceLinux(info);
 #endif
 }
 
-RuntimeInfo ProbeRuntime() {
+RuntimeInfo ProbeRuntime(bool query_openvr_scene) {
   RuntimeInfo info;
   info.platform = DetectPlatform();
   info.probe_mode = "filesystem";
@@ -766,20 +772,30 @@ RuntimeInfo ProbeRuntime() {
   // The companion only opens an IPC socket. The host application loads the OpenXR runtime,
   // which may be unavailable inside a Flatpak even when its host API layer is installed.
   const bool api_layer_ready = info.openxr_api_layer_installed && info.openxr_api_layer_enabled;
-  const bool openvr_runtime_accessible = info.openvr_runtime_installed && CanAccessOpenVRRegistryLinux();
+  const bool sandboxed = std::getenv("FLATPAK_ID") != nullptr;
+  if (sandboxed) PopulateOpenVRRelayPresenceLinux(&info);
+  const bool openvr_runtime_accessible = info.openvr_host_relay_available ||
+    (info.openvr_runtime_installed && CanAccessOpenVRRegistryLinux() && !sandboxed);
   const bool force_api_layer = api_layer_ready && IsTruthyEnvVar("ELECTRON_VR_FORCE_OPENXR_API_LAYER");
   const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
   const bool openvr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENVR");
   const bool openxr_enabled = !openxr_disabled_by_env && (direct_openxr_ready || api_layer_ready);
 
-  if (openxr_enabled) {
-    info.selected_backend = BackendKind::kOpenXR;
-    info.openxr_mode = direct_openxr_ready && !force_api_layer ? OpenXRMode::kOverlaySession : OpenXRMode::kApiLayer;
-    AppendProbeMode(&info, direct_openxr_ready && !force_api_layer ? "openxr-overlay-session" : "openxr-api-layer");
-    AppendProbeMode(&info, "selected-openxr");
-  } else if (!openvr_disabled_by_env && info.openvr_available && openvr_runtime_accessible) {
-    info.selected_backend = BackendKind::kOpenVR;
+  if (api_layer_ready && !openxr_disabled_by_env) PopulateOpenXRHostPresence(&info);
+  const bool openvr_usable = !openvr_disabled_by_env && info.openvr_available && openvr_runtime_accessible;
+  if (query_openvr_scene && !sandboxed && openvr_usable && !info.openxr_host_detected && !force_api_layer && vr::VR_IsHmdPresent()) {
     QueryOpenVRSceneApplication(&info);
+  }
+  const bool steamvr_scene_active = info.openvr_scene_process_id != 0;
+  if (openxr_enabled && (!steamvr_scene_active || force_api_layer || info.openxr_host_detected)) {
+    info.selected_backend = BackendKind::kOpenXR;
+    const bool direct = direct_openxr_ready && !force_api_layer && !info.openxr_host_detected;
+    info.openxr_mode = direct ? OpenXRMode::kOverlaySession : OpenXRMode::kApiLayer;
+    AppendProbeMode(&info, direct ? "openxr-overlay-session" : "openxr-api-layer");
+    AppendProbeMode(&info, "selected-openxr");
+  } else if (openvr_usable) {
+    info.selected_backend = BackendKind::kOpenVR;
+    if (query_openvr_scene && !sandboxed && !steamvr_scene_active) QueryOpenVRSceneApplication(&info);
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
     } else if (info.openxr_available && !direct_openxr_ready && !api_layer_ready) {

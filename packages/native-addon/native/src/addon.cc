@@ -284,6 +284,9 @@ Napi::Object RuntimeInfoToObject(Napi::Env env, const RuntimeInfo& info) {
   result.Set("openxrHostDetected", info.openxr_host_detected);
   result.Set("openxrHostProcessId", info.openxr_host_process_id);
   result.Set("openxrHostApplicationName", info.openxr_host_application_name);
+  result.Set("openxrHostRuntimeName", info.openxr_host_runtime_name);
+  result.Set("openxrHostRuntimeVersion", info.openxr_host_runtime_version);
+  result.Set("openxrHostSessionStartedAtMs", static_cast<double>(info.openxr_host_session_started_at_ms));
   result.Set("openxrHostGraphicsApi", info.openxr_host_graphics_api);
   result.Set("openxrHostAdapterLuid", info.openxr_host_adapter_luid);
   result.Set("openxrProtocolVersion", info.openxr_protocol_version);
@@ -295,6 +298,12 @@ Napi::Object RuntimeInfoToObject(Napi::Env env, const RuntimeInfo& info) {
   result.Set("libovrHostBinaryPath", info.libovr_host_binary_path);
   result.Set("openvrAvailable", info.openvr_available);
   result.Set("openvrRuntimeInstalled", info.openvr_runtime_installed);
+  result.Set("openvrHostRelayAvailable", info.openvr_host_relay_available);
+  result.Set("openvrHostRelayActive", info.openvr_host_relay_active);
+  result.Set("openvrHostRelayConnected", info.openvr_host_relay_connected);
+  result.Set("openvrSubmittedFrameSequence", static_cast<double>(info.openvr_submitted_frame_sequence));
+  result.Set("openvrConsumedFrameSequence", static_cast<double>(info.openvr_consumed_frame_sequence));
+  result.Set("openvrTextureSubmissionCount", static_cast<double>(info.openvr_texture_submission_count));
   result.Set("openvrRuntimePath", info.openvr_runtime_path);
   result.Set("openvrSceneApplicationState", info.openvr_scene_application_state);
   result.Set("openvrSceneProcessId", info.openvr_scene_process_id);

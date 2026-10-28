@@ -20,6 +20,7 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <poll.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -73,6 +74,8 @@ struct InstanceState {
   PFN_xrGetInstanceProcAddr next_gipa = nullptr;
   Dispatch dispatch;
   std::string application_name;
+  std::string runtime_name;
+  uint64_t runtime_version = 0;
 };
 
 struct SessionState {
@@ -135,8 +138,45 @@ std::condition_variable g_frame_condition;
 FrameState g_frame;
 std::atomic<bool> g_stop{true};
 std::thread g_socket_thread;
+std::thread g_presence_thread;
 std::mutex g_socket_mutex;
 int g_socket = -1;
+
+void PresenceMain(int server, HostPresence presence) {
+  while (!g_stop.load()) {
+    pollfd descriptor{server, POLLIN, 0};
+    if (poll(&descriptor, 1, 100) <= 0) continue;
+    const int client = accept4(server, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
+    if (client < 0) continue;
+    ucred credentials{};
+    socklen_t size = sizeof(credentials);
+    if (getsockopt(client, SOL_SOCKET, SO_PEERCRED, &credentials, &size) == 0 && credentials.uid == geteuid()) {
+      send(client, &presence, sizeof(presence), MSG_NOSIGNAL);
+    }
+    close(client);
+  }
+  close(server);
+}
+
+void StartPresence(const LayerHello& hello, const InstanceState& owner) {
+  const int server = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+  if (server < 0) return;
+  sockaddr_un address{};
+  const socklen_t length = MakeHostSocketAddress(&address, hello.process_id);
+  if (!length || bind(server, reinterpret_cast<sockaddr*>(&address), length) != 0 || listen(server, 8) != 0) {
+    close(server);
+    return;
+  }
+  HostPresence presence{};
+  presence.hello = hello;
+  presence.hello.header.type = MessageType::kHostPresence;
+  presence.hello.header.byte_size = sizeof(presence);
+  std::strncpy(presence.runtime_name, owner.runtime_name.c_str(), sizeof(presence.runtime_name) - 1);
+  presence.runtime_version = owner.runtime_version;
+  presence.session_started_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::system_clock::now().time_since_epoch()).count();
+  g_presence_thread = std::thread(PresenceMain, server, presence);
+}
 
 bool SyncDmabuf(int fd, uint64_t flags) {
   dma_buf_sync sync{};
@@ -990,6 +1030,7 @@ XrResult XRAPI_CALL LayerCreateSession(XrInstance instance, const XrSessionCreat
       hello.graphics_binding = state->graphics_api == SessionState::GraphicsApi::kVulkan
         ? XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR : XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR;
       std::strncpy(hello.application_name, owner->application_name.c_str(), sizeof(hello.application_name) - 1);
+      StartPresence(hello, *owner);
       g_socket_thread = std::thread(SocketMain, hello);
     }
     return result;
@@ -1004,6 +1045,7 @@ XrResult XRAPI_CALL LayerDestroySession(XrSession session) {
     { std::lock_guard<std::mutex> lock(g_socket_mutex); if (g_socket >= 0) shutdown(g_socket, SHUT_RDWR); }
     CloseFrame();
     if (g_socket_thread.joinable()) g_socket_thread.join();
+    if (g_presence_thread.joinable()) g_presence_thread.join();
     DestroyOverlay(*state);
     if (state->stage_space) state->instance->dispatch.DestroySpace(state->stage_space);
     if (state->local_space) state->instance->dispatch.DestroySpace(state->local_space);
@@ -1123,6 +1165,15 @@ XrResult XRAPI_CALL LayerCreateApiLayerInstance(const XrInstanceCreateInfo* info
     if (!LoadDispatch(state)) { PFN_xrVoidFunction destroy = nullptr; state->next_gipa(*instance, "xrDestroyInstance", &destroy); if (destroy) reinterpret_cast<PFN_xrDestroyInstance>(destroy)(*instance); return XR_ERROR_INITIALIZATION_FAILED; }
     Load(state, "xrCreateVulkanDeviceKHR", &state->dispatch.CreateVulkanDeviceKHR);
     Load(state, "xrGetVulkanDeviceExtensionsKHR", &state->dispatch.GetVulkanDeviceExtensionsKHR);
+    PFN_xrGetInstanceProperties get_properties = nullptr;
+    if (Load(state, "xrGetInstanceProperties", &get_properties) && get_properties) {
+      XrInstanceProperties properties{XR_TYPE_INSTANCE_PROPERTIES};
+      if (XR_SUCCEEDED(get_properties(*instance, &properties))) {
+        state->runtime_name.assign(properties.runtimeName,
+          strnlen(properties.runtimeName, sizeof(properties.runtimeName)));
+        state->runtime_version = properties.runtimeVersion;
+      }
+    }
     { std::lock_guard<std::mutex> lock(g_mutex); g_instances[*instance] = state; }
     return XR_SUCCESS;
   } catch (...) { return XR_ERROR_OUT_OF_MEMORY; }

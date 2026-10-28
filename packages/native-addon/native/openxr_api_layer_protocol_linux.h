@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
+#include <string>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -15,6 +17,7 @@ constexpr uint32_t kMaxPlanes = 4;
 constexpr char kSocketName[] = "electron-vr-openxr-overlay-v4";
 constexpr uint32_t kGraphicsBindingOpenGLXlib = 1000023001;
 constexpr uint32_t kGraphicsBindingVulkan = 1000025000;  // Vulkan and Vulkan2 alias this value.
+constexpr uint32_t kGraphicsBindingOpenVRRelay = 0x4556524f;
 
 // Linux abstract Unix sockets are visible across mount namespaces when the
 // processes share a network namespace (as Steam and Flatpak normally do).
@@ -27,10 +30,41 @@ inline socklen_t MakeSocketAddress(sockaddr_un* address) {
   return static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + 1 + length);
 }
 
+inline std::string HostSocketPrefix() {
+  return "electron-vr-openxr-host-v1-" + std::to_string(geteuid()) + "-";
+}
+
+inline socklen_t MakeHostSocketAddress(sockaddr_un* address, uint32_t process_id) {
+  *address = {};
+  address->sun_family = AF_UNIX;
+  char pid_namespace[64] = {};
+  const ssize_t size = readlink("/proc/self/ns/pid", pid_namespace, sizeof(pid_namespace) - 1);
+  const std::string scope = size > 0 ? std::string(pid_namespace, size) : "unknown";
+  // PID 2 in one Flatpak is not PID 2 in another. Namespace-qualified names
+  // also let multiple game containers publish independently.
+  const std::string name = HostSocketPrefix() + std::to_string(process_id) + "-" + scope;
+  if (name.size() + 1 > sizeof(address->sun_path)) return 0;
+  std::memcpy(address->sun_path + 1, name.data(), name.size());
+  return static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + 1 + name.size());
+}
+
+inline std::string OpenVRRelayName(bool discovery) {
+  return std::string(discovery ? "electron-vr-openvr-host-v1-" : "electron-vr-openvr-overlay-v1-") + std::to_string(geteuid());
+}
+
+inline socklen_t MakeOpenVRRelayAddress(sockaddr_un* address, bool discovery) {
+  *address = {};
+  address->sun_family = AF_UNIX;
+  const std::string name = OpenVRRelayName(discovery);
+  std::memcpy(address->sun_path + 1, name.data(), name.size());
+  return static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + 1 + name.size());
+}
+
 enum class MessageType : uint16_t {
   kHello = 1,
   kSnapshot = 2,
   kFrameAck = 3,
+  kHostPresence = 4,
 };
 
 enum class PlacementMode : uint32_t {
@@ -52,6 +86,15 @@ struct LayerHello {
   uint32_t process_id = 0;
   uint32_t graphics_binding = 0;
   char application_name[128] = {};
+};
+
+// Separate read-only endpoint: discovery never claims the frame connection or
+// requires host /proc access. The v4 frame handshake remains unchanged.
+struct HostPresence {
+  LayerHello hello;
+  char runtime_name[128] = {};
+  uint64_t runtime_version = 0;
+  uint64_t session_started_at_ms = 0;
 };
 
 struct Plane {

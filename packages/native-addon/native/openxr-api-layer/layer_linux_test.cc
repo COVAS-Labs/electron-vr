@@ -1,7 +1,10 @@
 #define XR_NO_PROTOTYPES
+#define XR_USE_GRAPHICS_API_VULKAN
 
 #include <dlfcn.h>
+#include <vulkan/vulkan.h>
 #include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
 #include <openxr/openxr_loader_negotiation.h>
 
 #include "../openxr_api_layer_protocol_linux.h"
@@ -9,6 +12,9 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <chrono>
+#include <thread>
+#include <poll.h>
 
 namespace {
 constexpr char kLayerName[] = "XR_APILAYER_ELECTRON_VR_overlay";
@@ -29,6 +35,11 @@ STUB(ReleaseImage, (XrSwapchain, const XrSwapchainImageReleaseInfo*))
 
 XrResult XRAPI_CALL CreateSession(XrInstance, const XrSessionCreateInfo*, XrSession* session) { *session = g_session; return XR_SUCCESS; }
 XrResult XRAPI_CALL GetSystemProperties(XrInstance, XrSystemId, XrSystemProperties* properties) { properties->graphicsProperties.maxLayerCount = 16; return XR_SUCCESS; }
+XrResult XRAPI_CALL GetInstanceProperties(XrInstance, XrInstanceProperties* properties) {
+  std::strcpy(properties->runtimeName, "host-runtime-test");
+  properties->runtimeVersion = XR_MAKE_VERSION(7, 5, 3);
+  return XR_SUCCESS;
+}
 XrResult XRAPI_CALL EnumerateSpaces(XrSession, uint32_t capacity, uint32_t* count, XrReferenceSpaceType* types) { *count = 0; (void)capacity; (void)types; return XR_SUCCESS; }
 XrResult XRAPI_CALL EnumerateFormats(XrSession, uint32_t, uint32_t* count, int64_t*) { *count = 0; return XR_SUCCESS; }
 XrResult XRAPI_CALL EnumerateImages(XrSwapchain, uint32_t, uint32_t* count, XrSwapchainImageBaseHeader*) { *count = 0; return XR_SUCCESS; }
@@ -38,6 +49,7 @@ XrResult XRAPI_CALL Gipa(XrInstance, const char* name, PFN_xrVoidFunction* outpu
   struct Entry { const char* name; PFN_xrVoidFunction function; };
   const Entry entries[] = {
     {"xrDestroyInstance", reinterpret_cast<PFN_xrVoidFunction>(DestroyInstance)}, {"xrGetSystemProperties", reinterpret_cast<PFN_xrVoidFunction>(GetSystemProperties)},
+    {"xrGetInstanceProperties", reinterpret_cast<PFN_xrVoidFunction>(GetInstanceProperties)},
     {"xrCreateSession", reinterpret_cast<PFN_xrVoidFunction>(CreateSession)}, {"xrDestroySession", reinterpret_cast<PFN_xrVoidFunction>(DestroySession)},
     {"xrEnumerateReferenceSpaces", reinterpret_cast<PFN_xrVoidFunction>(EnumerateSpaces)}, {"xrCreateReferenceSpace", reinterpret_cast<PFN_xrVoidFunction>(CreateReferenceSpace)},
     {"xrDestroySpace", reinterpret_cast<PFN_xrVoidFunction>(DestroySpace)}, {"xrEnumerateSwapchainFormats", reinterpret_cast<PFN_xrVoidFunction>(EnumerateFormats)},
@@ -79,9 +91,28 @@ bool TestAbstractCompanionAddress() {
   close(server);
   return Expect(authenticated, "connects to abstract companion socket with matching UID");
 }
+
+bool TestHostPresence() {
+  using namespace electron_vr::openxr_layer_linux;
+  sockaddr_un address{};
+  const socklen_t length = MakeHostSocketAddress(&address, getpid());
+  const int client = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+  if (client < 0) return false;
+  const bool connected = connect(client, reinterpret_cast<sockaddr*>(&address), length) == 0;
+  pollfd descriptor{client, POLLIN, 0};
+  HostPresence presence{};
+  const bool received = connected && poll(&descriptor, 1, 500) > 0 &&
+    recv(client, &presence, sizeof(presence), MSG_TRUNC) == sizeof(presence);
+  close(client);
+  return Expect(received && presence.hello.header.type == MessageType::kHostPresence &&
+    presence.hello.header.byte_size == sizeof(presence) && presence.hello.process_id == getpid() &&
+    std::strcmp(presence.runtime_name, "host-runtime-test") == 0 &&
+    presence.runtime_version == XR_MAKE_VERSION(7, 5, 3) && presence.session_started_at_ms > 0,
+    "discovers actual host runtime without opening a companion connection");
+}
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
   bool passed = true;
   passed &= TestAbstractCompanionAddress();
   void* library = dlopen("./libelectron_vr_openxr_layer.so", RTLD_NOW | RTLD_LOCAL);
@@ -102,6 +133,27 @@ int main() {
   request.getInstanceProcAddr(instance, "xrEndFrame", &function); XrFrameEndInfo frame{XR_TYPE_FRAME_END_INFO};
   passed &= Expect(reinterpret_cast<PFN_xrEndFrame>(function)(session, &frame) == XR_SUCCESS && g_frame == &frame, "no companion forwards frame unchanged");
   request.getInstanceProcAddr(instance, "xrDestroySession", &function); reinterpret_cast<PFN_xrDestroySession>(function)(session);
+  XrGraphicsBindingVulkanKHR binding{XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR};
+  session_info.next = &binding;
+  for (int iteration = 0; iteration < 2; ++iteration) {
+    request.getInstanceProcAddr(instance, "xrCreateSession", &function);
+    passed &= Expect(reinterpret_cast<PFN_xrCreateSession>(function)(instance, &session_info, &session) == XR_SUCCESS,
+      "creates supported host session");
+    passed &= TestHostPresence();
+    if (argc == 3 && std::string(argv[1]) == "--host-seconds" && iteration == 0) {
+      std::cout << "HOST_READY " << getpid() << std::endl;
+      std::this_thread::sleep_for(std::chrono::seconds(std::stoi(argv[2])));
+    }
+    request.getInstanceProcAddr(instance, "xrDestroySession", &function);
+    reinterpret_cast<PFN_xrDestroySession>(function)(session);
+    using namespace electron_vr::openxr_layer_linux;
+    sockaddr_un address{};
+    const socklen_t length = MakeHostSocketAddress(&address, getpid());
+    const int client = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+    passed &= Expect(client >= 0 && connect(client, reinterpret_cast<sockaddr*>(&address), length) != 0,
+      "host discovery disappears after session destruction");
+    if (client >= 0) close(client);
+  }
   request.getInstanceProcAddr(instance, "xrDestroyInstance", &function); reinterpret_cast<PFN_xrDestroyInstance>(function)(instance);
   dlclose(library); if (passed) std::cout << "Linux OpenXR API-layer tests passed.\n"; return passed ? 0 : 1;
 }

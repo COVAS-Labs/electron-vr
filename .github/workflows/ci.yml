@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-latest
+          - ubuntu-24.04
           - windows-2022
 
     steps:
@@ -111,6 +111,10 @@ jobs:
         if: runner.os == 'Linux'
         run: xvfb-run -a npm run test:e2e:runtime-info
 
+      - name: Verify Linux game-side runtime discovery without a local runtime
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node --test tests/e2e/linux-host-discovery.test.mjs
+
       - name: Run runtime info smoke test (Windows)
         if: runner.os == 'Windows'
         run: npm run test:e2e:runtime-info
@@ -126,7 +130,7 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-latest
+          - ubuntu-24.04
           - windows-2022
 
     steps:
@@ -175,7 +179,7 @@ jobs:
 
   e2e:
     name: E2E Demo App
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v5

@@ -132,6 +132,16 @@
       {
         "targets": [
           {
+            "target_name": "electron_vr_openvr_host",
+            "type": "executable",
+            "sources": ["native/src/openvr_host_linux.cc", "native/src/openvr_backend.cc"],
+            "include_dirs": ["<(openvr_sdk_dir)/headers"],
+            "libraries": ["-L<(openvr_sdk_dir)/lib/linux64", "-lopenvr_api", "-lEGL", "-lGLESv2", "-lGL", "-lX11", "-lvulkan", "-ldl", "-lpthread"],
+            "cflags_cc!": ["-fno-exceptions"],
+            "cflags_cc": ["-std=c++17", "-fexceptions"],
+            "ldflags": ["-Wl,-z,origin", "-Wl,-rpath,\\$$ORIGIN"]
+          },
+          {
             "target_name": "electron_vr_openxr_layer",
             "type": "shared_library",
             "product_name": "electron_vr_openxr_layer",

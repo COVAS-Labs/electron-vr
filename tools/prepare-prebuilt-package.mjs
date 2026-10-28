@@ -42,6 +42,7 @@ const windowsLayerAssets = [
   "protocol.json"
 ];
 const linuxLayerAssets = [
+  "electron_vr_openvr_host",
   "libelectron_vr_openxr_layer.so",
   "electron_vr_openxr_layer_linux.json"
 ];
@@ -91,8 +92,9 @@ const metadata = {
     openxrApiLayer: {
       manifest: "electron_vr_openxr_layer_linux.json",
       library: "libelectron_vr_openxr_layer.so",
-      protocolVersion: 1
-    }
+      protocolVersion: 4
+    },
+    openvrHostCompanion: { executable: "electron_vr_openvr_host", protocolVersion: 4 }
   } : {})
 };
 

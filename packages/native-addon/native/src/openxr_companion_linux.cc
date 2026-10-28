@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -39,6 +40,8 @@ struct State {
   int server = -1;
   int client = -1;
   bool initialized = false;
+  bool openvr_relay = false;
+  uint64_t consumed_sequence = 0;
   LayerHello hello{};
   OverlaySnapshot snapshot{};
 };
@@ -96,7 +99,10 @@ bool ReceiveFrameAckLocked() {
 
 bool SendFrameLocked(int fd, std::string* error) {
   if (g_state.client < 0) return true;
-  if (SendSnapshotLocked(&fd, 1) && ReceiveFrameAckLocked()) return true;
+  if (SendSnapshotLocked(&fd, 1) && ReceiveFrameAckLocked()) {
+    g_state.consumed_sequence = g_state.snapshot.header.sequence;
+    return true;
+  }
   close(g_state.client);
   g_state.client = -1;
   SetError(error, "Linux API-layer frame acknowledgment failed.");
@@ -122,9 +128,12 @@ void ServerMain() {
       continue;
     }
     LayerHello hello{};
+    const timeval timeout{0, 200000};
+    setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     if (recv(client, &hello, sizeof(hello), MSG_WAITALL) != sizeof(hello) ||
         hello.header.magic != kProtocolMagic || hello.header.version != kProtocolVersion ||
-        hello.header.type != MessageType::kHello) {
+        hello.header.type != MessageType::kHello || hello.header.byte_size != sizeof(hello) ||
+        hello.header.fd_count != 0 || !std::memchr(hello.application_name, '\0', sizeof(hello.application_name))) {
       close(client);
       continue;
     }
@@ -132,9 +141,43 @@ void ServerMain() {
     if (g_state.client >= 0) close(g_state.client);
     g_state.client = client;
     g_state.hello = hello;
+    g_state.consumed_sequence = 0;
+    g_state.snapshot.header.sequence = 0;
     g_state.snapshot.revision++;
     SendSnapshotLocked(nullptr, 0);
   }
+}
+
+bool ReadHostPresence(const std::string& name, HostPresence* presence, pid_t* peer_pid = nullptr) {
+  if (name.size() + 1 > sizeof(sockaddr_un::sun_path)) return false;
+  const int client = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+  if (client < 0) return false;
+  sockaddr_un address{};
+  address.sun_family = AF_UNIX;
+  std::memcpy(address.sun_path + 1, name.data(), name.size());
+  const auto length = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + 1 + name.size());
+  const int connected = connect(client, reinterpret_cast<sockaddr*>(&address), length);
+  bool valid = connected == 0;
+  if (connected < 0 && errno == EINPROGRESS) {
+    pollfd descriptor{client, POLLOUT, 0};
+    int error = 0;
+    socklen_t size = sizeof(error);
+    valid = poll(&descriptor, 1, 50) > 0 &&
+      getsockopt(client, SOL_SOCKET, SO_ERROR, &error, &size) == 0 && error == 0;
+  }
+  ucred credentials{};
+  socklen_t size = sizeof(credentials);
+  valid = valid && getsockopt(client, SOL_SOCKET, SO_PEERCRED, &credentials, &size) == 0 && credentials.uid == geteuid();
+  if (valid && peer_pid) *peer_pid = credentials.pid;
+  pollfd descriptor{client, POLLIN, 0};
+  valid = valid && poll(&descriptor, 1, 50) > 0 &&
+    recv(client, presence, sizeof(*presence), MSG_TRUNC) == sizeof(*presence);
+  close(client);
+  return valid && presence->hello.header.magic == kProtocolMagic &&
+    presence->hello.header.version == kProtocolVersion && presence->hello.header.type == MessageType::kHostPresence &&
+    presence->hello.header.byte_size == sizeof(*presence) && presence->hello.header.fd_count == 0 &&
+    std::memchr(presence->hello.application_name, '\0', sizeof(presence->hello.application_name)) &&
+    std::memchr(presence->runtime_name, '\0', sizeof(presence->runtime_name));
 }
 
 void ApplyPlacement(const OverlayPlacement& placement) {
@@ -150,6 +193,84 @@ void ApplyPlacement(const OverlayPlacement& placement) {
 }
 #endif
 }  // namespace
+
+void PopulateOpenXRHostPresenceLinux(RuntimeInfo* info) {
+#if defined(__linux__)
+  if (!info) return;
+  const uint32_t preferred_pid = info->openxr_host_process_id;
+  info->openxr_host_detected = false;
+  info->openxr_host_process_id = 0;
+  info->openxr_host_application_name.clear();
+  info->openxr_host_graphics_api.clear();
+  info->openxr_host_runtime_name.clear();
+  info->openxr_host_runtime_version.clear();
+  info->openxr_host_session_started_at_ms = 0;
+  std::ifstream sockets("/proc/net/unix");
+  const std::string prefix = "@" + HostSocketPrefix();
+  std::string line;
+  HostPresence selected{};
+  bool found = false;
+  unsigned attempts = 0;
+  while (std::getline(sockets, line) && attempts < 32) {
+    const size_t start = line.find(prefix);
+    if (start == std::string::npos) continue;
+    ++attempts;
+    HostPresence presence{};
+    pid_t peer_pid = -1;
+    if (!ReadHostPresence(line.substr(start + 1), &presence, &peer_pid)) continue;
+    // SO_PEERCRED translates PID namespaces; the game's reported local PID
+    // may numerically equal ours even when it is a different process.
+    if (peer_pid == getpid()) continue;
+    const auto binding = presence.hello.graphics_binding;
+    if (binding != kGraphicsBindingVulkan && binding != kGraphicsBindingOpenGLXlib) continue;
+    if (!found || presence.hello.process_id == preferred_pid) selected = presence;
+    found = true;
+    if (presence.hello.process_id == preferred_pid) break;
+  }
+  if (!found) return;
+  info->openxr_host_detected = true;
+  info->openxr_host_process_id = selected.hello.process_id;
+  info->openxr_host_application_name = selected.hello.application_name;
+  info->openxr_host_graphics_api = selected.hello.graphics_binding == kGraphicsBindingVulkan ? "vulkan" : "opengl-xlib";
+  info->openxr_host_runtime_name = selected.runtime_name;
+  const uint64_t version = selected.runtime_version;
+  info->openxr_host_runtime_version = std::to_string(version >> 48) + "." +
+    std::to_string((version >> 32) & 0xffff) + "." + std::to_string(version & 0xffffffff);
+  info->openxr_host_session_started_at_ms = selected.session_started_at_ms;
+  info->openxr_protocol_version = kProtocolVersion;
+#else
+  (void)info;
+#endif
+}
+
+void PopulateOpenVRRelayPresenceLinux(RuntimeInfo* info) {
+#if defined(__linux__)
+  if (!info) return;
+  static std::mutex cache_mutex;
+  static std::chrono::steady_clock::time_point checked;
+  static HostPresence presence{};
+  static bool available = false;
+  std::lock_guard<std::mutex> lock(cache_mutex);
+  const auto now = std::chrono::steady_clock::now();
+  if (now - checked >= std::chrono::milliseconds(250)) {
+    available = ReadHostPresence(OpenVRRelayName(true), &presence) &&
+      presence.hello.graphics_binding == kGraphicsBindingOpenVRRelay;
+    checked = std::chrono::steady_clock::now();
+  }
+  info->openvr_scene_process_id = 0;
+  info->openvr_scene_application_name.clear();
+  info->openvr_scene_application_key.clear();
+  info->openvr_texture_submission_count = 0;
+  info->openvr_host_relay_available = available;
+  if (info->openvr_host_relay_available) {
+    info->openvr_scene_process_id = presence.hello.process_id;
+    info->openvr_scene_application_name = presence.hello.application_name;
+    info->openvr_texture_submission_count = presence.hello.header.sequence;
+  }
+#else
+  (void)info;
+#endif
+}
 
 bool IsOpenXRApiLayerInstalledLinux(bool* enabled, std::string* path) {
 #if defined(__linux__)
@@ -171,14 +292,15 @@ bool IsOpenXRApiLayerInstalledLinux(bool* enabled, std::string* path) {
 #endif
 }
 
-bool InitializeOpenXRCompanionLinux(const InitializeOptions& options, std::string* error) {
+bool InitializeOpenXRCompanionLinux(const InitializeOptions& options, std::string* error, bool openvr_relay) {
 #if defined(__linux__)
-  if (options.curvature != 0.0f) { SetError(error, "Linux API-layer curvature is not supported yet."); return false; }
+  if (!openvr_relay && options.curvature != 0.0f) { SetError(error, "Linux API-layer curvature is not supported yet."); return false; }
   ShutdownOpenXRCompanionLinux();
+  g_state.openvr_relay = openvr_relay;
   g_state.server = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
   if (g_state.server < 0) { SetError(error, "Failed to create Linux OpenXR companion socket."); return false; }
   sockaddr_un address{};
-  const socklen_t address_length = MakeSocketAddress(&address);
+  const socklen_t address_length = openvr_relay ? MakeOpenVRRelayAddress(&address, false) : MakeSocketAddress(&address);
   if (bind(g_state.server, reinterpret_cast<sockaddr*>(&address), address_length) != 0 || listen(g_state.server, 1) != 0) {
     SetError(error, "Failed to bind Linux OpenXR companion socket: " + std::string(std::strerror(errno)));
     ShutdownOpenXRCompanionLinux();
@@ -187,6 +309,7 @@ bool InitializeOpenXRCompanionLinux(const InitializeOptions& options, std::strin
   g_state.snapshot = {};
   g_state.snapshot.visible = options.visible ? 1U : 0U;
   g_state.snapshot.size_meters = options.size_meters;
+  g_state.snapshot.curvature = options.curvature;
   ApplyPlacement(options.placement);
   g_state.initialized = true;
   g_state.stopping.store(false);
@@ -194,7 +317,7 @@ bool InitializeOpenXRCompanionLinux(const InitializeOptions& options, std::strin
   if (error != nullptr) error->clear();
   return true;
 #else
-  (void)options; SetError(error, "Linux OpenXR companion is available only on Linux."); return false;
+  (void)options; (void)openvr_relay; SetError(error, "Linux OpenXR companion is available only on Linux."); return false;
 #endif
 }
 
@@ -296,19 +419,54 @@ bool SetOpenXRCompanionSizeMetersLinux(float size, std::string* error) {
 #endif
 }
 bool SetOpenXRCompanionCurvatureLinux(float curvature, std::string* error) {
-  if (curvature != 0.0f) { SetError(error, "Linux API-layer curvature is not supported yet."); return false; }
+#if defined(__linux__)
+  std::lock_guard<std::mutex> lock(g_state.mutex);
+  if (!g_state.openvr_relay && curvature != 0.0f) { SetError(error, "Linux API-layer curvature is not supported yet."); return false; }
+  g_state.snapshot.curvature = curvature;
+  g_state.snapshot.revision++;
+  SendSnapshotLocked(nullptr, 0);
+#else
+  if (curvature != 0.0f) return false;
+#endif
   if (error) error->clear(); return true;
 }
 void PopulateOpenXRCompanionRuntimeInfoLinux(RuntimeInfo* info) {
 #if defined(__linux__)
   if (!info) return; std::lock_guard<std::mutex> lock(g_state.mutex);
+  if (g_state.client >= 0) {
+    pollfd descriptor{g_state.client, 0, 0};
+    if (poll(&descriptor, 1, 0) > 0 && (descriptor.revents & (POLLHUP | POLLERR | POLLNVAL))) {
+      close(g_state.client);
+      g_state.client = -1;
+    }
+  }
   info->openxr_companion_connected = g_state.client >= 0;
-  info->openxr_host_process_id = g_state.client >= 0 ? g_state.hello.process_id : 0;
-  info->openxr_host_application_name = g_state.client >= 0 ? g_state.hello.application_name : "";
-  info->openxr_host_graphics_api = g_state.client < 0 ? "" :
-    (g_state.hello.graphics_binding == kGraphicsBindingVulkan ? "vulkan" :
-      (g_state.hello.graphics_binding == kGraphicsBindingOpenGLXlib ? "opengl-xlib" : ""));
+  if (g_state.client >= 0) {
+    info->openxr_host_detected = true;
+    info->openxr_host_process_id = g_state.hello.process_id;
+    info->openxr_host_application_name = g_state.hello.application_name;
+    info->openxr_host_graphics_api =
+      (g_state.hello.graphics_binding == kGraphicsBindingVulkan ? "vulkan" :
+        (g_state.hello.graphics_binding == kGraphicsBindingOpenGLXlib ? "opengl-xlib" : ""));
+  }
+  info->openxr_submitted_frame_sequence = g_state.client >= 0 ? g_state.snapshot.header.sequence : 0;
+  info->openxr_consumed_frame_sequence = g_state.client >= 0 ? g_state.consumed_sequence : 0;
   info->openxr_protocol_version = kProtocolVersion;
+#else
+  (void)info;
+#endif
+}
+
+void PopulateOpenVRRelayRuntimeInfoLinux(RuntimeInfo* info) {
+#if defined(__linux__)
+  if (!info) return;
+  RuntimeInfo transport;
+  info->openvr_host_relay_active = true;
+  PopulateOpenXRCompanionRuntimeInfoLinux(&transport);
+  info->openvr_host_relay_connected = transport.openxr_companion_connected;
+  info->openvr_submitted_frame_sequence = transport.openxr_submitted_frame_sequence;
+  info->openvr_consumed_frame_sequence = transport.openxr_consumed_frame_sequence;
+  PopulateOpenVRRelayPresenceLinux(info);
 #else
   (void)info;
 #endif
@@ -327,6 +485,8 @@ void ShutdownOpenXRCompanionLinux() {
   std::lock_guard<std::mutex> lock(g_state.mutex);
   if (g_state.client >= 0) close(g_state.client);
   g_state.client = -1; g_state.initialized = false;
+  g_state.hello = {};
+  g_state.consumed_sequence = 0;
 #endif
 }
 

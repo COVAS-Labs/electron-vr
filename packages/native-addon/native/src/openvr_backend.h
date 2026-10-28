@@ -7,7 +7,7 @@
 
 namespace vrbridge {
 
-bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* error_message);
+bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* error_message, bool background = false);
 bool SubmitOpenVRFrameWindows(uint64_t shared_handle, std::string* error_message);
 bool SubmitOpenVRFrameLinux(const LinuxTextureInfo& texture_info, std::string* error_message);
 bool SubmitOpenVRSoftwareFrame(const SoftwareFrameInfo& frame_info, std::string* error_message);

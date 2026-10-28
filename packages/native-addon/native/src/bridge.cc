@@ -94,8 +94,49 @@ BridgeState& GetBridgeState() {
   return bridge_state;
 }
 
-RuntimeInfo BridgeState::GetRuntimeInfo() const {
+RuntimeInfo BridgeState::GetRuntimeInfo() {
+  RefreshLinuxBackend();
   return GetLiveRuntimeInfo();
+}
+
+void BridgeState::RefreshLinuxBackend() {
+#if defined(__linux__)
+  if (!initialized_) return;
+  const auto now = std::chrono::steady_clock::now();
+  if (now - last_backend_check_ < std::chrono::seconds(2)) return;
+  last_backend_check_ = now;
+  RuntimeInfo live = GetLiveRuntimeInfo();
+  bool can_switch = false;
+  if (live.selected_backend == BackendKind::kOpenXR && live.openxr_mode == OpenXRMode::kApiLayer) {
+    can_switch = !live.openxr_host_detected && !live.openxr_companion_connected;
+  } else if (live.selected_backend == BackendKind::kOpenVR) {
+    // Never background-init/shutdown OpenVR while its overlay owns the client.
+    // Query the read-only OpenXR host endpoint first instead.
+    PopulateOpenXRHostPresenceLinux(&live);
+    can_switch = live.openxr_host_detected;
+  }
+  if (!can_switch) return;
+  const RuntimeInfo target = ProbeRuntime(live.selected_backend != BackendKind::kOpenVR);
+  if (live.selected_backend == BackendKind::kOpenVR && !target.openxr_host_detected) return;
+  if (target.selected_backend == runtime_info_.selected_backend) return;
+  const RuntimeInfo previous = runtime_info_;
+  const InitializeOptions options = options_;
+  InitializeOptions target_options = options;
+  if (target.selected_backend == BackendKind::kOpenXR && target.openxr_mode == OpenXRMode::kApiLayer) {
+    target_options.curvature = 0.0f;
+  }
+  Shutdown();
+  if (!InitializeWithRuntime(target_options, target)) {
+    // A racing scene/runtime shutdown must not leave an otherwise usable
+    // waiting overlay destroyed.
+    Shutdown();
+    InitializeWithRuntime(options, previous);
+  } else {
+    // The API-layer quad is flat, but retain the user's preferred curvature
+    // for a later return to a backend that supports it.
+    options_.curvature = options.curvature;
+  }
+#endif
 }
 
 RuntimeInfo BridgeState::GetLiveRuntimeInfo() const {
@@ -105,6 +146,7 @@ RuntimeInfo BridgeState::GetLiveRuntimeInfo() const {
     case BackendKind::kOpenXR:
       if (runtime_info.openxr_mode == OpenXRMode::kApiLayer) {
 #if defined(__linux__)
+        PopulateOpenXRHostPresenceLinux(&runtime_info);
         PopulateOpenXRCompanionRuntimeInfoLinux(&runtime_info);
 #else
         if (!initialized_) PopulateOpenXRHostPresence(&runtime_info);
@@ -115,6 +157,12 @@ RuntimeInfo BridgeState::GetLiveRuntimeInfo() const {
       }
       break;
     case BackendKind::kOpenVR:
+#if defined(__linux__)
+      if (runtime_info.openvr_host_relay_available) {
+        PopulateOpenVRRelayRuntimeInfoLinux(&runtime_info);
+        break;
+      }
+#endif
       PopulateOpenVRRuntimeInfo(&runtime_info);
       break;
     case BackendKind::kMock:
@@ -127,7 +175,11 @@ RuntimeInfo BridgeState::GetLiveRuntimeInfo() const {
 }
 
 bool BridgeState::Initialize(const InitializeOptions& options) {
-  runtime_info_ = ProbeRuntime();
+  return InitializeWithRuntime(options, ProbeRuntime());
+}
+
+bool BridgeState::InitializeWithRuntime(const InitializeOptions& options, const RuntimeInfo& runtime) {
+  runtime_info_ = runtime;
   options_ = options;
   frame_count_ = 0;
   last_error_.clear();
@@ -168,6 +220,12 @@ bool BridgeState::Initialize(const InitializeOptions& options) {
         : InitializeOpenXRBackend(options_, &last_error_);
       break;
     case BackendKind::kOpenVR:
+#if defined(__linux__)
+      if (runtime_info_.openvr_host_relay_available) {
+        success = InitializeOpenXRCompanionLinux(options_, &last_error_, true);
+        break;
+      }
+#endif
       success = InitializeOpenVRBackend(options_, &last_error_);
       break;
     case BackendKind::kMock:
@@ -206,6 +264,12 @@ bool BridgeState::SubmitSharedTexture(const SharedTextureSubmission& texture_sub
         : SubmitOpenXRSharedTexture(texture_submission, &last_error_);
       break;
     case BackendKind::kOpenVR:
+#if defined(__linux__)
+      if (runtime_info_.openvr_host_relay_available) {
+        success = SubmitOpenXRCompanionFrameLinux(texture_submission.linux_texture, &last_error_);
+        break;
+      }
+#endif
       success = SubmitOpenVRSharedTexture(texture_submission, &last_error_);
       break;
     case BackendKind::kMock:
@@ -241,6 +305,12 @@ bool BridgeState::SubmitSoftwareFrame(const SoftwareFrameInfo& frame_info) {
       success = SubmitMockSoftwareFrame(frame_info, &last_error_);
       break;
     case BackendKind::kOpenVR:
+#if defined(__linux__)
+      if (runtime_info_.openvr_host_relay_available) {
+        success = SubmitOpenXRCompanionSoftwareFrameLinux(frame_info, &last_error_);
+        break;
+      }
+#endif
       success = SubmitOpenVRSoftwareFrame(frame_info, &last_error_);
       break;
     case BackendKind::kOpenXR:
@@ -283,6 +353,12 @@ bool BridgeState::SetOverlayPlacement(const OverlayPlacement& placement) {
         : SetOpenXRPlacement(placement, &last_error_);
       break;
     case BackendKind::kOpenVR:
+#if defined(__linux__)
+      if (runtime_info_.openvr_host_relay_available) {
+        success = SetOpenXRCompanionPlacementLinux(placement, &last_error_);
+        break;
+      }
+#endif
       success = SetOpenVRPlacement(placement, &last_error_);
       break;
     case BackendKind::kMock:
@@ -319,6 +395,12 @@ bool BridgeState::SetOverlayVisible(bool visible) {
         : SetOpenXRVisible(visible, &last_error_);
       break;
     case BackendKind::kOpenVR:
+#if defined(__linux__)
+      if (runtime_info_.openvr_host_relay_available) {
+        success = SetOpenXRCompanionVisibleLinux(visible, &last_error_);
+        break;
+      }
+#endif
       success = SetOpenVRVisible(visible, &last_error_);
       break;
     case BackendKind::kMock:
@@ -360,6 +442,12 @@ bool BridgeState::SetOverlaySizeMeters(float size_meters) {
         : SetOpenXRSizeMeters(size_meters, &last_error_);
       break;
     case BackendKind::kOpenVR:
+#if defined(__linux__)
+      if (runtime_info_.openvr_host_relay_available) {
+        success = SetOpenXRCompanionSizeMetersLinux(size_meters, &last_error_);
+        break;
+      }
+#endif
       success = SetOpenVRSizeMeters(size_meters, &last_error_);
       break;
     case BackendKind::kMock:
@@ -401,6 +489,12 @@ bool BridgeState::SetOverlayCurvature(float curvature) {
         : SetOpenXRCurvature(curvature, &last_error_);
       break;
     case BackendKind::kOpenVR:
+#if defined(__linux__)
+      if (runtime_info_.openvr_host_relay_available) {
+        success = SetOpenXRCompanionCurvatureLinux(curvature, &last_error_);
+        break;
+      }
+#endif
       success = SetOpenVRCurvature(curvature, &last_error_);
       break;
     case BackendKind::kMock:
@@ -433,6 +527,12 @@ void BridgeState::Shutdown() {
       }
       break;
     case BackendKind::kOpenVR:
+#if defined(__linux__)
+      if (runtime_info_.openvr_host_relay_available) {
+        ShutdownOpenXRCompanionLinux();
+        break;
+      }
+#endif
       ShutdownOpenVRBackend();
       break;
     case BackendKind::kMock:

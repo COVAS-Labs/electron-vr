@@ -550,9 +550,9 @@ bool OpenSharedTextureFromHandle(uint64_t shared_handle, std::string* error_mess
 #endif
 
 #if defined(_WIN32)
-bool InitializeVRSystem(vr::IVRSystem** system, vr::EVRInitError* init_error) {
+bool InitializeVRSystem(vr::IVRSystem** system, vr::EVRInitError* init_error, vr::EVRApplicationType type) {
   __try {
-    *system = vr::VR_Init(init_error, vr::VRApplication_Overlay);
+    *system = vr::VR_Init(init_error, type);
     return true;
   } __except (EXCEPTION_EXECUTE_HANDLER) {
     if (system != nullptr) {
@@ -609,8 +609,8 @@ bool SetPremultipliedOverlayFlag(vr::IVROverlay* overlay, vr::VROverlayHandle_t 
   }
 }
 #else
-bool InitializeVRSystem(vr::IVRSystem** system, vr::EVRInitError* init_error) {
-  *system = vr::VR_Init(init_error, vr::VRApplication_Overlay);
+bool InitializeVRSystem(vr::IVRSystem** system, vr::EVRInitError* init_error, vr::EVRApplicationType type) {
+  *system = vr::VR_Init(init_error, type);
   return true;
 }
 
@@ -2041,7 +2041,7 @@ void ResetState() {
 
 }  // namespace
 
-bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* error_message) {
+bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* error_message, bool background) {
   if (options.name.empty()) {
     SetError(error_message, "OpenVR backend requires a non-empty overlay name.");
     return false;
@@ -2050,7 +2050,7 @@ bool InitializeOpenVRBackend(const InitializeOptions& options, std::string* erro
   ShutdownOpenVRBackend();
 
   vr::EVRInitError init_error = vr::VRInitError_None;
-  if (!InitializeVRSystem(&g_state.system, &init_error)) {
+  if (!InitializeVRSystem(&g_state.system, &init_error, background ? vr::VRApplication_Background : vr::VRApplication_Overlay)) {
     SetError(error_message, "OpenVR initialization triggered a structured exception on Windows.");
     ResetState();
     return false;
@@ -2422,6 +2422,9 @@ bool SetOpenVRCurvature(float curvature, std::string* error_message) {
 
 void PopulateOpenVRRuntimeInfo(RuntimeInfo* runtime_info) {
   PopulateOpenVRSceneApplication(runtime_info);
+#if defined(__linux__)
+  if (runtime_info) runtime_info->openvr_texture_submission_count = g_state.vulkan_frame_count;
+#endif
 }
 
 void ShutdownOpenVRBackend() {

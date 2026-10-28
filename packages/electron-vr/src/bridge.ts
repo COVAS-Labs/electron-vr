@@ -31,6 +31,9 @@ export interface RuntimeInfo {
   openxrHostDetected: boolean;
   openxrHostProcessId: number;
   openxrHostApplicationName: string;
+  openxrHostRuntimeName: string;
+  openxrHostRuntimeVersion: string;
+  openxrHostSessionStartedAtMs: number;
   openxrHostGraphicsApi: string;
   openxrHostAdapterLuid: string;
   openxrProtocolVersion: number;
@@ -42,6 +45,12 @@ export interface RuntimeInfo {
   libovrHostBinaryPath: string;
   openvrAvailable: boolean;
   openvrRuntimeInstalled: boolean;
+  openvrHostRelayAvailable: boolean;
+  openvrHostRelayActive: boolean;
+  openvrHostRelayConnected: boolean;
+  openvrSubmittedFrameSequence: number;
+  openvrConsumedFrameSequence: number;
+  openvrTextureSubmissionCount: number;
   openvrRuntimePath: string;
   openvrSceneApplicationState: string;
   openvrSceneProcessId: number;
@@ -312,11 +321,20 @@ function sanitizeRuntimeInfo(runtimeInfo: RuntimeInfo): RuntimeInfo {
     openxrHostDetected: runtimeInfo.openxrHostDetected ?? false,
     openxrHostProcessId: runtimeInfo.openxrHostProcessId ?? 0,
     openxrHostApplicationName: runtimeInfo.openxrHostApplicationName ?? "",
+    openxrHostRuntimeName: runtimeInfo.openxrHostRuntimeName ?? "",
+    openxrHostRuntimeVersion: runtimeInfo.openxrHostRuntimeVersion ?? "",
+    openxrHostSessionStartedAtMs: runtimeInfo.openxrHostSessionStartedAtMs ?? 0,
     openxrHostGraphicsApi: runtimeInfo.openxrHostGraphicsApi ?? "",
     openxrHostAdapterLuid: runtimeInfo.openxrHostAdapterLuid ?? "",
     openxrProtocolVersion: runtimeInfo.openxrProtocolVersion ?? 0,
     openxrSubmittedFrameSequence: runtimeInfo.openxrSubmittedFrameSequence ?? 0,
     openxrConsumedFrameSequence: runtimeInfo.openxrConsumedFrameSequence ?? 0,
+    openvrHostRelayAvailable: runtimeInfo.openvrHostRelayAvailable ?? false,
+    openvrHostRelayActive: runtimeInfo.openvrHostRelayActive ?? false,
+    openvrHostRelayConnected: runtimeInfo.openvrHostRelayConnected ?? false,
+    openvrSubmittedFrameSequence: runtimeInfo.openvrSubmittedFrameSequence ?? 0,
+    openvrConsumedFrameSequence: runtimeInfo.openvrConsumedFrameSequence ?? 0,
+    openvrTextureSubmissionCount: runtimeInfo.openvrTextureSubmissionCount ?? 0,
     libovrHostDetected: runtimeInfo.libovrHostDetected ?? false,
     libovrHostProcessId: runtimeInfo.libovrHostProcessId ?? 0,
     libovrHostApplicationName: runtimeInfo.libovrHostApplicationName ?? "",
