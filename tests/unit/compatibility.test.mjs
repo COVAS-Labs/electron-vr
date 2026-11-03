@@ -189,6 +189,7 @@ test("compatibility report treats OpenVR as ready with optional OpenXR setup", (
   assert.equal(report.readiness, "ready");
   assert.equal(report.launch.verdict, "works-now");
   assert.equal(report.features.curvature, "supported");
+  assert.equal(report.features.softwareFrameFallback, "unsupported");
   assert.equal(report.issues[0].code, "openxr-api-layer-optional");
 });
 

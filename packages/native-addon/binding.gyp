@@ -158,6 +158,23 @@
             "cflags_cc": ["-std=c++17", "-Wall", "-Wextra"]
           },
           {
+            "target_name": "electron_vr_companion_ack_test",
+            "type": "executable",
+            "sources": ["native/openxr-api-layer/companion_ack_test.cc"],
+            "libraries": ["-lpthread"],
+            "cflags_cc!": ["-fno-exceptions"],
+            "cflags_cc": ["-std=c++17", "-fexceptions", "-Wall", "-Wextra"]
+          },
+          {
+            "target_name": "electron_vr_glx_dmabuf_probe",
+            "type": "executable",
+            "sources": ["native/openxr-api-layer/glx_dmabuf_probe.cc"],
+            "include_dirs": ["<(openxr_sdk_dir)/include"],
+            "libraries": ["-lGL", "-lX11", "-lvulkan", "-lpthread"],
+            "cflags_cc!": ["-fno-exceptions"],
+            "cflags_cc": ["-std=c++17", "-fexceptions", "-Wall", "-Wextra", "-Wno-missing-field-initializers"]
+          },
+          {
             "target_name": "electron_vr_vulkan_dmabuf_probe",
             "type": "executable",
             "sources": ["native/openxr-api-layer/vulkan_dmabuf_probe.cc"],
@@ -206,6 +223,24 @@
                 ]
               }
             ]
+          },
+          {
+            "target_name": "electron_vr_openvr_handle_reuse_test",
+            "type": "executable",
+            "sources": ["native/openxr-api-layer/openvr_handle_reuse_test.cc", "native/src/openvr_backend.cc"],
+            "include_dirs": ["<(openvr_sdk_dir)/headers"],
+            "defines": ["NOMINMAX", "WIN32_LEAN_AND_MEAN"],
+            "libraries": ["<(openvr_sdk_dir)/lib/win64/openvr_api.lib", "d3d11.lib", "dxgi.lib"],
+            "msvs_settings": {"VCCLCompilerTool": {"ExceptionHandling": 1, "AdditionalOptions": ["/std:c++17"]}}
+          },
+          {
+            "target_name": "electron_vr_openvr_raw_upload_test",
+            "type": "executable",
+            "sources": ["native/openxr-api-layer/openvr_raw_upload_test.cc", "native/src/openvr_backend.cc"],
+            "include_dirs": ["<(openvr_sdk_dir)/headers"],
+            "defines": ["NOMINMAX", "WIN32_LEAN_AND_MEAN"],
+            "libraries": ["<(openvr_sdk_dir)/lib/win64/openvr_api.lib", "d3d11.lib", "dxgi.lib"],
+            "msvs_settings": {"VCCLCompilerTool": {"ExceptionHandling": 1, "AdditionalOptions": ["/std:c++17"]}}
           },
           {
             "target_name": "electron_vr_openxr_layer_cli",

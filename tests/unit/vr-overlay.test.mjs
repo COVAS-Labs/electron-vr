@@ -62,7 +62,8 @@ test("Windows VDXR avoids probing or selecting OpenVR", async () => {
   assert.match(probe, /IsVirtualDesktopOpenXRRuntime/);
   assert.match(probe, /openvr_unsafe_for_active_openxr_runtime = virtual_desktop_openxr && !openxr_enabled/);
   assert.match(probe, /!openvr_disabled_by_env && !openvr_unsafe_for_active_openxr_runtime/);
-  assert.equal((probe.match(/QueryOpenVRSceneApplication\(&info\);/g) ?? []).length, 3);
+  assert.doesNotMatch(probe, /vr::VR_Init\(|vr::VR_Shutdown\(/);
+  assert.equal((probe.match(/info\.openxr_available && !openxr_disabled_by_env/g) ?? []).length, 3);
 });
 
 test("Windows OpenXR layer publishes host presence before companion connection", async () => {
@@ -83,6 +84,14 @@ test("Windows D3D11 companion submission never spin-waits for GPU completion", a
   assert.doesNotMatch(companion, /while \(completion_result == S_FALSE\)/);
   assert.doesNotMatch(companion, /D3D11_ASYNC_GETDATA_DONOTFLUSH/);
   assert.match(companion, /slot\.keyed_mutex->ReleaseSync\(1\)/);
+});
+
+test("Windows GPU import uses the current NT lease without integer-handle caching or alternate import recovery", async () => {
+  for (const filename of ["openvr_backend.cc", "openxr_backend.cc", "openxr_companion.cc"]) {
+    const source = await readFile(resolve(root, "packages/native-addon/native/src", filename), "utf8");
+    assert.match(source, /OpenSharedResource1\(/);
+    assert.doesNotMatch(source, /shared_texture_handle_value|source_handle ==|->OpenSharedResource\(|D3D_DRIVER_TYPE_WARP/);
+  }
 });
 
 test("Windows OpenXR layer retains the last frame while a newer texture is pending", async () => {
@@ -110,7 +119,7 @@ test("Windows OpenComposite is not selected for unsupported OpenVR overlays", as
   assert.match(probe, /openvr-overlay-unsupported-by-opencomposite/);
 });
 
-test("Linux OpenVR defaults to Vulkan with software and OpenGL fallbacks", async () => {
+test("Linux OpenVR keeps GPU failures visible and software transports explicit", async () => {
   const bridge = await readFile(resolve(root, "packages", "electron-vr", "src", "bridge.ts"), "utf8");
   const backend = await readFile(resolve(root, "packages", "native-addon", "native", "src", "openvr_backend.cc"), "utf8");
   assert.match(backend, /GetDmabufFormats/);
@@ -133,7 +142,8 @@ test("Linux OpenVR defaults to Vulkan with software and OpenGL fallbacks", async
   assert.match(backend, /if \(!writable\) return true/);
   assert.match(backend, /vulkan_visible_safe_to_write = sync_error == vr::VROverlayError_None/);
   assert.match(backend, /vulkan_dmabuf_import_enabled = std::all_of/);
-  assert.match(backend, /does not support DMA-BUF import; use software upload/);
+  assert.match(backend, /does not support DMA-BUF import/);
+  assert.doesNotMatch(backend, /Vulkan submission disabled after failure|D3D_DRIVER_TYPE_WARP/);
   assert.doesNotMatch(backend, /lacks required DMA-BUF extension/);
   assert.match(backend, /CopyLinuxOpenVRVulkanImage/);
   assert.match(backend, /SubmitLinuxOpenVRVulkanSoftwareFrame/);
@@ -153,7 +163,7 @@ test("Linux OpenVR defaults to Vulkan with software and OpenGL fallbacks", async
   assert.match(backend, /TextureType_OpenGL/);
   assert.match(bridge, /isTruthyEnvironmentVariable\("ELECTRON_VR_OPENVR_GL_UPLOAD"\)/);
   assert.match(bridge, /submitLinuxOpenGLFrame/);
-  assert.match(bridge, /scheduleLinuxCaptureFallback/);
+  assert.doesNotMatch(bridge, /scheduleLinuxCaptureFallback|scheduleWindowsCaptureFallback|capturePage\(/);
   assert.match(bridge, /bgraToVerticallyFlippedRgba/);
   assert.match(bridge, /linuxOpenVRVisibleTexture = texture/);
   assert.match(bridge, /!isTruthyEnvironmentVariable\("ELECTRON_VR_DISABLE_OPENVR_VULKAN"\)/);

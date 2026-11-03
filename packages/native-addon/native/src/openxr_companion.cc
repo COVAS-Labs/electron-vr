@@ -118,7 +118,6 @@ struct CompanionState {
   uint32_t next_slot = 0;
   uint64_t connection_generation = 0;
   uint64_t resource_connection_generation = 0;
-  uint64_t source_handle = 0;
   ID3D11Texture2D* source_texture = nullptr;
 };
 
@@ -254,7 +253,6 @@ PSECURITY_DESCRIPTOR CreatePipeSecurityDescriptor() {
 
 void CloseTextureResourcesLocked() {
   ReleaseCom(&g_state.source_texture);
-  g_state.source_handle = 0;
   const HostProgress progress = ReadHostProgress(
     g_state.hello.process_id, g_state.snapshot.connection_id);
   HANDLE target_process = g_state.hello.process_id == 0 ||
@@ -376,24 +374,17 @@ bool CreateDeviceForHostLocked(std::string* error_message) {
 }
 
 bool OpenSourceTextureLocked(uint64_t shared_handle, std::string* error_message) {
-  if (g_state.source_texture != nullptr && g_state.source_handle == shared_handle) {
-    return true;
-  }
+  // Electron releases/recycles NT handle values independently of our texture
+  // reference. Import this paint's lease instead of caching its integer value.
   ReleaseCom(&g_state.source_texture);
-  g_state.source_handle = 0;
 
   const HANDLE handle = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(shared_handle));
-  HRESULT result = g_state.device1->OpenSharedResource1(
+  const HRESULT result = g_state.device1->OpenSharedResource1(
     handle, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&g_state.source_texture));
-  if (FAILED(result)) {
-    result = g_state.device->OpenSharedResource(
-      handle, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&g_state.source_texture));
-  }
   if (FAILED(result) || g_state.source_texture == nullptr) {
     SetError(error_message, "Failed to open Electron's D3D11 shared texture on the OpenXR host adapter (" + HResultString(result) + ").");
     return false;
   }
-  g_state.source_handle = shared_handle;
   return true;
 }
 

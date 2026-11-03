@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -423,7 +424,7 @@ bool ImportAndChecksum(VulkanState& state, const OverlaySnapshot& snapshot, int 
       vkWaitForFences(state.device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
     return fail("Vulkan copy submission failed");
   }
-  if ((staging_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0) {
+  if (checksum && (staging_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0) {
     VkMappedMemoryRange range{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
     range.memory = staging_memory;
     range.size = VK_WHOLE_SIZE;
@@ -431,7 +432,21 @@ bool ImportAndChecksum(VulkanState& state, const OverlaySnapshot& snapshot, int 
       return fail("vkInvalidateMappedMemoryRanges failed");
     }
   }
-  *checksum = Checksum(static_cast<const uint8_t*>(mapping), static_cast<size_t>(byte_size));
+  if (checksum && std::getenv("ELECTRON_VR_PROBE_PATTERN")) {
+    if (snapshot.width < 18 || snapshot.height < 18) return fail("GPU pattern dimensions are too small");
+    const uint32_t x[] = {8, snapshot.width - 9, 8, snapshot.width - 9};
+    const uint32_t y[] = {8, 8, snapshot.height - 9, snapshot.height - 9};
+    const uint8_t expected[][4] = {{255,0,0,255}, {0,255,0,255}, {0,0,255,255}, {255,255,0,255}};
+    const auto* pixels = static_cast<const uint8_t*>(mapping);
+    for (unsigned corner = 0; corner < 4; ++corner) {
+      const size_t offset = (static_cast<size_t>(y[corner]) * snapshot.width + x[corner]) * 4;
+      const bool bgra = snapshot.drm_format == DRM_FORMAT_ARGB8888;
+      const uint8_t actual[] = {pixels[offset + (bgra ? 2 : 0)], pixels[offset + 1],
+        pixels[offset + (bgra ? 0 : 2)], pixels[offset + 3]};
+      if (std::memcmp(actual, expected[corner], 4) != 0) return fail("GPU copy quadrant/orientation mismatch");
+    }
+  }
+  if (checksum) *checksum = Checksum(static_cast<const uint8_t*>(mapping), static_cast<size_t>(byte_size));
   cleanup();
   return true;
 }
@@ -469,6 +484,7 @@ bool Connect(ScopedFd* socket_fd, std::string* error) {
   LayerHello hello{};
   hello.header = {kProtocolMagic, kProtocolVersion, MessageType::kHello, sizeof(hello), 0, 1};
   hello.process_id = static_cast<uint32_t>(getpid());
+  hello.graphics_binding = kGraphicsBindingVulkan;
   std::strncpy(hello.application_name, "electron_vr_vulkan_dmabuf_probe", sizeof(hello.application_name) - 1);
   if (send(socket_fd->value, &hello, sizeof(hello), MSG_NOSIGNAL) != static_cast<ssize_t>(sizeof(hello))) {
     *error = "failed to send LayerHello";
@@ -542,6 +558,7 @@ bool ParseFrameTarget(int argc, char** argv, uint32_t* target) {
 }
 
 int main(int argc, char** argv) {
+  std::cout.setf(std::ios::unitbuf);
   uint32_t target = 0;
   if (!ParseFrameTarget(argc, argv, &target)) {
     std::cerr << "usage: " << argv[0] << " [successful-frames]\n";
@@ -573,6 +590,11 @@ int main(int argc, char** argv) {
   }
   uint32_t frames = 0;
   uint32_t changed = 0;
+  const char* interval_value = std::getenv("ELECTRON_VR_PROBE_SAMPLE_INTERVAL");
+  const unsigned requested_interval = interval_value ? static_cast<unsigned>(
+    std::min(30000UL, std::max(1UL, std::strtoul(interval_value, nullptr, 10)))) : 1;
+  const unsigned sample_interval = std::max(1U, std::min(requested_interval, target / 4));
+  const auto started = std::chrono::steady_clock::now();
   uint64_t previous_checksum = 0;
   bool have_previous = false;
   while (frames < target) {
@@ -584,8 +606,10 @@ int main(int argc, char** argv) {
     }
     if (snapshot.header.fd_count == 0) continue;
     uint64_t checksum = 0;
-    if (snapshot.generation == 0 || frame_fd.value < 0 ||
-        !ImportAndChecksum(vulkan, snapshot, frame_fd.value, &checksum, &error)) {
+    const bool sampled = frames == 0 || (frames + 1) % sample_interval == 0 || frames + 1 == target;
+    if (snapshot.frame_transport != FrameTransport::kDmaBuf ||
+        snapshot.generation == 0 || frame_fd.value < 0 ||
+        !ImportAndChecksum(vulkan, snapshot, frame_fd.value, sampled ? &checksum : nullptr, &error)) {
       std::cerr << "generation=" << snapshot.generation << " import failed: " << error << '\n';
       return 1;
     }
@@ -593,14 +617,17 @@ int main(int argc, char** argv) {
       std::cerr << error << '\n';
       return 1;
     }
-    if (have_previous && checksum != previous_checksum) ++changed;
-    previous_checksum = checksum;
-    have_previous = true;
     ++frames;
-    std::cout << "frame=" << frames << " generation=" << snapshot.generation
-              << " checksum=0x" << std::hex << checksum << std::dec << '\n';
+    if (sampled) {
+      if (have_previous && checksum != previous_checksum) ++changed;
+      previous_checksum = checksum;
+      have_previous = true;
+      std::cout << "frame=" << frames << " generation=" << snapshot.generation
+                << " checksum=0x" << std::hex << checksum << std::dec << '\n';
+    }
   }
   std::cout << "frames=" << frames << " changed=" << changed << '\n';
+  std::cout << "copy_seconds=" << std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() << '\n';
   if (frames < target || changed < kMinimumChanges) {
     std::cerr << "probe failed: expected " << target << " frames and at least "
               << kMinimumChanges << " checksum changes\n";

@@ -93,7 +93,6 @@ struct OpenVRState {
   bool vulkan_staging_coherent = false;
   uint64_t vulkan_frame_count = 0;
   bool logged_vulkan_submission = false;
-  bool vulkan_disabled = false;
 #endif
   vr::VROverlayHandle_t overlay_handle = vr::k_ulOverlayHandleInvalid;
 #if defined(_WIN32)
@@ -103,7 +102,6 @@ struct OpenVRState {
   ID3D11Texture2D* shared_texture = nullptr;
   ID3D11Texture2D* submit_texture = nullptr;
   HANDLE submit_texture_shared_handle = nullptr;
-  uint64_t shared_texture_handle_value = 0;
   DXGI_FORMAT submit_texture_format = DXGI_FORMAT_UNKNOWN;
   uint32_t submit_texture_width = 0;
   uint32_t submit_texture_height = 0;
@@ -261,7 +259,6 @@ void ReleaseSharedTexture() {
     g_state.shared_texture->Release();
     g_state.shared_texture = nullptr;
   }
-  g_state.shared_texture_handle_value = 0;
 }
 
 void ReleaseD3DResources() {
@@ -295,12 +292,6 @@ bool EnsureD3D11Device(std::string* error_message) {
     D3D_FEATURE_LEVEL_10_1,
     D3D_FEATURE_LEVEL_10_0
   };
-  const D3D_DRIVER_TYPE driver_types[] = {
-    D3D_DRIVER_TYPE_HARDWARE,
-    D3D_DRIVER_TYPE_WARP
-  };
-
-  HRESULT last_error = E_FAIL;
   if (g_state.system != nullptr) {
     int32_t adapter_index = -1;
     g_state.system->GetDXGIOutputInfo(&adapter_index);
@@ -320,7 +311,7 @@ bool EnsureD3D11Device(std::string* error_message) {
           (void)adapter->GetDesc1(&adapter_desc);
 
           D3D_FEATURE_LEVEL acquired_feature_level = D3D_FEATURE_LEVEL_10_0;
-          last_error = D3D11CreateDevice(
+          const HRESULT last_error = D3D11CreateDevice(
             adapter,
             D3D_DRIVER_TYPE_UNKNOWN,
             nullptr,
@@ -349,61 +340,30 @@ bool EnsureD3D11Device(std::string* error_message) {
             return true;
           }
 
-          std::cout
-            << "OpenVR D3D11 device creation failed on SteamVR adapter index "
-            << adapter_index
-            << " with error "
-            << HResultToString(last_error)
-            << "; falling back to default adapter selection."
-            << std::endl;
+          SetError(error_message, "Failed to create a D3D11 device on SteamVR adapter " +
+            std::to_string(adapter_index) + " (" + HResultToString(last_error) + ").");
           adapter->Release();
+          factory->Release();
+          ReleaseD3DResources();
+          return false;
         } else {
-          std::cout
-            << "OpenVR DXGI adapter index "
-            << adapter_index
-            << " was not available via EnumAdapters1 ("
-            << HResultToString(adapter_result)
-            << "); falling back to default adapter selection."
-            << std::endl;
+          SetError(error_message, "SteamVR DXGI adapter " + std::to_string(adapter_index) +
+            " is unavailable (" + HResultToString(adapter_result) + ").");
+          factory->Release();
+          return false;
         }
-
-        factory->Release();
       } else {
-        std::cout
-          << "CreateDXGIFactory1 failed while preparing the OpenVR D3D11 device ("
-          << HResultToString(factory_result)
-          << "); falling back to default adapter selection."
-          << std::endl;
+        SetError(error_message, "Failed to enumerate the SteamVR DXGI adapter (" +
+          HResultToString(factory_result) + ").");
+        return false;
       }
     } else {
-      std::cout << "OpenVR did not report a DXGI adapter index; falling back to default adapter selection." << std::endl;
+      SetError(error_message, "SteamVR did not report a DXGI adapter index.");
+      return false;
     }
   }
 
-  for (const D3D_DRIVER_TYPE driver_type : driver_types) {
-    D3D_FEATURE_LEVEL acquired_feature_level = D3D_FEATURE_LEVEL_10_0;
-    last_error = D3D11CreateDevice(
-      nullptr,
-      driver_type,
-      nullptr,
-      D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-      requested_feature_levels,
-      ARRAYSIZE(requested_feature_levels),
-      D3D11_SDK_VERSION,
-      &g_state.d3d_device,
-      &acquired_feature_level,
-      &g_state.d3d_context
-    );
-
-    if (SUCCEEDED(last_error)) {
-      if (g_state.d3d_device != nullptr) {
-        (void)g_state.d3d_device->QueryInterface(__uuidof(ID3D11Device1), reinterpret_cast<void**>(&g_state.d3d_device1));
-      }
-      return true;
-    }
-  }
-
-  SetError(error_message, "Failed to create a D3D11 device for OpenVR texture import (" + HResultToString(last_error) + ").");
+  SetError(error_message, "The OpenVR system is unavailable for D3D11 adapter selection.");
   ReleaseD3DResources();
   return false;
 }
@@ -503,10 +463,6 @@ bool EnsureSubmitTexture(const D3D11_TEXTURE2D_DESC& source_desc, std::string* e
 }
 
 bool OpenSharedTextureFromHandle(uint64_t shared_handle, std::string* error_message) {
-  if (g_state.shared_texture != nullptr && g_state.shared_texture_handle_value == shared_handle) {
-    return true;
-  }
-
   ReleaseSharedTexture();
 
   if (!EnsureD3D11Device(error_message)) {
@@ -514,34 +470,25 @@ bool OpenSharedTextureFromHandle(uint64_t shared_handle, std::string* error_mess
   }
 
   const HANDLE handle = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(shared_handle));
-  HRESULT open_result = E_FAIL;
-
-  if (g_state.d3d_device1 != nullptr) {
-    open_result = g_state.d3d_device1->OpenSharedResource1(
-      handle,
-      __uuidof(ID3D11Texture2D),
-      reinterpret_cast<void**>(&g_state.shared_texture)
-    );
-
-    if (SUCCEEDED(open_result) && g_state.shared_texture != nullptr) {
-      g_state.shared_texture_handle_value = shared_handle;
-      return true;
-    }
+  if (g_state.d3d_device1 == nullptr) {
+    SetError(error_message, "OpenVR shared-texture transport requires ID3D11Device1 NT-handle import.");
+    return false;
   }
-
-  open_result = g_state.d3d_device->OpenSharedResource(
+  // Electron leases an NT handle for this paint. Numeric handle values can be
+  // recycled for different textures after release, so open the current lease
+  // rather than treating an equal integer as resource identity.
+  const HRESULT open_result = g_state.d3d_device1->OpenSharedResource1(
     handle,
     __uuidof(ID3D11Texture2D),
     reinterpret_cast<void**>(&g_state.shared_texture)
   );
 
   if (FAILED(open_result) || g_state.shared_texture == nullptr) {
-    SetError(error_message, "Failed to open Windows shared texture handle for OpenVR (" + HResultToString(open_result) + ").");
+    SetError(error_message, "Failed to open Windows NT shared texture handle for OpenVR (" + HResultToString(open_result) + ").");
     ReleaseSharedTexture();
     return false;
   }
 
-  g_state.shared_texture_handle_value = shared_handle;
   D3D11_TEXTURE2D_DESC shared_desc = {};
   g_state.shared_texture->GetDesc(&shared_desc);
   LogSharedTextureDescOnce(shared_desc);
@@ -1147,7 +1094,7 @@ bool ImportLinuxOpenVRVulkanImage(
   VkFormat* imported_format,
   std::string* error_message) {
   if (!g_state.vulkan_dmabuf_import_enabled) {
-    SetError(error_message, "OpenVR's Vulkan device does not support DMA-BUF import; use software upload.");
+    SetError(error_message, "OpenVR's Vulkan device does not support DMA-BUF import.");
     return false;
   }
   const LinuxPlaneInfo& plane = texture_info.planes.front();
@@ -2031,7 +1978,6 @@ void ResetState() {
   ReleaseLinuxOpenVRVulkanResources();
   g_state.ipc = nullptr;
   g_state.logged_frame_sync_timeout = false;
-  g_state.vulkan_disabled = false;
 #endif
   g_state.system = nullptr;
   g_state.overlay = nullptr;
@@ -2235,13 +2181,8 @@ bool SubmitOpenVRFrameLinux(const LinuxTextureInfo& texture_info, std::string* e
     return false;
   }
 
-  std::string vulkan_error;
-  if (!IsTruthyEnvironmentVariable("ELECTRON_VR_DISABLE_OPENVR_VULKAN") && !g_state.vulkan_disabled) {
-    if (SubmitLinuxOpenVRVulkanTexture(texture_info, pixel_format, modifier, &vulkan_error)) {
-      return true;
-    }
-    g_state.vulkan_disabled = true;
-    std::cerr << "Linux OpenVR Vulkan submission disabled after failure: " << vulkan_error << std::endl;
+  if (!IsTruthyEnvironmentVariable("ELECTRON_VR_DISABLE_OPENVR_VULKAN")) {
+    return SubmitLinuxOpenVRVulkanTexture(texture_info, pixel_format, modifier, error_message);
   }
 
   std::string direct_import_error;
@@ -2250,8 +2191,7 @@ bool SubmitOpenVRFrameLinux(const LinuxTextureInfo& texture_info, std::string* e
   if (!direct_import_supported) {
     SetError(
       error_message,
-      (vulkan_error.empty() ? std::string() : "Vulkan submission failed: " + vulkan_error + " ") +
-        (direct_import_error.empty()
+      (direct_import_error.empty()
           ? "OpenVR IPC resource manager is unavailable on Linux."
           : direct_import_error));
     return false;
@@ -2380,6 +2320,12 @@ bool SubmitOpenVRSoftwareFrame(const SoftwareFrameInfo& frame_info, std::string*
   SetError(error_message, "Linux OpenVR Vulkan submission is disabled and no software transport is enabled.");
   return false;
 #else
+  // SteamVR services acknowledgments for SetOverlayRaw's shared-memory blocks
+  // while polling client events. Without a pump, repeated uploads exhaust its
+  // outstanding-block limit even when the compositor is consuming frames.
+  vr::VREvent_t event = {};
+  while (g_state.overlay->PollNextOverlayEvent(g_state.overlay_handle, &event, sizeof(event))) {
+  }
   if (!CheckOverlayError(
         g_state.overlay->SetOverlayRaw(
           g_state.overlay_handle,

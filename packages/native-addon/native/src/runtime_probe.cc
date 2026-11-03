@@ -281,127 +281,6 @@ void QueryOpenXRHostPresence(RuntimeInfo* info) {
 }
 #endif
 
-#if !defined(__APPLE__)
-#if defined(_WIN32)
-bool InitializeOpenVRProbe(vr::IVRSystem** system, vr::EVRInitError* init_error) {
-  __try {
-    *system = vr::VR_Init(init_error, vr::VRApplication_Background);
-    return true;
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-    if (system != nullptr) {
-      *system = nullptr;
-    }
-    if (init_error != nullptr) {
-      *init_error = vr::VRInitError_Init_Internal;
-    }
-    return false;
-  }
-}
-
-bool AcquireOpenVRApplications(vr::IVRApplications** applications) {
-  __try {
-    *applications = vr::VRApplications();
-    return true;
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-    if (applications != nullptr) {
-      *applications = nullptr;
-    }
-    return false;
-  }
-}
-#else
-bool InitializeOpenVRProbe(vr::IVRSystem** system, vr::EVRInitError* init_error) {
-  *system = vr::VR_Init(init_error, vr::VRApplication_Background);
-  return true;
-}
-
-bool AcquireOpenVRApplications(vr::IVRApplications** applications) {
-  *applications = vr::VRApplications();
-  return true;
-}
-#endif
-
-std::string ReadOpenVRApplicationPropertyString(
-  vr::IVRApplications* applications,
-  const std::string& application_key,
-  vr::EVRApplicationProperty property) {
-  if (applications == nullptr || application_key.empty()) {
-    return std::string();
-  }
-
-  std::vector<char> buffer(256, '\0');
-  vr::EVRApplicationError application_error = vr::VRApplicationError_None;
-  uint32_t required_size = applications->GetApplicationPropertyString(
-    application_key.c_str(),
-    property,
-    buffer.data(),
-    static_cast<uint32_t>(buffer.size()),
-    &application_error);
-  if (application_error == vr::VRApplicationError_BufferTooSmall && required_size > buffer.size()) {
-    buffer.assign(required_size, '\0');
-    application_error = vr::VRApplicationError_None;
-    required_size = applications->GetApplicationPropertyString(
-      application_key.c_str(),
-      property,
-      buffer.data(),
-      static_cast<uint32_t>(buffer.size()),
-      &application_error);
-  }
-
-  if (application_error != vr::VRApplicationError_None || required_size == 0) {
-    return std::string();
-  }
-
-  return std::string(buffer.data());
-}
-
-void QueryOpenVRSceneApplication(RuntimeInfo* info) {
-  if (info == nullptr || !info->openvr_available || !info->openvr_runtime_installed) {
-    return;
-  }
-
-  vr::EVRInitError init_error = vr::VRInitError_None;
-  vr::IVRSystem* system = nullptr;
-  if (!InitializeOpenVRProbe(&system, &init_error) || init_error != vr::VRInitError_None || system == nullptr) {
-    return;
-  }
-
-  vr::IVRApplications* applications = nullptr;
-  if (!AcquireOpenVRApplications(&applications) || applications == nullptr) {
-    vr::VR_Shutdown();
-    return;
-  }
-
-  const vr::EVRSceneApplicationState scene_state = applications->GetSceneApplicationState();
-  const char* scene_state_name = applications->GetSceneApplicationStateNameFromEnum(scene_state);
-  if (scene_state_name != nullptr) {
-    info->openvr_scene_application_state = scene_state_name;
-  }
-
-  info->openvr_scene_process_id = applications->GetCurrentSceneProcessId();
-  if (info->openvr_scene_process_id != 0) {
-    std::array<char, vr::k_unMaxApplicationKeyLength> application_key_buffer = {};
-    const vr::EVRApplicationError application_key_error = applications->GetApplicationKeyByProcessId(
-      info->openvr_scene_process_id,
-      application_key_buffer.data(),
-      static_cast<uint32_t>(application_key_buffer.size()));
-    if (application_key_error == vr::VRApplicationError_None) {
-      info->openvr_scene_application_key = application_key_buffer.data();
-      info->openvr_scene_application_name = ReadOpenVRApplicationPropertyString(
-        applications,
-        info->openvr_scene_application_key,
-        vr::VRApplicationProperty_Name_String);
-      info->openvr_scene_application_binary_path = ReadOpenVRApplicationPropertyString(
-        applications,
-        info->openvr_scene_application_key,
-        vr::VRApplicationProperty_BinaryPath_String);
-    }
-  }
-
-  vr::VR_Shutdown();
-}
-#endif
-
 std::string ReadTextFile(const std::string& path) {
   std::ifstream stream(path);
   if (!stream.is_open()) {
@@ -706,6 +585,7 @@ RuntimeInfo ProbeRuntime() {
   RuntimeInfo info;
   info.platform = DetectPlatform();
   info.probe_mode = "filesystem";
+  const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
 
 #if defined(_WIN32)
   info.openxr_runtime_name = openxrwin::GetActiveRuntimeName();
@@ -730,7 +610,7 @@ RuntimeInfo ProbeRuntime() {
   info.openvr_runtime_path = DetectOpenVRRuntimePath(&info.openvr_runtime_installed);
 
 #if defined(__linux__)
-  if (info.openxr_available) {
+  if (info.openxr_available && !openxr_disabled_by_env) {
     const bool queried_extensions = QueryOpenXRExtensions(&info);
     if (!queried_extensions) {
       info.openxr_available = false;
@@ -746,7 +626,6 @@ RuntimeInfo ProbeRuntime() {
                              info.openxr_linux_egl_binding_available && info.openxr_linux_opengl_es_binding_available;
   const bool api_layer_ready = info.openxr_available && info.openxr_api_layer_installed && info.openxr_api_layer_enabled;
   const bool force_api_layer = api_layer_ready && IsTruthyEnvVar("ELECTRON_VR_FORCE_OPENXR_API_LAYER");
-  const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
   const bool openvr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENVR");
   const bool openxr_enabled = !openxr_disabled_by_env && (direct_openxr_ready || api_layer_ready);
 
@@ -757,7 +636,6 @@ RuntimeInfo ProbeRuntime() {
     AppendProbeMode(&info, "selected-openxr");
   } else if (!openvr_disabled_by_env && info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
-    QueryOpenVRSceneApplication(&info);
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
     } else if (info.openxr_available && !direct_openxr_ready && !api_layer_ready) {
@@ -781,7 +659,7 @@ RuntimeInfo ProbeRuntime() {
     AppendProbeMode(&info, "selected-mock");
   }
 #elif defined(_WIN32)
-  if (info.openxr_available) {
+  if (info.openxr_available && !openxr_disabled_by_env) {
     const bool queried_extensions = QueryOpenXRExtensions(&info);
     if (!queried_extensions) {
       info.openxr_available = false;
@@ -804,7 +682,6 @@ RuntimeInfo ProbeRuntime() {
   const bool direct_openxr_ready = info.openxr_available && info.openxr_overlay_extension_available &&
                                    info.openxr_windows_d3d11_binding_available;
   const bool api_layer_ready = openxr_ready && info.openxr_api_layer_installed && info.openxr_api_layer_enabled;
-  const bool openxr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR");
   const bool openvr_disabled_by_env = IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENVR");
   const bool openxr_enabled = !openxr_disabled_by_env && (direct_openxr_ready || api_layer_ready);
   const bool virtual_desktop_openxr = IsVirtualDesktopOpenXRRuntime(info);
@@ -819,7 +696,6 @@ RuntimeInfo ProbeRuntime() {
   } else if (!openvr_disabled_by_env && !openvr_unsafe_for_active_openxr_runtime && !opencomposite_openvr &&
              info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
-    QueryOpenVRSceneApplication(&info);
     if (openxr_disabled_by_env) {
       AppendProbeMode(&info, "openxr-disabled-by-env");
     } else if (openxr_ready && !info.openxr_overlay_extension_available && !api_layer_ready) {
@@ -855,13 +731,13 @@ RuntimeInfo ProbeRuntime() {
   }
   QueryLibOVRHost(&info);
 #elif defined(__APPLE__)
-  if (info.openxr_available && !QueryOpenXRExtensions(&info)) {
+  if (info.openxr_available && !openxr_disabled_by_env && !QueryOpenXRExtensions(&info)) {
     info.openxr_available = false;
     info.openxr_macos_metal_binding_available = false;
   }
 
   if (info.openxr_available && info.openxr_macos_metal_binding_available &&
-      IsTruthyEnvVar("ELECTRON_VR_ENABLE_OPENXR") && !IsTruthyEnvVar("ELECTRON_VR_DISABLE_OPENXR")) {
+      IsTruthyEnvVar("ELECTRON_VR_ENABLE_OPENXR") && !openxr_disabled_by_env) {
     info.selected_backend = BackendKind::kOpenXR;
     info.openxr_mode = OpenXRMode::kStandardTestSession;
     AppendProbeMode(&info, "selected-openxr");
@@ -882,7 +758,6 @@ RuntimeInfo ProbeRuntime() {
 
   if (info.openvr_available && info.openvr_runtime_installed) {
     info.selected_backend = BackendKind::kOpenVR;
-    QueryOpenVRSceneApplication(&info);
     AppendProbeMode(&info, "selected-openvr");
   } else {
     info.selected_backend = BackendKind::kMock;

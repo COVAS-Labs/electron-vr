@@ -42,6 +42,8 @@ struct State {
   bool initialized = false;
   LayerHello hello{};
   OverlaySnapshot snapshot{};
+  uint64_t submitted_sequence = 0;
+  uint64_t consumed_sequence = 0;
   std::string socket_path;
 };
 
@@ -90,7 +92,11 @@ bool SendSnapshotLocked(const int* fds, uint32_t fd_count) {
 
 bool ReceiveFrameAckLocked() {
   pollfd descriptor{g_state.client, POLLIN, 0};
-  if (poll(&descriptor, 1, 1000) <= 0 || (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+  int ready;
+  do { ready = poll(&descriptor, 1, 1000); } while (ready < 0 && errno == EINTR);
+  // POLLIN and POLLHUP may arrive together when the host sends its final ACK
+  // and closes. Consume that queued acknowledgment before handling EOF.
+  if (ready <= 0 || !(descriptor.revents & POLLIN) || (descriptor.revents & POLLNVAL)) {
     return false;
   }
   FrameAck ack{};
@@ -104,7 +110,13 @@ bool ReceiveFrameAckLocked() {
 
 bool SendFrameLocked(int fd, std::string* error) {
   if (g_state.client < 0) return true;
-  if (SendSnapshotLocked(&fd, 1) && ReceiveFrameAckLocked()) return true;
+  if (SendSnapshotLocked(&fd, 1)) {
+    g_state.submitted_sequence = g_state.snapshot.header.sequence;
+    if (ReceiveFrameAckLocked()) {
+      g_state.consumed_sequence = g_state.snapshot.header.sequence;
+      return true;
+    }
+  }
   close(g_state.client);
   g_state.client = -1;
   SetError(error, "Linux API-layer frame acknowledgment failed.");
@@ -202,6 +214,7 @@ bool InitializeOpenXRCompanionLinux(const InitializeOptions& options, std::strin
   }
   chmod(g_state.socket_path.c_str(), 0600);
   g_state.snapshot = {};
+  g_state.submitted_sequence = g_state.consumed_sequence = 0;
   g_state.snapshot.visible = options.visible ? 1U : 0U;
   g_state.snapshot.size_meters = options.size_meters;
   ApplyPlacement(options.placement);
@@ -224,6 +237,7 @@ bool SubmitOpenXRCompanionFrameLinux(const LinuxTextureInfo& texture, std::strin
   }
   g_state.snapshot.header.sequence++;
   g_state.snapshot.generation++;
+  g_state.snapshot.frame_transport = FrameTransport::kDmaBuf;
   g_state.snapshot.width = texture.width;
   g_state.snapshot.height = texture.height;
   g_state.snapshot.drm_format = ParseFormat(texture.pixel_format);
@@ -270,8 +284,14 @@ bool SubmitOpenXRCompanionSoftwareFrameLinux(const SoftwareFrameInfo& frame_info
     SetError(error, "Linux OpenXR companion is not initialized.");
     return false;
   }
+  if (g_state.client >= 0 && g_state.hello.graphics_binding != kGraphicsBindingOpenGLXlib) {
+    close(fd);
+    SetError(error, "Software snapshots require an OpenGL Xlib host; the connected host requires DMA-BUF frames.");
+    return false;
+  }
   g_state.snapshot.header.sequence++;
   g_state.snapshot.generation++;
+  g_state.snapshot.frame_transport = FrameTransport::kRgbaMemory;
   g_state.snapshot.width = frame_info.width;
   g_state.snapshot.height = frame_info.height;
   g_state.snapshot.drm_format = DRM_FORMAT_ABGR8888;
@@ -324,6 +344,8 @@ void PopulateOpenXRCompanionRuntimeInfoLinux(RuntimeInfo* info) {
     (g_state.hello.graphics_binding == kGraphicsBindingVulkan ? "vulkan" :
       (g_state.hello.graphics_binding == kGraphicsBindingOpenGLXlib ? "opengl-xlib" : ""));
   info->openxr_protocol_version = kProtocolVersion;
+  info->openxr_submitted_frame_sequence = g_state.submitted_sequence;
+  info->openxr_consumed_frame_sequence = g_state.consumed_sequence;
 #else
   (void)info;
 #endif

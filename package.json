@@ -19,6 +19,8 @@
     "test:e2e:runtime-info": "node --test ./tests/e2e/runtime-info.test.mjs",
     "test:e2e:smoke": "node --test ./tests/e2e/demo-electron-smoke.test.mjs",
     "test:e2e:smoke:openvr:linux": "node --test ./tests/e2e/demo-electron-openvr-linux.test.mjs",
+    "test:e2e:gpu:linux": "node --test ./tests/e2e/linux-shared-textures.test.mjs",
+    "test:e2e:layer:linux": "node --test ./tests/e2e/linux-layer-runtime.test.mjs",
     "test:e2e:smoke:openxr": "node --test ./tests/e2e/demo-electron-openxr.test.mjs",
     "test:e2e": "node --test ./tests/e2e/demo-electron.test.mjs",
     "test": "npm run test:unit && npm run test:e2e:runtime-info && npm run test:e2e:smoke && npm run test:e2e"

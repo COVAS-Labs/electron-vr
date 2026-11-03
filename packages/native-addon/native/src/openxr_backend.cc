@@ -255,7 +255,6 @@ struct OpenXRBackendState {
   ID3D11DeviceContext* d3d_context = nullptr;
   ID3D11Device1* d3d_device1 = nullptr;
   ID3D11Texture2D* shared_texture = nullptr;
-  uint64_t shared_texture_handle_value = 0;
   bool logged_shared_texture_desc = false;
 #endif
 };
@@ -551,7 +550,6 @@ void ReleaseSharedTexture() {
     g_state.shared_texture->Release();
     g_state.shared_texture = nullptr;
   }
-  g_state.shared_texture_handle_value = 0;
 }
 
 void ReleaseD3DResources() {
@@ -603,8 +601,7 @@ bool EnsureD3D11Device(std::string* error_message) {
     D3D_FEATURE_LEVEL_10_0
   };
   const D3D_DRIVER_TYPE driver_types[] = {
-    D3D_DRIVER_TYPE_HARDWARE,
-    D3D_DRIVER_TYPE_WARP
+    D3D_DRIVER_TYPE_HARDWARE
   };
 
   HRESULT last_error = E_FAIL;
@@ -637,10 +634,6 @@ bool EnsureD3D11Device(std::string* error_message) {
 }
 
 bool OpenSharedTextureFromHandle(uint64_t shared_handle, std::string* error_message) {
-  if (g_state.shared_texture != nullptr && g_state.shared_texture_handle_value == shared_handle) {
-    return true;
-  }
-
   ReleaseSharedTexture();
 
   if (!EnsureD3D11Device(error_message)) {
@@ -648,37 +641,23 @@ bool OpenSharedTextureFromHandle(uint64_t shared_handle, std::string* error_mess
   }
 
   const HANDLE handle = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(shared_handle));
-  HRESULT open_result = E_FAIL;
-
-  if (g_state.d3d_device1 != nullptr) {
-    open_result = g_state.d3d_device1->OpenSharedResource1(
-      handle,
-      __uuidof(ID3D11Texture2D),
-      reinterpret_cast<void**>(&g_state.shared_texture)
-    );
-
-    if (SUCCEEDED(open_result) && g_state.shared_texture != nullptr) {
-      g_state.shared_texture_handle_value = shared_handle;
-      D3D11_TEXTURE2D_DESC shared_desc = {};
-      g_state.shared_texture->GetDesc(&shared_desc);
-      LogSharedTextureDescOnce(shared_desc);
-      return true;
-    }
+  if (g_state.d3d_device1 == nullptr) {
+    SetError(error_message, "OpenXR shared-texture transport requires ID3D11Device1 NT-handle import.");
+    return false;
   }
-
-  open_result = g_state.d3d_device->OpenSharedResource(
+  // A reused integer may refer to a different NT object on the next paint.
+  const HRESULT open_result = g_state.d3d_device1->OpenSharedResource1(
     handle,
     __uuidof(ID3D11Texture2D),
     reinterpret_cast<void**>(&g_state.shared_texture)
   );
 
   if (FAILED(open_result) || g_state.shared_texture == nullptr) {
-    SetError(error_message, "Failed to open Windows shared texture handle for OpenXR (" + HResultToString(open_result) + ").");
+    SetError(error_message, "Failed to open Windows NT shared texture handle for OpenXR (" + HResultToString(open_result) + ").");
     ReleaseSharedTexture();
     return false;
   }
 
-  g_state.shared_texture_handle_value = shared_handle;
   D3D11_TEXTURE2D_DESC shared_desc = {};
   g_state.shared_texture->GetDesc(&shared_desc);
   LogSharedTextureDescOnce(shared_desc);

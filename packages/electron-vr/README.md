@@ -67,7 +67,7 @@ You can also reposition the overlay later with `overlay.setPlacement(...)`, togg
 
 `sizeMeters` must be greater than zero, `curvature` must be between `0` and `1`, and placement values should be finite numbers. `curvature: 0` keeps the overlay flat. Positive curvature uses OpenVR overlay curvature on OpenVR and `XR_KHR_composition_layer_cylinder` cylinder layers on OpenXR.
 
-On Linux, runtime selection prefers `openxr`, then falls back to `openvr`, then to `mock`. Linux OpenVR automatically uses public `TextureType_Vulkan`, regardless of the game's graphics API, with bitmap-to-Vulkan fallback when direct DMA-BUF import is unavailable. `ELECTRON_VR_DISABLE_OPENVR_VULKAN=1` disables it; `ELECTRON_VR_OPENVR_GL_UPLOAD=1` explicitly selects the slower OpenGL diagnostic path.
+On Linux, runtime selection prefers `openxr`, then falls back to `openvr`, then to `mock`. Linux OpenVR uses public `TextureType_Vulkan`, regardless of the game's graphics API. Shared-texture failures are reported without automatic bitmap upload, capture readback, private-import switching, or WARP recovery. `ELECTRON_VR_DISABLE_OPENVR_VULKAN=1` explicitly selects the legacy private-import diagnostic path; software diagnostic modes require bitmap paints and are never selected after a GPU failure.
 
 When `XR_EXTX_overlay` is unavailable, Linux x64 can use the explicitly installed API layer before falling back to OpenVR:
 
@@ -75,7 +75,7 @@ When `XR_EXTX_overlay` is unavailable, Linux x64 can use the explicitly installe
 npx electron-vr-openxr-layer install
 ```
 
-The Linux layer supports Vulkan and desktop OpenGL Xlib sessions with one single-plane linear RGB DMA-BUF overlay. Vulkan DMA-BUF import is currently validated for Ubuntu 24.04 AMD RADV with Monado and `hello_xr -g Vulkan`; GLX retains its software snapshot fallback. Xcb, native Wayland host bindings, modifier-backed or multiplane buffers, and curvature are not yet supported.
+The Linux layer supports Vulkan and desktop OpenGL Xlib sessions with one single-plane linear RGB DMA-BUF overlay. Vulkan uses a fenced image copy. GLX imports GPU memory through `GL_EXT_memory_object_fd`, transfers it through a pixel-unpack buffer, and acknowledges the producer after GPU completion. Protocol v3 keeps software diagnostic snapshots separate from DMA-BUF frames. Xcb, native Wayland host bindings, modifier-backed or multiplane buffers, and curvature are not yet supported.
 
 On Windows x64, selection prefers a direct `XR_EXTX_overlay` session, then an installed implicit API layer for D3D11 or D3D12 hosts, then OpenVR, then mock. API-layer installation is explicit:
 

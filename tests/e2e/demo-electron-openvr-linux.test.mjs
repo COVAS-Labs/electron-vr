@@ -19,7 +19,7 @@ const glUploadFrameTarget = Number.isInteger(requestedGlUploadFrameTarget) &&
 const glUploadFramePattern = new RegExp(
   `Linux OpenVR OpenGL upload frame count=${glUploadFrameTarget} changed=(?:[2-9]|[1-9][0-9]+)`
 );
-const vulkanSubmissionPattern = /Linux OpenVR submitted first (?:DMA-BUF|software frame) through TextureType_Vulkan\./;
+const vulkanSubmissionPattern = /Linux OpenVR submitted first DMA-BUF through TextureType_Vulkan\./;
 
 function sleep(milliseconds) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
@@ -133,6 +133,11 @@ test("boots the demo app with Linux OpenVR forced by disabling OpenXR", { skip: 
           () => vulkanSubmissionPattern.test(combinedOutput),
           20000,
           "first Linux OpenVR Vulkan frame submission"
+        );
+        await waitFor(
+          () => /Linux OpenVR Vulkan submission frame count=300/.test(combinedOutput),
+          45000,
+          "300 direct DMA-BUF OpenVR submissions"
         );
       }
     } catch {

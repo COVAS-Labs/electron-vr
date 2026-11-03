@@ -10,6 +10,7 @@
 #include <GL/glx.h>
 #include <libdrm/drm_fourcc.h>
 #include <linux/dma-buf.h>
+#include <poll.h>
 #include <vulkan/vulkan.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_loader_negotiation.h>
@@ -31,6 +32,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -92,6 +94,16 @@ struct SessionState {
   PFNGLCHECKFRAMEBUFFERSTATUSPROC check_framebuffer = nullptr;
   PFNGLBLITFRAMEBUFFERPROC blit_framebuffer = nullptr;
   GLuint source_texture = 0;
+  PFNGLCREATEMEMORYOBJECTSEXTPROC create_memory_objects = nullptr;
+  PFNGLDELETEMEMORYOBJECTSEXTPROC delete_memory_objects = nullptr;
+  PFNGLIMPORTMEMORYFDEXTPROC import_memory_fd = nullptr;
+  PFNGLBUFFERSTORAGEMEMEXTPROC buffer_storage_mem = nullptr;
+  PFNGLGENBUFFERSPROC gen_buffers = nullptr;
+  PFNGLDELETEBUFFERSPROC delete_buffers = nullptr;
+  PFNGLBINDBUFFERPROC bind_buffer = nullptr;
+  bool dmabuf_buffer_import = false;
+  uint64_t gl_gpu_frame_count = 0;
+  uint64_t vulkan_gpu_frame_count = 0;
   uint32_t source_width = 0;
   uint32_t source_height = 0;
   GLuint read_framebuffer = 0;
@@ -152,6 +164,19 @@ bool SyncDmabuf(int fd, uint64_t flags) {
   } while (result != 0 && errno == EINTR);
   // Software frames arrive in coherent memfds, which do not implement DMA-BUF synchronization.
   return result == 0 || errno == ENOTTY;
+}
+
+bool WaitForDmabufProducer(int fd) {
+  dma_buf_export_sync_file request{};
+  request.flags = DMA_BUF_SYNC_READ;
+  request.fd = -1;
+  int result;
+  do { result = ioctl(fd, DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &request); } while (result < 0 && errno == EINTR);
+  if (result < 0 || request.fd < 0) return false;
+  pollfd fence{request.fd, POLLIN, 0};
+  do { result = poll(&fence, 1, 1000); } while (result < 0 && errno == EINTR);
+  close(request.fd);
+  return result > 0 && (fence.revents & POLLIN) != 0 && (fence.revents & (POLLERR | POLLNVAL)) == 0;
 }
 
 void SendFrameAck(int socket_fd, const OverlaySnapshot& snapshot, bool consumed) {
@@ -242,15 +267,16 @@ void SocketMain(LayerHello hello) {
       }
       const uint64_t pixel_bytes = static_cast<uint64_t>(snapshot.planes[0].stride) * snapshot.height;
       const uint64_t required_size = static_cast<uint64_t>(snapshot.planes[0].offset) + pixel_bytes;
-      if (snapshot.plane_count != 1 ||
+      if (snapshot.width == 0 || snapshot.height == 0 || snapshot.plane_count != 1 ||
           (snapshot.modifier != DRM_FORMAT_MOD_INVALID && snapshot.modifier != DRM_FORMAT_MOD_LINEAR) ||
           snapshot.width > UINT32_MAX / 4 || snapshot.planes[0].stride < snapshot.width * 4 ||
+          snapshot.planes[0].stride % 4 != 0 ||
           required_size < pixel_bytes || required_size > snapshot.planes[0].size) {
         for (int descriptor : received_fds) if (descriptor >= 0) close(descriptor);
         SendFrameAck(socket_fd, snapshot, false);
         continue;
       }
-      if (hello.graphics_binding == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR) {
+      if (snapshot.frame_transport == FrameTransport::kDmaBuf) {
         std::unique_lock<std::mutex> lock(g_frame_mutex);
         if (g_frame.dmabuf_fd >= 0) {
           lock.unlock();
@@ -278,7 +304,9 @@ void SocketMain(LayerHello hello) {
         SendFrameAck(socket_fd, snapshot, consumed);
         continue;
       }
-      if (!SyncDmabuf(received_fd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ)) {
+      if (snapshot.frame_transport != FrameTransport::kRgbaMemory ||
+          hello.graphics_binding != kGraphicsBindingOpenGLXlib ||
+          !SyncDmabuf(received_fd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ)) {
         close(received_fd);
         SendFrameAck(socket_fd, snapshot, false);
         continue;
@@ -410,6 +438,17 @@ bool InitializeGraphics(SessionState& state, const XrGraphicsBindingOpenGLXlibKH
   state.framebuffer_texture = GlProc<PFNGLFRAMEBUFFERTEXTURE2DPROC>("glFramebufferTexture2D");
   state.check_framebuffer = GlProc<PFNGLCHECKFRAMEBUFFERSTATUSPROC>("glCheckFramebufferStatus");
   state.blit_framebuffer = GlProc<PFNGLBLITFRAMEBUFFERPROC>("glBlitFramebuffer");
+  state.create_memory_objects = GlProc<PFNGLCREATEMEMORYOBJECTSEXTPROC>("glCreateMemoryObjectsEXT");
+  state.delete_memory_objects = GlProc<PFNGLDELETEMEMORYOBJECTSEXTPROC>("glDeleteMemoryObjectsEXT");
+  state.import_memory_fd = GlProc<PFNGLIMPORTMEMORYFDEXTPROC>("glImportMemoryFdEXT");
+  state.buffer_storage_mem = GlProc<PFNGLBUFFERSTORAGEMEMEXTPROC>("glBufferStorageMemEXT");
+  state.gen_buffers = GlProc<PFNGLGENBUFFERSPROC>("glGenBuffers");
+  state.delete_buffers = GlProc<PFNGLDELETEBUFFERSPROC>("glDeleteBuffers");
+  state.bind_buffer = GlProc<PFNGLBINDBUFFERPROC>("glBindBuffer");
+  const char* extensions = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+  state.dmabuf_buffer_import = extensions && std::strstr(extensions, "GL_EXT_memory_object_fd") &&
+    state.create_memory_objects && state.delete_memory_objects && state.import_memory_fd &&
+    state.buffer_storage_mem && state.gen_buffers && state.delete_buffers && state.bind_buffer;
   glGenTextures(1, &state.source_texture);
   if (state.gen_framebuffers != nullptr) {
     state.gen_framebuffers(1, &state.read_framebuffer);
@@ -722,11 +761,15 @@ bool RenderVulkanFrame(SessionState& state, const OverlaySnapshot& snapshot, int
     state.image_acquired = state.image_waited = false;
   }
   cleanup();
+  if (success && ++state.vulkan_gpu_frame_count % 300 == 1) {
+    std::cout << "Linux OpenXR Vulkan DMA-BUF GPU frame count=" << state.vulkan_gpu_frame_count << std::endl;
+  }
   return success;
 }
 
-bool RenderFrame(SessionState& state, const OverlaySnapshot& snapshot, const std::vector<uint8_t>& pixels) {
-  if (pixels.size() < static_cast<uint64_t>(snapshot.planes[0].stride) * snapshot.height ||
+bool RenderFrame(SessionState& state, const OverlaySnapshot& snapshot, const std::vector<uint8_t>* pixels, int dmabuf_fd = -1) {
+  if ((pixels && pixels->size() < static_cast<uint64_t>(snapshot.planes[0].stride) * snapshot.height) ||
+      (!pixels && (dmabuf_fd < 0 || !state.dmabuf_buffer_import)) ||
       !EnsureSwapchain(state, snapshot)) return false;
   Display* previous_display = glXGetCurrentDisplay();
   GLXContext previous_context = glXGetCurrentContext();
@@ -734,6 +777,7 @@ bool RenderFrame(SessionState& state, const OverlaySnapshot& snapshot, const std
   GLXDrawable previous_read = glXGetCurrentReadDrawable();
   if (!glXMakeContextCurrent(state.display, state.pbuffer, state.pbuffer, state.context)) return false;
   bool copied = false;
+  while (glGetError() != GL_NO_ERROR) {}
   glBindTexture(GL_TEXTURE_2D, state.source_texture);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
   glPixelStorei(GL_UNPACK_ROW_LENGTH, snapshot.planes[0].stride / 4);
@@ -743,9 +787,42 @@ bool RenderFrame(SessionState& state, const OverlaySnapshot& snapshot, const std
     state.source_width = snapshot.width;
     state.source_height = snapshot.height;
   }
-  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, snapshot.width, snapshot.height, format, GL_UNSIGNED_BYTE, pixels.data());
+  GLuint memory = 0;
+  GLuint unpack_buffer = 0;
+  bool uploaded = false;
+  if (pixels) {
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, snapshot.width, snapshot.height, format, GL_UNSIGNED_BYTE, pixels->data());
+    uploaded = glGetError() == GL_NO_ERROR;
+  } else {
+    // Import linear shared storage as a GPU unpack buffer. This avoids binding
+    // an EGLImage into a GLX context, and avoids CPU mapping/caching of a live
+    // DMA-BUF. Pixel-store stride/offset describe the producer's row layout.
+    struct stat info{};
+    const uint64_t size = fstat(dmabuf_fd, &info) == 0 && info.st_size > 0
+      ? static_cast<uint64_t>(info.st_size) : snapshot.planes[0].size;
+    const int imported_fd = dup(dmabuf_fd);
+    state.create_memory_objects(1, &memory);
+    if (imported_fd >= 0 && memory) {
+      state.import_memory_fd(memory, size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, imported_fd);
+      if (glGetError() == GL_NO_ERROR) {
+        state.gen_buffers(1, &unpack_buffer);
+        state.bind_buffer(GL_PIXEL_UNPACK_BUFFER, unpack_buffer);
+        state.buffer_storage_mem(GL_PIXEL_UNPACK_BUFFER, size, memory, 0);
+        if (glGetError() == GL_NO_ERROR) {
+          glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, snapshot.width, snapshot.height, format, GL_UNSIGNED_BYTE,
+            reinterpret_cast<const void*>(static_cast<uintptr_t>(snapshot.planes[0].offset)));
+          uploaded = glGetError() == GL_NO_ERROR;
+        }
+        state.bind_buffer(GL_PIXEL_UNPACK_BUFFER, 0);
+      } else {
+        close(imported_fd);
+      }
+    } else if (imported_fd >= 0) {
+      close(imported_fd);
+    }
+  }
   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-  if (!state.image_acquired) {
+  if (uploaded && !state.image_acquired) {
       XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
       if (XR_SUCCEEDED(state.instance->dispatch.AcquireSwapchainImage(state.swapchain, &acquire, &state.image_index))) state.image_acquired = true;
   }
@@ -754,7 +831,7 @@ bool RenderFrame(SessionState& state, const OverlaySnapshot& snapshot, const std
     const XrResult result = state.instance->dispatch.WaitSwapchainImage(state.swapchain, &wait);
     if (result != XR_TIMEOUT_EXPIRED && XR_SUCCEEDED(result)) state.image_waited = true;
   }
-  if (state.image_waited && state.image_index < state.images.size()) {
+  if (uploaded && state.image_waited && state.image_index < state.images.size()) {
     state.bind_framebuffer(GL_READ_FRAMEBUFFER, state.read_framebuffer);
     state.framebuffer_texture(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, state.source_texture, 0);
     state.bind_framebuffer(GL_DRAW_FRAMEBUFFER, state.draw_framebuffer);
@@ -768,6 +845,15 @@ bool RenderFrame(SessionState& state, const OverlaySnapshot& snapshot, const std
     XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     state.instance->dispatch.ReleaseSwapchainImage(state.swapchain, &release);
     state.image_acquired = state.image_waited = false;
+  }
+  // Keep the producer's frame leased until both the upload and swapchain copy
+  // finish. Merely flushing before acknowledging allows Electron to overwrite
+  // the shared allocation while the host GPU is still reading it.
+  glFinish();
+  if (unpack_buffer) state.delete_buffers(1, &unpack_buffer);
+  if (memory) state.delete_memory_objects(1, &memory);
+  if (copied && !pixels && ++state.gl_gpu_frame_count % 300 == 1) {
+    std::cout << "Linux OpenXR GLX DMA-BUF GPU frame count=" << state.gl_gpu_frame_count << std::endl;
   }
   state.bind_framebuffer(GL_FRAMEBUFFER, 0);
   if (previous_display != nullptr && previous_context != nullptr) {
@@ -907,15 +993,14 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* info)
         ? InitializeVulkanGraphics(*state) : InitializeGraphics(*state, state->binding);
       if (state->graphics_initialized) CreateSpaces(*state);
     }
-    if (state->graphics_api == SessionState::GraphicsApi::kVulkan && frame.dmabuf_fd >= 0) {
+    if (frame.dmabuf_fd >= 0) {
       bool consumed = !snapshot.visible || snapshot.generation == state->rendered_generation;
       if (state->graphics_initialized && snapshot.visible && snapshot.generation != 0 &&
           snapshot.generation != state->rendered_generation) {
-        const bool synchronized = SyncDmabuf(frame.dmabuf_fd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ);
-        consumed = synchronized && RenderVulkanFrame(*state, snapshot, frame.dmabuf_fd);
-        if (synchronized) {
-          consumed = SyncDmabuf(frame.dmabuf_fd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ) && consumed;
-        }
+        consumed = WaitForDmabufProducer(frame.dmabuf_fd) &&
+          (state->graphics_api == SessionState::GraphicsApi::kVulkan
+            ? RenderVulkanFrame(*state, snapshot, frame.dmabuf_fd)
+            : RenderFrame(*state, snapshot, nullptr, frame.dmabuf_fd));
         if (consumed) state->rendered_generation = snapshot.generation;
       }
       close(frame.dmabuf_fd);
@@ -926,8 +1011,9 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* info)
         g_frame.consumed = consumed;
         g_frame_condition.notify_all();
       }
-    } else if (state->graphics_initialized && snapshot.visible && snapshot.generation != 0 &&
-               snapshot.generation != state->rendered_generation && frame.pixels && RenderFrame(*state, snapshot, *frame.pixels)) {
+    } else if (state->graphics_api == SessionState::GraphicsApi::kOpenGL &&
+               state->graphics_initialized && snapshot.visible && snapshot.generation != 0 &&
+               snapshot.generation != state->rendered_generation && frame.pixels && RenderFrame(*state, snapshot, frame.pixels.get())) {
         state->rendered_generation = snapshot.generation;
     }
     const XrSpace space = snapshot.placement_mode == PlacementMode::kHead ? state->view_space :

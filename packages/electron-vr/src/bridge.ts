@@ -132,7 +132,6 @@ interface OffscreenWebContents {
   removeListener(event: "paint", listener: (event: SharedTexturePaintEvent, dirty: Rectangle, result?: unknown) => void): void;
   setFrameRate(frameRate: number): void;
   invalidate(): void;
-  capturePage(rect?: Rectangle): Promise<NativeImageLike>;
 }
 
 interface VrBridgeAddon {
@@ -408,22 +407,15 @@ export class VrBridge {
   private readonly addon = loadVrBridgeAddon();
   private attachedWindow: BrowserWindow | null = null;
   private warnedAboutMissingSharedTexture = false;
-  private warnedAboutSoftwareFallback = false;
-  private warnedAboutWindowsSoftwareFallback = false;
+  private loggedMockBitmap = false;
   private warnedAboutEmptyLinuxBitmap = false;
   private loggedFirstPaint = false;
   private loggedFirstWindowsHandle = false;
   private loggedFirstWindowsSubmit = false;
-  private loggedFirstWindowsSoftwareSubmit = false;
   private loggedFirstLinuxOpenGLSubmit = false;
-  private loggedFirstLinuxOpenXRSoftwareSubmit = false;
   private loggedFirstLinuxOpenVRVulkanSoftwareSubmit = false;
   private linuxOpenVRVisibleTexture: SharedTexturePayload | null = null;
-  private windowsReadbackInFlight = false;
-  private windowsReadbackPending = false;
   private windowsOpenXRTextures: Array<{ sequence: number; texture: SharedTexturePayload }> = [];
-  private linuxReadbackInFlight = false;
-  private linuxReadbackPending = false;
   private invalidationTimer: ReturnType<typeof setInterval> | null = null;
 
   attachWindow(window: BrowserWindow, options: AttachWindowOptions = {}): void {
@@ -456,7 +448,6 @@ export class VrBridge {
       return;
     }
 
-    this.linuxReadbackPending = false;
     for (const retained of this.windowsOpenXRTextures) releaseTexture(retained.texture);
     this.windowsOpenXRTextures = [];
 
@@ -516,51 +507,17 @@ export class VrBridge {
     return this.addon.getLastError();
   }
 
-  private submitWindowsSoftwareFrame(nativeImage: NativeImageLike): boolean {
-    const { width, height } = nativeImage.getSize();
-    const bitmap = nativeImage.toBitmap();
-    if (width === 0 || height === 0 || bitmap.length === 0) {
-      console.warn(`Windows software frame readback was empty (width=${width}, height=${height}, bytes=${bitmap.length}).`);
-      return false;
-    }
-
-    const submitted = this.addon.submitSoftwareFrame({
-      width,
-      height,
-      rgbaPixels: bgraToRgba(bitmap)
-    });
-
-    if (!submitted) {
-      console.error("Failed to submit Windows software frame to VR bridge:", this.addon.getLastError());
-      return false;
-    }
-
-    if (!this.loggedFirstWindowsSoftwareSubmit) {
-      this.loggedFirstWindowsSoftwareSubmit = true;
-      console.log("VR overlay submitted first Windows software frame to the native bridge.");
-    }
-
-    return true;
-  }
-
   private submitLinuxBitmapFrame(
     nativeImage: NativeImageLike | null,
-    verticallyFlip: boolean,
-    allowCaptureFallback = true
+    verticallyFlip: boolean
   ): boolean {
-    const openvrVulkanSoftware = !verticallyFlip && this.getSelectedBackend() === "openvr";
     const transportName = verticallyFlip
       ? "OpenVR OpenGL upload"
-      : openvrVulkanSoftware
-        ? "OpenVR Vulkan software upload"
-        : "OpenXR API-layer software transport";
+      : "OpenVR Vulkan software upload";
     if (!nativeImage) {
       if (!this.warnedAboutMissingSharedTexture) {
         this.warnedAboutMissingSharedTexture = true;
         console.warn(`Linux ${transportName} requires Electron bitmap paint data.`);
-      }
-      if (allowCaptureFallback) {
-        this.scheduleLinuxCaptureFallback();
       }
       return false;
     }
@@ -569,10 +526,7 @@ export class VrBridge {
     if (width === 0 || height === 0) {
       if (!this.warnedAboutEmptyLinuxBitmap) {
         this.warnedAboutEmptyLinuxBitmap = true;
-        console.warn(`Linux ${transportName} paint bitmap was empty (width=${width}, height=${height}); using capturePage readback.`);
-      }
-      if (allowCaptureFallback) {
-        this.scheduleLinuxCaptureFallback();
+        console.warn(`Linux ${transportName} paint bitmap was empty (width=${width}, height=${height}).`);
       }
       return false;
     }
@@ -581,10 +535,7 @@ export class VrBridge {
     if (bitmap.length === 0) {
       if (!this.warnedAboutEmptyLinuxBitmap) {
         this.warnedAboutEmptyLinuxBitmap = true;
-        console.warn(`Linux ${transportName} paint bitmap contained no pixels; using capturePage readback.`);
-      }
-      if (allowCaptureFallback) {
-        this.scheduleLinuxCaptureFallback();
+        console.warn(`Linux ${transportName} paint bitmap contained no pixels.`);
       }
       return false;
     }
@@ -602,111 +553,15 @@ export class VrBridge {
     if (verticallyFlip && !this.loggedFirstLinuxOpenGLSubmit) {
       this.loggedFirstLinuxOpenGLSubmit = true;
       console.log("VR overlay submitted first Linux frame through OpenGL upload.");
-    } else if (openvrVulkanSoftware && !this.loggedFirstLinuxOpenVRVulkanSoftwareSubmit) {
+    } else if (!verticallyFlip && !this.loggedFirstLinuxOpenVRVulkanSoftwareSubmit) {
       this.loggedFirstLinuxOpenVRVulkanSoftwareSubmit = true;
       console.log("VR overlay submitted first Linux frame through OpenVR Vulkan software upload.");
-    } else if (!openvrVulkanSoftware && !verticallyFlip && !this.loggedFirstLinuxOpenXRSoftwareSubmit) {
-      this.loggedFirstLinuxOpenXRSoftwareSubmit = true;
-      console.log("VR overlay submitted first Linux frame through OpenXR API-layer software transport.");
     }
     return true;
   }
 
-  private submitLinuxOpenGLFrame(nativeImage: NativeImageLike | null, allowCaptureFallback = true): boolean {
-    return this.submitLinuxBitmapFrame(nativeImage, true, allowCaptureFallback);
-  }
-
-  private submitLinuxOpenXRSoftwareFrame(nativeImage: NativeImageLike | null, allowCaptureFallback = true): boolean {
-    return this.submitLinuxBitmapFrame(nativeImage, false, allowCaptureFallback);
-  }
-
-  private scheduleLinuxCaptureFallback(): void {
-    if (!this.attachedWindow) {
-      return;
-    }
-    if (this.linuxReadbackInFlight) {
-      this.linuxReadbackPending = true;
-      return;
-    }
-
-    this.linuxReadbackInFlight = true;
-    const window = this.attachedWindow;
-    const offscreenContents = window.webContents as unknown as OffscreenWebContents;
-    const [width, height] = window.getContentSize();
-    void offscreenContents.capturePage({ x: 0, y: 0, width, height })
-      .then((image) => {
-        if (this.attachedWindow !== window || !this.isInitialized()) {
-          return;
-        }
-        const runtimeInfo = this.getRuntimeInfo();
-        if (runtimeInfo.selectedBackend === "openxr" && runtimeInfo.openxrMode === "api-layer") {
-          if (runtimeInfo.openxrCompanionConnected && runtimeInfo.openxrHostGraphicsApi === "opengl-xlib") {
-            this.submitLinuxOpenXRSoftwareFrame(image, false);
-          }
-          return;
-        }
-        if (runtimeInfo.selectedBackend === "openvr" &&
-            !isTruthyEnvironmentVariable("ELECTRON_VR_DISABLE_OPENVR_VULKAN") &&
-            !isTruthyEnvironmentVariable("ELECTRON_VR_OPENVR_GL_UPLOAD")) {
-          this.submitLinuxBitmapFrame(image, false, false);
-        } else {
-          this.submitLinuxOpenGLFrame(image, false);
-        }
-      })
-      .catch((error) => {
-        console.error("Failed to capture Linux OpenGL upload frame:", error);
-      })
-      .finally(() => {
-        this.linuxReadbackInFlight = false;
-        if (this.linuxReadbackPending) {
-          this.linuxReadbackPending = false;
-          this.scheduleLinuxCaptureFallback();
-        }
-      });
-  }
-
-  private useWindowsSoftwareFallback(nativeImage: NativeImageLike | null, warning: string): void {
-    if (!this.warnedAboutWindowsSoftwareFallback) {
-      this.warnedAboutWindowsSoftwareFallback = true;
-      console.warn(warning);
-    }
-
-    if (nativeImage && this.submitWindowsSoftwareFrame(nativeImage)) {
-      return;
-    }
-
-    this.scheduleWindowsCaptureFallback();
-  }
-
-  private scheduleWindowsCaptureFallback(): void {
-    if (!this.attachedWindow) {
-      return;
-    }
-
-    if (this.windowsReadbackInFlight) {
-      this.windowsReadbackPending = true;
-      return;
-    }
-
-    this.windowsReadbackInFlight = true;
-    const window = this.attachedWindow;
-    const offscreenContents = window.webContents as unknown as OffscreenWebContents;
-    const [width, height] = window.getContentSize();
-
-    void offscreenContents.capturePage({ x: 0, y: 0, width, height })
-      .then((image) => {
-        this.submitWindowsSoftwareFrame(image);
-      })
-      .catch((error) => {
-        console.error("Failed to capture Windows software fallback frame:", error);
-      })
-      .finally(() => {
-        this.windowsReadbackInFlight = false;
-        if (this.windowsReadbackPending) {
-          this.windowsReadbackPending = false;
-          this.scheduleWindowsCaptureFallback();
-        }
-      });
+  private submitLinuxOpenGLFrame(nativeImage: NativeImageLike | null): boolean {
+    return this.submitLinuxBitmapFrame(nativeImage, true);
   }
 
   private readonly onPaint = (event: SharedTexturePaintEvent, _dirty: Rectangle, paintResult?: unknown): void => {
@@ -747,36 +602,10 @@ export class VrBridge {
       }
       return;
     }
-    if (process.platform === "linux" &&
-        runtimeInfo.selectedBackend === "openxr" &&
-        runtimeInfo.openxrMode === "api-layer" &&
-        (!runtimeInfo.openxrCompanionConnected || runtimeInfo.openxrHostGraphicsApi === "opengl-xlib")) {
-      try {
-        if (runtimeInfo.openxrCompanionConnected) {
-          this.submitLinuxOpenXRSoftwareFrame(nativeImage);
-        }
-      } finally {
-        releaseTexture(texture);
-      }
-      return;
-    }
-
     if (!texture) {
-      if (process.platform === "linux" &&
-          this.getSelectedBackend() === "openvr") {
-        if (isTruthyEnvironmentVariable("ELECTRON_VR_OPENVR_GL_UPLOAD")) {
-          this.submitLinuxOpenGLFrame(nativeImage);
-        } else if (!isTruthyEnvironmentVariable("ELECTRON_VR_DISABLE_OPENVR_VULKAN")) {
-          this.submitLinuxBitmapFrame(nativeImage, false);
-        }
-        return;
-      }
-
-      if (process.platform === "win32" && this.getSelectedBackend() === "openvr") {
-        this.useWindowsSoftwareFallback(
-          nativeImage,
-          "Windows shared texture payload was unavailable; falling back to software RGBA upload."
-        );
+      if (process.platform === "linux" && runtimeInfo.selectedBackend === "openvr" &&
+          isTruthyEnvironmentVariable("ELECTRON_VR_OPENVR_GL_UPLOAD")) {
+        this.submitLinuxOpenGLFrame(nativeImage);
         return;
       }
 
@@ -788,16 +617,21 @@ export class VrBridge {
           rgbaPixels: bgraToRgba(nativeImage.toBitmap())
         });
 
-        if (!this.warnedAboutSoftwareFallback) {
-          this.warnedAboutSoftwareFallback = true;
-          console.warn("Shared texture payload was unavailable; using software bitmap upload for mock preview.");
+        if (!this.loggedMockBitmap) {
+          this.loggedMockBitmap = true;
+          console.log("Native mock preview received bitmap paint data.");
         }
         return;
       }
 
+      // Electron emits an initial empty paint before allocating the shared
+      // surface. That is not a deliverable frame. A real bitmap-only frame,
+      // however, must be reported rather than uploaded through another path.
+      const size = nativeImage?.getSize();
+      if (!size || size.width === 0 || size.height === 0) return;
       if (!this.warnedAboutMissingSharedTexture) {
         this.warnedAboutMissingSharedTexture = true;
-        console.warn("Shared texture payload was unavailable on paint; Electron provided a bitmap instead.");
+        console.error("Expected a shared GPU texture but received a bitmap-only frame; frame was not submitted. Bitmap recovery is disabled.");
       }
       return;
     }
@@ -817,15 +651,9 @@ export class VrBridge {
           const submitted = this.addon.submitSharedTexture(handle);
           if (!submitted) {
             console.error("Failed to submit Windows frame to VR bridge:", this.addon.getLastError());
-            if (this.getSelectedBackend() === "openvr") {
-              this.useWindowsSoftwareFallback(
-                nativeImage,
-                "Windows shared texture submission failed; falling back to software RGBA upload."
-              );
-            }
           } else {
             if (runtimeInfo.selectedBackend === "openxr" && runtimeInfo.openxrMode === "api-layer" &&
-                runtimeInfo.openxrHostGraphicsApi === "d3d11") {
+                (runtimeInfo.openxrHostGraphicsApi === "d3d11" || runtimeInfo.openxrHostGraphicsApi === "d3d12")) {
               const updatedRuntimeInfo = this.getRuntimeInfo();
               if (updatedRuntimeInfo.openxrSubmittedFrameSequence > runtimeInfo.openxrSubmittedFrameSequence) {
                 this.windowsOpenXRTextures.push({
@@ -840,14 +668,9 @@ export class VrBridge {
               console.log("VR overlay submitted first Windows frame to the native bridge.");
             }
           }
-        } else if (this.getSelectedBackend() === "openvr") {
-          this.useWindowsSoftwareFallback(
-            nativeImage,
-            "Windows shared texture handle was unavailable; falling back to software RGBA upload."
-          );
         } else if (!this.warnedAboutMissingSharedTexture) {
           this.warnedAboutMissingSharedTexture = true;
-          console.warn("Shared texture handle was unavailable on Windows; VR submission was skipped.");
+          console.error("Windows shared GPU texture handle is missing; frame was not submitted.");
         }
         return;
       }
@@ -862,10 +685,6 @@ export class VrBridge {
           const submitted = this.addon.submitSharedTexture(textureInfoSnapshot);
           if (!submitted) {
             console.error("Failed to submit Linux frame to VR bridge:", this.addon.getLastError());
-            if (this.getSelectedBackend() === "openvr" &&
-                !isTruthyEnvironmentVariable("ELECTRON_VR_DISABLE_OPENVR_VULKAN")) {
-              this.submitLinuxBitmapFrame(nativeImage, false);
-            }
           } else if (this.getSelectedBackend() === "openvr" &&
               isTruthyEnvironmentVariable("ELECTRON_VR_DISABLE_OPENVR_VULKAN")) {
             const previousTexture = this.linuxOpenVRVisibleTexture;
@@ -875,7 +694,7 @@ export class VrBridge {
           }
         } else if (!this.warnedAboutMissingSharedTexture) {
           this.warnedAboutMissingSharedTexture = true;
-          console.warn("Shared texture metadata was unavailable on paint; preview submission was skipped.");
+          console.error("Linux DMA-BUF metadata is missing; frame was not submitted.");
         }
         return;
       }
@@ -888,7 +707,7 @@ export class VrBridge {
           }
         } else if (!this.warnedAboutMissingSharedTexture) {
           this.warnedAboutMissingSharedTexture = true;
-          console.warn("IOSurface metadata was unavailable on paint; OpenXR submission was skipped.");
+          console.error("IOSurface metadata is missing; frame was not submitted.");
         }
       }
     } catch (error) {

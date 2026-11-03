@@ -94,7 +94,7 @@ function directOpenXRFeatures(): VRFeatureCompatibility {
 }
 
 function openVRFeatures(): VRFeatureCompatibility {
-  return { ...realFeatures, curvature: "supported", softwareFrameFallback: "supported" };
+  return { ...realFeatures, curvature: "supported", softwareFrameFallback: "unsupported" };
 }
 
 function unavailableFeatures(platform: string, backend: BackendKind): VRFeatureCompatibility {

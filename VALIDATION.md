@@ -424,7 +424,8 @@ Expected final state is `installed=false` and `enabled=false`.
 
 The Linux API layer supports Vulkan and desktop OpenGL with the OpenXR Xlib
 binding. Vulkan hosts use direct DMA-BUF import and a fenced swapchain copy;
-GLX hosts use the acknowledged software snapshot fallback. Xcb, native
+GLX hosts import a GPU unpack buffer through `GL_EXT_memory_object_fd` and
+acknowledge completion after the GPU copy. Xcb, native
 Wayland host bindings, multiplane DMA-BUF, and curvature remain unsupported.
 
 For the baseline, Electron and the host must run as the same non-root desktop
@@ -712,8 +713,9 @@ mark this row `NOT AVAILABLE`, not `PASS`.
 
 Start SteamVR and an active SteamVR scene application. Linux OpenVR uses public
 `TextureType_Vulkan` automatically, independent of the scene application's
-graphics API. Direct DMA-BUF import is preferred; bitmap-to-Vulkan upload is
-the automatic correctness fallback. OpenGL upload is diagnostic-only.
+graphics API. Direct DMA-BUF import must succeed: automatic bitmap recovery,
+capture readback and private-import switching are disabled. OpenGL upload is
+diagnostic-only and must not be used to validate the GPU path.
 
 Then run without a Vulkan enable flag:
 
@@ -753,8 +755,9 @@ gnome-screenshot -f "$VALIDATION_DIR/openvr-vulkan-b.png"
 
 The scene and overlay clock must both change. Also confirm the Electron log
 contains `submitted first DMA-BUF through TextureType_Vulkan`. To exercise the
-fallback explicitly, set `ELECTRON_VR_OPENVR_VULKAN_SOFTWARE=1`; use
-`ELECTRON_VR_DISABLE_OPENVR_VULKAN=1` only for negative testing.
+software diagnostic explicitly, create a bitmap offscreen window and set
+`ELECTRON_VR_OPENVR_VULKAN_SOFTWARE=1`; use
+`ELECTRON_VR_DISABLE_OPENVR_VULKAN=1` only for legacy-import or negative testing.
 
 ### Linux Negative Tests
 
@@ -867,8 +870,9 @@ Compare a 60-second host-only baseline with a 60-second host-plus-overlay run.
 There is no fixed release threshold yet, so retain raw measurements. Any
 repeatable frame-time regression above 1 ms, persistent reprojection increase,
 or blocking hitch should be filed before declaring the path validated. Linux
-deserves particular attention because the GLX fallback uses CPU snapshots and
-`glFinish()`, while Vulkan uses DMA-BUF synchronization and a fenced GPU copy.
+deserves particular attention because GLX waits for its GPU copy with
+`glFinish()`, while Vulkan uses a layer-owned fence. Neither GPU path may
+substitute CPU snapshots or captured bitmaps when transport fails.
 
 ## Real Application Matrix
 
