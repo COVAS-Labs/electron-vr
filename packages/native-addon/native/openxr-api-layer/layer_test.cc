@@ -24,6 +24,8 @@
 #include <vector>
 
 #include "../openxr_api_layer_protocol.h"
+#include "swapchain_format.h"
+#include "../app_anchor_windows.h"
 
 namespace {
 
@@ -39,6 +41,8 @@ uint32_t g_destroy_instance_calls = 0;
 uint32_t g_create_session_calls = 0;
 uint32_t g_destroy_session_calls = 0;
 uint32_t g_end_frame_calls = 0;
+XrPosef g_application_pose{{0,0,0,1},{0.3f,1.2f,-0.4f}};
+bool g_anchor_valid=true;
 
 bool Expect(bool condition, const char* message) {
   if (condition) return true;
@@ -57,6 +61,10 @@ XrResult XRAPI_CALL StubGetSystemProperties(XrInstance, XrSystemId, XrSystemProp
   properties->graphicsProperties.maxLayerCount = 16;
   return XR_SUCCESS;
 }
+XrResult XRAPI_CALL StubGetInstanceProperties(XrInstance, XrInstanceProperties* properties) {
+  std::strcpy(properties->runtimeName,"SteamVR test runtime");
+  return XR_SUCCESS;
+}
 
 XrResult XRAPI_CALL StubCreateSession(XrInstance instance, const XrSessionCreateInfo*, XrSession* session) {
   if (instance != g_instance || session == nullptr) return XR_ERROR_VALIDATION_FAILURE;
@@ -73,20 +81,26 @@ XrResult XRAPI_CALL StubDestroySession(XrSession session) {
 
 XrResult XRAPI_CALL StubEnumerateReferenceSpaces(XrSession, uint32_t capacity, uint32_t* count, XrReferenceSpaceType* spaces) {
   if (count == nullptr) return XR_ERROR_VALIDATION_FAILURE;
-  *count = 2;
-  if (capacity >= 2 && spaces != nullptr) {
+  *count = 3;
+  if (capacity >= 3 && spaces != nullptr) {
     spaces[0] = XR_REFERENCE_SPACE_TYPE_VIEW;
     spaces[1] = XR_REFERENCE_SPACE_TYPE_LOCAL;
+    spaces[2] = XR_REFERENCE_SPACE_TYPE_STAGE;
   }
   return XR_SUCCESS;
 }
 
-XrResult XRAPI_CALL StubCreateReferenceSpace(XrSession, const XrReferenceSpaceCreateInfo*, XrSpace*) {
-  return XR_ERROR_FEATURE_UNSUPPORTED;
+XrResult XRAPI_CALL StubCreateReferenceSpace(XrSession, const XrReferenceSpaceCreateInfo* info, XrSpace* space) {
+  *space=reinterpret_cast<XrSpace>(0x3000+static_cast<uintptr_t>(info->referenceSpaceType));
+  return XR_SUCCESS;
 }
 
 XrResult XRAPI_CALL StubDestroySpace(XrSpace) { return XR_SUCCESS; }
-XrResult XRAPI_CALL StubLocateSpace(XrSpace, XrSpace, XrTime, XrSpaceLocation*) { return XR_ERROR_FEATURE_UNSUPPORTED; }
+XrResult XRAPI_CALL StubLocateSpace(XrSpace, XrSpace, XrTime, XrSpaceLocation* location) {
+  location->pose=g_application_pose;
+  location->locationFlags=g_anchor_valid ? XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT : 0;
+  return XR_SUCCESS;
+}
 XrResult XRAPI_CALL StubPollEvent(XrInstance, XrEventDataBuffer*) { return XR_EVENT_UNAVAILABLE; }
 
 XrResult XRAPI_CALL StubEnumerateSwapchainFormats(XrSession, uint32_t, uint32_t* count, int64_t*) {
@@ -138,6 +152,7 @@ XrResult XRAPI_CALL StubGetInstanceProcAddr(
   const Entry entries[] = {
     {"xrDestroyInstance", reinterpret_cast<PFN_xrVoidFunction>(StubDestroyInstance)},
     {"xrGetSystemProperties", reinterpret_cast<PFN_xrVoidFunction>(StubGetSystemProperties)},
+    {"xrGetInstanceProperties", reinterpret_cast<PFN_xrVoidFunction>(StubGetInstanceProperties)},
     {"xrCreateSession", reinterpret_cast<PFN_xrVoidFunction>(StubCreateSession)},
     {"xrDestroySession", reinterpret_cast<PFN_xrVoidFunction>(StubDestroySession)},
     {"xrEnumerateReferenceSpaces", reinterpret_cast<PFN_xrVoidFunction>(StubEnumerateReferenceSpaces)},
@@ -188,6 +203,24 @@ std::wstring LayerPath() {
 
 int wmain() {
   bool passed = true;
+  using electron_vr::SelectOverlaySwapchainFormat;
+  passed &= Expect(SelectOverlaySwapchainFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+    {DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM}) == DXGI_FORMAT_B8G8R8A8_UNORM,
+    "prefer the exact source format when supported");
+  passed &= Expect(SelectOverlaySwapchainFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+    {29, 91, 2, 10, 24, 40, 55, 45, 20}) == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+    "negotiate Chromium BGRA into SteamVR's sRGB-only swapchain list");
+  passed &= Expect(SelectOverlaySwapchainFormat(DXGI_FORMAT_R8G8B8A8_UNORM,
+    {DXGI_FORMAT_R8G8B8A8_UNORM_SRGB}) == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+    "negotiate the matching RGBA sRGB variant");
+  passed &= Expect(SelectOverlaySwapchainFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+    {DXGI_FORMAT_R8G8B8A8_UNORM_SRGB}) == DXGI_FORMAT_UNKNOWN,
+    "reject channel-order changes without a shader conversion");
+  passed &= Expect(SelectOverlaySwapchainFormat(DXGI_FORMAT_R8G8B8A8_UNORM, {}) == DXGI_FORMAT_UNKNOWN,
+    "reject an empty format list");
+  passed &= Expect(SelectOverlaySwapchainFormat(DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+    {DXGI_FORMAT_B8G8R8A8_UNORM}) == DXGI_FORMAT_UNKNOWN,
+    "do not silently change sRGB input into a linear destination");
   HMODULE layer = LoadLibraryW(LayerPath().c_str());
   passed &= Expect(layer != nullptr, "API-layer DLL loads");
   if (layer == nullptr) return 1;
@@ -302,6 +335,26 @@ int wmain() {
   frame.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
   passed &= Expect(end_frame(session, &frame) == XR_SUCCESS, "frame submission passes through");
   passed &= Expect(g_end_frame_calls == 1 && g_forwarded_frame == &frame, "no-companion frame is forwarded unchanged");
+  XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+  projection.space=reinterpret_cast<XrSpace>(0x9999);
+  const XrCompositionLayerBaseHeader* projection_layers[]={reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection)};
+  frame.layerCount=1; frame.layers=projection_layers;
+  passed &= Expect(end_frame(session,&frame)==XR_SUCCESS && g_forwarded_frame==&frame,
+    "anchor observation leaves game composition untouched without an OpenXR overlay");
+  electron_vr::anchor::Sample observation;
+  passed &= Expect(electron_vr::anchor::ReadProcess(GetCurrentProcessId(),&observation) &&
+    std::abs(observation.stage_from_application.m[0][3]-0.3f)<0.0001f,
+    "publishes application projection-space pose through the read-only bridge");
+  const auto first_session=observation.session;
+  g_application_pose.position.x=2.f;
+  passed &= Expect(end_frame(session,&frame)==XR_SUCCESS &&
+    electron_vr::anchor::ReadProcess(GetCurrentProcessId(),&observation) && observation.session==first_session &&
+    std::abs(observation.stage_from_application.m[0][3]-2.f)<0.0001f,
+    "recenter pose changes reach OpenVR without changing the anchor source identity");
+  g_anchor_valid=false;
+  end_frame(session,&frame);
+  passed &= Expect(!electron_vr::anchor::ReadProcess(GetCurrentProcessId(),&observation),
+    "tracking loss invalidates the shared pose instead of publishing an origin jump");
 
   function = nullptr;
   request.getInstanceProcAddr(instance, "xrDestroySession", &function);

@@ -1,5 +1,9 @@
 # electron-vr
 
+Branch review notes: [Seated Anchor maintainer handoff](SEATED_ANCHOR_HANDOFF.md).
+The application-space recenter bridge is a Windows-tested prototype; Linux/Proton
+transport is not finished. See that document before integrating this branch.
+
 Electron VR overlay workspace built around one public package: `@covas-labs/electron-vr`.
 
 ## Installation

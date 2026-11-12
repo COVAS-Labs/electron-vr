@@ -27,15 +27,20 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <sstream>
 #include <thread>
 #include <unordered_map>
 #include <vector>
 
 #include "../openxr_api_layer_protocol.h"
 #include "../seated_anchor.h"
+#include "swapchain_format.h"
+#include "../app_anchor_windows.h"
 
 namespace {
 
@@ -55,6 +60,27 @@ using electron_vr::openxr_layer::kTextureSlotCount;
 constexpr char kLayerName[] = "XR_APILAYER_ELECTRON_VR_overlay";
 constexpr XrDuration kSwapchainWaitTimeout = 0;
 constexpr DWORD kMutexWaitTimeoutMs = 0;
+
+// Opt-in, bounded diagnostics for failures that otherwise leave the quad invisible.
+void TraceOverlay(const std::string& message) {
+  static const auto directory = [] {
+    HMODULE module = nullptr;
+    wchar_t filename[32768]{};
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(&TraceOverlay), &module) ||
+        !GetModuleFileNameW(module, filename, 32768)) return std::filesystem::path();
+    return std::filesystem::path(filename).parent_path();
+  }();
+  static const bool enabled = !directory.empty() && std::filesystem::exists(directory / "enable-layer-diagnostics.txt");
+  if (!enabled) return;
+  static std::mutex mutex;
+  static std::vector<std::string> seen;
+  std::lock_guard<std::mutex> lock(mutex);
+  if (seen.size() >= 64 || std::find(seen.begin(), seen.end(), message) != seen.end()) return;
+  seen.push_back(message);
+  std::ofstream log(directory / ("layer-diagnostics-" + std::to_string(GetCurrentProcessId()) + ".log"), std::ios::app);
+  log << message << '\n';
+}
 
 std::wstring HostPresenceMappingName() {
   return std::wstring(kHostPresenceMappingPrefix) + std::to_wstring(GetCurrentProcessId());
@@ -88,6 +114,7 @@ struct InstanceState {
   std::string application_name;
   bool d3d11_enabled = false;
   bool d3d12_enabled = false;
+  bool steamvr_runtime = false;
 };
 
 struct ImportedSlot {
@@ -106,6 +133,8 @@ struct D3D12AllocatorState {
 };
 
 struct SessionState {
+  electron_vr::anchor::Publisher application_anchor;
+  uint64_t anchor_session = GetTickCount64();
   XrSession session = XR_NULL_HANDLE;
   std::shared_ptr<InstanceState> instance;
   GraphicsApi graphics_api = GraphicsApi::kUnknown;
@@ -422,6 +451,7 @@ void DestroyOverlayResources(SessionState& state) {
 }
 
 void DestroySessionResources(SessionState& state) {
+  state.application_anchor.Invalidate();
   if (state.queue12 != nullptr && state.completion_fence12 != nullptr) {
     const uint64_t completion_value = state.next_completion_value12++;
     if (SUCCEEDED(state.queue12->Signal(state.completion_fence12.Get(), completion_value)) &&
@@ -597,21 +627,31 @@ bool CreateOverlaySwapchain(SessionState& state, const OverlaySnapshot& snapshot
   std::vector<int64_t> formats(format_count);
   if (XR_FAILED(dispatch.EnumerateSwapchainFormats(state.session, format_count, &format_count, formats.data()))) return false;
   const int64_t desired_format = snapshot.dxgi_format;
-  if (std::find(formats.begin(), formats.end(), desired_format) == formats.end()) return false;
+  const int64_t swapchain_format = electron_vr::SelectOverlaySwapchainFormat(desired_format, formats);
+  if (swapchain_format == DXGI_FORMAT_UNKNOWN) {
+    std::ostringstream details;
+    details << "Unsupported texture format " << desired_format << "; runtime formats:";
+    for (auto format : formats) details << ' ' << format;
+    TraceOverlay(details.str());
+    return false;
+  }
 
   XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
   info.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
   if (state.graphics_api == GraphicsApi::kD3D12) {
     info.usageFlags |= XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
   }
-  info.format = desired_format;
+  info.format = swapchain_format;
   info.sampleCount = 1;
   info.width = snapshot.width;
   info.height = snapshot.height;
   info.faceCount = 1;
   info.arraySize = 1;
   info.mipCount = 1;
-  if (XR_FAILED(dispatch.CreateSwapchain(state.session, &info, &state.swapchain))) return false;
+  const XrResult created = dispatch.CreateSwapchain(state.session, &info, &state.swapchain);
+  if (XR_FAILED(created)) { TraceOverlay("CreateSwapchain failed: " + std::to_string(created)); return false; }
+  TraceOverlay("Overlay swapchain created, source format " + std::to_string(desired_format) +
+               ", swapchain format " + std::to_string(swapchain_format));
 
   uint32_t image_count = 0;
   if (XR_FAILED(dispatch.EnumerateSwapchainImages(state.swapchain, 0, &image_count, nullptr)) || image_count == 0) {
@@ -638,6 +678,8 @@ bool CreateOverlaySwapchain(SessionState& state, const OverlaySnapshot& snapshot
   }
   state.width = snapshot.width;
   state.height = snapshot.height;
+  // Track the source format here so a compatible sRGB destination does not
+  // cause the swapchain to be destroyed and recreated on every frame.
   state.format = static_cast<DXGI_FORMAT>(snapshot.dxgi_format);
   return true;
 }
@@ -772,7 +814,8 @@ bool CopyLatestFrame(SessionState& state, const OverlaySnapshot& snapshot) {
 
   if (!state.image_acquired) {
     XrSwapchainImageAcquireInfo acquire_info{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-    if (XR_FAILED(dispatch.AcquireSwapchainImage(state.swapchain, &acquire_info, &state.acquired_image_index))) return false;
+    const XrResult acquired = dispatch.AcquireSwapchainImage(state.swapchain, &acquire_info, &state.acquired_image_index);
+    if (XR_FAILED(acquired)) { TraceOverlay("AcquireSwapchainImage failed: " + std::to_string(acquired)); return false; }
     state.image_acquired = true;
     state.image_waited = false;
   }
@@ -780,8 +823,8 @@ bool CopyLatestFrame(SessionState& state, const OverlaySnapshot& snapshot) {
     XrSwapchainImageWaitInfo wait_info{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
     wait_info.timeout = kSwapchainWaitTimeout;
     const XrResult wait_result = dispatch.WaitSwapchainImage(state.swapchain, &wait_info);
-    if (wait_result == XR_TIMEOUT_EXPIRED) return false;
-    if (XR_FAILED(wait_result)) return false;
+    if (wait_result == XR_TIMEOUT_EXPIRED) { TraceOverlay("WaitSwapchainImage timed out"); return false; }
+    if (XR_FAILED(wait_result)) { TraceOverlay("WaitSwapchainImage failed: " + std::to_string(wait_result)); return false; }
     state.image_waited = true;
   }
 
@@ -819,10 +862,13 @@ bool CopyLatestFrame(SessionState& state, const OverlaySnapshot& snapshot) {
   }
   XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
   const XrResult release_result = dispatch.ReleaseSwapchainImage(state.swapchain, &release_info);
+  if (!copied) TraceOverlay("Overlay image copy did not complete");
+  if (XR_FAILED(release_result)) TraceOverlay("ReleaseSwapchainImage failed: " + std::to_string(release_result));
   state.image_acquired = false;
   state.image_waited = false;
   if (copied && XR_SUCCEEDED(release_result)) {
     state.consumed_sequence = snapshot.latest_sequence;
+    TraceOverlay("First overlay image copied and released");
   }
   return copied && XR_SUCCEEDED(release_result);
 }
@@ -850,7 +896,8 @@ bool IsFinitePose(const OverlaySnapshot& snapshot) {
     if (!std::isfinite(value)) return false;
     length_squared += value * value;
   }
-  return length_squared > 0.000001f && std::isfinite(snapshot.size_meters) && snapshot.size_meters > 0.0f;
+  return length_squared > 0.000001f && std::isfinite(snapshot.size_meters) && snapshot.size_meters > 0.0f &&
+         std::isfinite(snapshot.curvature) && snapshot.curvature >= 0.f && snapshot.curvature <= 1.f;
 }
 
 XrSpace SelectSpace(const SessionState& state, PlacementMode mode) {
@@ -1040,6 +1087,24 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* frame
     const auto state = FindSession(session);
     if (state == nullptr) return XR_ERROR_HANDLE_INVALID;
     const auto forward_original = [&] { return state->instance->dispatch.EndFrame(session, frame_end_info); };
+    // Observe application space independently of texture delivery. The OpenVR
+    // presenter can use this pose without injecting an OpenXR composition layer.
+    if (state->instance->steamvr_runtime && state->stage_space && frame_end_info &&
+        frame_end_info->type == XR_TYPE_FRAME_END_INFO && frame_end_info->displayTime > 0) {
+      const XrSpace application = electron_vr::ProjectionSpace(*frame_end_info);
+      XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
+      const auto required = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+      if (application && XR_SUCCEEDED(state->instance->dispatch.LocateSpace(application, state->stage_space,
+          frame_end_info->displayTime, &location)) && (location.locationFlags & required) == required) {
+        const auto& q=location.pose.orientation;
+        const auto& p=location.pose.position;
+        const auto transform=electron_vr::anchor::FromPose(q.x,q.y,q.z,q.w,p.x,p.y,p.z);
+        state->application_anchor.Publish(transform, state->anchor_session);
+        TraceOverlay("Application anchor published in SteamVR STAGE space");
+      } else {
+        state->application_anchor.Invalidate();
+      }
+    }
     if (state->graphics_api == GraphicsApi::kD3D11) PollDirectTextureCompletions(*state);
     if (frame_end_info == nullptr || frame_end_info->type != XR_TYPE_FRAME_END_INFO ||
         (frame_end_info->layerCount > 0 && frame_end_info->layers == nullptr) ||
@@ -1077,7 +1142,10 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* frame
     quad.pose.position = {snapshot.position[0], snapshot.position[1], snapshot.position[2]};
     if (snapshot.placement_mode == PlacementMode::kSeated) {
       if (!state->seated_anchor.Apply(state->view_space, space, electron_vr::ProjectionSpace(*frame_end_info),
-          frame_end_info->displayTime, state->instance->dispatch.LocateSpace, &quad.pose)) return forward_original();
+          frame_end_info->displayTime, state->instance->dispatch.LocateSpace, &quad.pose)) {
+        TraceOverlay("Seated anchor awaiting valid head pose and application projection space");
+        return forward_original();
+      }
     }
     quad.size.width = snapshot.size_meters;
     quad.size.height = snapshot.size_meters * static_cast<float>(state->height) / static_cast<float>(state->width);
@@ -1088,7 +1156,9 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* frame
     XrFrameEndInfo modified = *frame_end_info;
     modified.layerCount = static_cast<uint32_t>(layers.size());
     modified.layers = layers.data();
-    return state->instance->dispatch.EndFrame(session, &modified);
+    const XrResult submitted = state->instance->dispatch.EndFrame(session, &modified);
+    TraceOverlay("Overlay EndFrame result: " + std::to_string(submitted));
+    return submitted;
   } catch (...) {
     const auto state = FindSession(session);
     return state != nullptr ? state->instance->dispatch.EndFrame(session, frame_end_info) : XR_ERROR_RUNTIME_FAILURE;
@@ -1176,6 +1246,12 @@ XrResult XRAPI_CALL LayerCreateApiLayerInstance(
       }
       *instance = XR_NULL_HANDLE;
       return XR_ERROR_INITIALIZATION_FAILED;
+    }
+    PFN_xrGetInstanceProperties get_properties=nullptr;
+    XrInstanceProperties properties{XR_TYPE_INSTANCE_PROPERTIES};
+    if (LoadFunction(state,"xrGetInstanceProperties",&get_properties) &&
+        XR_SUCCEEDED(get_properties(*instance,&properties))) {
+      state->steamvr_runtime=std::string(properties.runtimeName).find("SteamVR")!=std::string::npos;
     }
     {
       std::lock_guard<std::mutex> lock(g_state_mutex);

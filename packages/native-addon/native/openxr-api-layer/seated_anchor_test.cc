@@ -1,5 +1,6 @@
 #define XR_NO_PROTOTYPES
 #include "../seated_anchor.h"
+#include "../anchor_transform.h"
 #include <iostream>
 #include <limits>
 
@@ -22,6 +23,34 @@ XrPosef Offset() { return {{0, 0, 0, 1}, {0.5f, -0.2f, -2}}; }
 }
 
 int main() {
+  using namespace electron_vr::anchor;
+  Follower follower;
+  const auto configured=FromPose(0,0,0,1,-0.7f,1.26875f,-1.58f);
+  auto initial=FromPose(0,std::sin(0.4f),0,std::cos(0.4f),2,1.3f,3);
+  Expect(follower.Update(5,initial),"accepts valid application anchor");
+  auto world=follower.Place(configured);
+  Expect(Near(world.m[0][3],configured.m[0][3]) && Near(world.m[1][3],configured.m[1][3]) &&
+    Near(world.m[2][3],configured.m[2][3]),"initial seated mode exactly preserves legacy world placement");
+  auto moved=initial; moved.m[0][3]+=0.5f;
+  follower.Update(5,moved);
+  world=follower.Place(configured);
+  Expect(Near(world.m[0][3],-0.2f) && Near(world.m[1][3],1.26875f),"recenter translation moves the configured overlay by the same amount");
+  const auto turned=FromPose(0,std::sqrt(0.5f),0,std::sqrt(0.5f),4,1.3f,5);
+  follower.Update(5,turned);
+  const auto expected=Multiply(Multiply(turned,Inverse(initial)),configured);
+  world=follower.Place(configured);
+  for(int r=0;r<3;++r)for(int c=0;c<4;++c)Expect(Near(world.m[r][c],expected.m[r][c]),"recenter rotation uses application-relative pose composition");
+  for(int i=0;i<10000;++i)follower.Update(5,turned);
+  world=follower.Place(configured);
+  Expect(Near(world.m[0][3],expected.m[0][3]),"unchanged frames do not accumulate transform drift");
+  follower.Update(9,initial);
+  world=follower.Place(configured);
+  Expect(Near(world.m[0][3],expected.m[0][3]),"changing source preserves the current visible location");
+  auto invalid=initial;invalid.m[0][0]=std::numeric_limits<float>::quiet_NaN();
+  Expect(!follower.Update(9,invalid),"invalid samples cannot corrupt the anchor");
+  follower.Reset();
+  world=follower.Place(configured);
+  Expect(Near(world.m[0][3],configured.m[0][3]),"mode reset restores the configured world placement");
   const auto view = reinterpret_cast<XrSpace>(1), base = reinterpret_cast<XrSpace>(2);
   const auto app = reinterpret_cast<XrSpace>(3), replacement = reinterpret_cast<XrSpace>(4);
   electron_vr::SeatedAnchor anchor;

@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createAnchorPoll } from "./anchorPolling.js";
 
 export type BackendKind = "none" | "openxr" | "openvr" | "mock";
 export type OpenXRMode = "none" | "overlay-session" | "api-layer" | "standard-test-session";
@@ -443,6 +444,8 @@ export class VrBridge {
   private linuxReadbackInFlight = false;
   private linuxReadbackPending = false;
   private invalidationTimer: ReturnType<typeof setInterval> | null = null;
+  private anchorTimer: ReturnType<typeof setInterval> | null = null;
+  private anchorPlacement: OverlayPlacement | null = null;
 
   attachWindow(window: BrowserWindow, options: AttachWindowOptions = {}): void {
     this.detachWindow();
@@ -452,6 +455,14 @@ export class VrBridge {
     offscreenContents.setFrameRate(frameRate);
     offscreenContents.on("paint", this.onPaint);
     this.attachedWindow = window;
+    if (this.getSelectedBackend() === "openvr") {
+      this.anchorTimer = setInterval(createAnchorPoll({
+        getPlacement: () => this.anchorPlacement,
+        isInitialized: () => this.addon.isInitialized(),
+        apply: placement => this.addon.setOverlayPlacement(placement),
+        onError: () => console.error("Failed to refresh seated overlay anchor:", this.addon.getLastError()),
+      }), 1000 / frameRate);
+    }
     if (this.getSelectedBackend() === "openxr" ||
         (process.platform === "linux" &&
           (isTruthyEnvironmentVariable("ELECTRON_VR_OPENVR_GL_UPLOAD") ||
@@ -466,6 +477,10 @@ export class VrBridge {
   }
 
   detachWindow(): void {
+    if (this.anchorTimer) {
+      clearInterval(this.anchorTimer);
+      this.anchorTimer = null;
+    }
     if (this.invalidationTimer) {
       clearInterval(this.invalidationTimer);
       this.invalidationTimer = null;
@@ -493,7 +508,9 @@ export class VrBridge {
 
   initialize(options: InitializeVROptions): boolean {
     try {
-      return this.addon.initializeVR(options);
+      const initialized = this.addon.initializeVR(options);
+      this.anchorPlacement = initialized ? options.placement : null;
+      return initialized;
     } finally {
       releaseTexture(this.linuxOpenVRVisibleTexture);
       this.linuxOpenVRVisibleTexture = null;
@@ -501,7 +518,9 @@ export class VrBridge {
   }
 
   setOverlayPlacement(placement: OverlayPlacement): boolean {
-    return this.addon.setOverlayPlacement(placement);
+    const applied = this.addon.setOverlayPlacement(placement);
+    if (applied) this.anchorPlacement = placement;
+    return applied;
   }
 
   setOverlayVisible(visible: boolean): boolean {
@@ -518,6 +537,7 @@ export class VrBridge {
 
   shutdown(): void {
     this.detachWindow();
+    this.anchorPlacement = null;
     try {
       this.addon.shutdownVR();
     } finally {

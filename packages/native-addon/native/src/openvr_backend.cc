@@ -14,6 +14,8 @@
 #include <vector>
 
 #include "openvr.h"
+#include "../anchor_transform.h"
+#include "../app_anchor_windows.h"
 
 #if defined(_WIN32)
 #include <d3d11_1.h>
@@ -39,6 +41,12 @@ namespace vrbridge {
 namespace {
 
 struct OpenVRState {
+  OverlayPlacement placement;
+  electron_vr::anchor::Follower anchor_follower;
+#if defined(_WIN32)
+  electron_vr::anchor::Reader anchor_reader;
+  uint64_t application_source = 0;
+#endif
   vr::IVRSystem* system = nullptr;
   vr::IVROverlay* overlay = nullptr;
 #if defined(__linux__)
@@ -677,13 +685,14 @@ vr::HmdMatrix34_t ToHmdMatrix34(const OverlayPlacement& placement) {
   return matrix;
 }
 
-bool ApplyPlacement(const OverlayPlacement& placement, std::string* error_message) {
+bool RefreshPlacement(std::string* error_message) {
+  const auto& placement=g_state.placement;
   if (!g_state.initialized || g_state.overlay == nullptr || g_state.overlay_handle == vr::k_ulOverlayHandleInvalid) {
     SetError(error_message, "OpenVR backend is not initialized.");
     return false;
   }
 
-  const vr::HmdMatrix34_t matrix = ToHmdMatrix34(placement);
+  vr::HmdMatrix34_t matrix = ToHmdMatrix34(placement);
   if (placement.mode == OverlayPlacementMode::kHead) {
     return CheckOverlayError(
       g_state.overlay->SetOverlayTransformTrackedDeviceRelative(
@@ -694,13 +703,47 @@ bool ApplyPlacement(const OverlayPlacement& placement, std::string* error_messag
       error_message);
   }
 
+  if (placement.mode == OverlayPlacementMode::kSeated) {
+    bool application_anchor=false;
+#if defined(_WIN32)
+    electron_vr::anchor::Sample sample;
+    if(g_state.anchor_reader.Read(&sample)) {
+      const uint64_t source=(static_cast<uint64_t>(sample.pid)<<32)^sample.session^0x8000000000000000ull;
+      g_state.anchor_follower.Update(source,sample.stage_from_application);
+      if(g_state.application_source!=source) std::cerr << "[electron-vr] Following application anchor, pid=" << sample.pid << std::endl;
+      g_state.application_source=source;
+      application_anchor=true;
+    } else if(g_state.application_source && electron_vr::anchor::Alive(g_state.anchor_reader.Process())) {
+      // Hold the last transform through pauses/tracking loss; never jump back
+      // to another origin just because one frame has no valid pose.
+      application_anchor=true;
+    }
+#endif
+    if(!application_anchor) {
+      const auto seated=g_state.system->GetSeatedZeroPoseToStandingAbsoluteTrackingPose();
+      electron_vr::anchor::Transform anchor;
+      std::memcpy(anchor.m,seated.m,sizeof(anchor.m));
+      g_state.anchor_follower.Update(1,anchor);
+    }
+    electron_vr::anchor::Transform configured;
+    std::memcpy(configured.m,matrix.m,sizeof(configured.m));
+    const auto placed=g_state.anchor_follower.Place(configured);
+    std::memcpy(matrix.m,placed.m,sizeof(matrix.m));
+  }
+
   return CheckOverlayError(
     g_state.overlay->SetOverlayTransformAbsolute(
       g_state.overlay_handle,
-      placement.mode == OverlayPlacementMode::kSeated ? vr::TrackingUniverseSeated : vr::TrackingUniverseStanding,
+      vr::TrackingUniverseStanding,
       &matrix),
     "Failed to set world-locked overlay transform",
     error_message);
+}
+
+bool ApplyPlacement(const OverlayPlacement& placement, std::string* error_message) {
+  if(g_state.placement.mode!=placement.mode) g_state.anchor_follower.Reset();
+  g_state.placement=placement;
+  return RefreshPlacement(error_message);
 }
 
 bool ApplyVisible(bool visible, std::string* error_message) {
@@ -2037,6 +2080,11 @@ void ResetState() {
   g_state.overlay = nullptr;
   g_state.overlay_handle = vr::k_ulOverlayHandleInvalid;
   g_state.initialized = false;
+  g_state.anchor_follower.Reset();
+#if defined(_WIN32)
+  g_state.anchor_reader.Reset();
+  g_state.application_source=0;
+#endif
 }
 
 }  // namespace
@@ -2139,6 +2187,7 @@ bool SubmitOpenVRFrameWindows(uint64_t shared_handle, std::string* error_message
     SetError(error_message, "OpenVR backend received an invalid Windows shared handle.");
     return false;
   }
+  if(g_state.placement.mode==OverlayPlacementMode::kSeated && !RefreshPlacement(error_message)) return false;
 
   if (!OpenSharedTextureFromHandle(shared_handle, error_message)) {
     return false;
@@ -2184,6 +2233,7 @@ bool SubmitOpenVRFrameWindows(uint64_t shared_handle, std::string* error_message
 }
 
 bool SubmitOpenVRFrameLinux(const LinuxTextureInfo& texture_info, std::string* error_message) {
+  if(g_state.initialized && g_state.placement.mode==OverlayPlacementMode::kSeated && !RefreshPlacement(error_message)) return false;
   if (!g_state.initialized || g_state.overlay == nullptr || g_state.overlay_handle == vr::k_ulOverlayHandleInvalid) {
     SetError(error_message, "OpenVR backend is not initialized.");
     return false;
@@ -2362,6 +2412,7 @@ bool SubmitOpenVRSoftwareFrame(const SoftwareFrameInfo& frame_info, std::string*
     SetError(error_message, "OpenVR software frame submission requires non-zero width and height.");
     return false;
   }
+  if(g_state.placement.mode==OverlayPlacementMode::kSeated && !RefreshPlacement(error_message)) return false;
 
   const size_t expected_size = static_cast<size_t>(frame_info.width) * static_cast<size_t>(frame_info.height) * 4;
   if (frame_info.rgba_pixels.size() != expected_size) {
@@ -2422,6 +2473,13 @@ bool SetOpenVRCurvature(float curvature, std::string* error_message) {
 
 void PopulateOpenVRRuntimeInfo(RuntimeInfo* runtime_info) {
   PopulateOpenVRSceneApplication(runtime_info);
+  if(runtime_info && g_state.initialized && g_state.placement.mode==OverlayPlacementMode::kSeated) {
+#if defined(_WIN32)
+    runtime_info->probe_mode += g_state.application_source ? ":openvr-application-anchor" : ":openvr-runtime-seated-anchor";
+#else
+    runtime_info->probe_mode += ":openvr-runtime-seated-anchor";
+#endif
+  }
 #if defined(__linux__)
   if (runtime_info) runtime_info->openvr_texture_submission_count = g_state.vulkan_frame_count;
 #endif
