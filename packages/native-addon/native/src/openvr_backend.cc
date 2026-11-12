@@ -697,7 +697,7 @@ bool ApplyPlacement(const OverlayPlacement& placement, std::string* error_messag
   return CheckOverlayError(
     g_state.overlay->SetOverlayTransformAbsolute(
       g_state.overlay_handle,
-      vr::TrackingUniverseStanding,
+      placement.mode == OverlayPlacementMode::kSeated ? vr::TrackingUniverseSeated : vr::TrackingUniverseStanding,
       &matrix),
     "Failed to set world-locked overlay transform",
     error_message);

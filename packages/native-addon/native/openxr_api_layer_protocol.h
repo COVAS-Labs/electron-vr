@@ -22,6 +22,7 @@ enum class GraphicsApi : uint32_t {
 enum class PlacementMode : uint32_t {
   kHead = 0,
   kWorld = 1,
+  kSeated = 2,
 };
 
 enum class TextureTransport : uint32_t {

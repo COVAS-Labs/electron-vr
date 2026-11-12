@@ -1495,6 +1495,7 @@ XrSpace GetLayerSpaceForPlacement(const OverlayPlacement& placement) {
   if (placement.mode == OverlayPlacementMode::kHead) {
     return g_state.view_space;
   }
+  if (placement.mode == OverlayPlacementMode::kSeated) return g_state.local_space;
 
   if (g_state.stage_space != XR_NULL_HANDLE) {
     return g_state.stage_space;
@@ -1507,6 +1508,7 @@ const char* GetLayerSpaceNameForPlacement(const OverlayPlacement& placement) {
   if (placement.mode == OverlayPlacementMode::kHead) {
     return "view";
   }
+  if (placement.mode == OverlayPlacementMode::kSeated) return "local";
 
   if (g_state.stage_space != XR_NULL_HANDLE) {
     return "stage";

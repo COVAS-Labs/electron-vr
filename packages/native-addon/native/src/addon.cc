@@ -55,8 +55,10 @@ OverlayPlacement ReadOverlayPlacement(const Napi::Value& value) {
     placement.mode = OverlayPlacementMode::kHead;
   } else if (mode == "world") {
     placement.mode = OverlayPlacementMode::kWorld;
+  } else if (mode == "seated") {
+    placement.mode = OverlayPlacementMode::kSeated;
   } else {
-    throw Napi::RangeError::New(value.Env(), "placement.mode must be 'head' or 'world'.");
+    throw Napi::RangeError::New(value.Env(), "placement.mode must be 'head', 'world', or 'seated'.");
   }
 
   placement.position = ReadVector3(object.Get("position"), "placement.position");

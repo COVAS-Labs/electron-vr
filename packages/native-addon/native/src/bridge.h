@@ -11,7 +11,8 @@ namespace vrbridge {
 
 enum class OverlayPlacementMode {
   kHead = 0,
-  kWorld
+  kWorld,
+  kSeated
 };
 
 struct Vector3 {

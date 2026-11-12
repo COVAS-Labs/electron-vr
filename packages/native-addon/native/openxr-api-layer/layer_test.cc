@@ -86,6 +86,8 @@ XrResult XRAPI_CALL StubCreateReferenceSpace(XrSession, const XrReferenceSpaceCr
 }
 
 XrResult XRAPI_CALL StubDestroySpace(XrSpace) { return XR_SUCCESS; }
+XrResult XRAPI_CALL StubLocateSpace(XrSpace, XrSpace, XrTime, XrSpaceLocation*) { return XR_ERROR_FEATURE_UNSUPPORTED; }
+XrResult XRAPI_CALL StubPollEvent(XrInstance, XrEventDataBuffer*) { return XR_EVENT_UNAVAILABLE; }
 
 XrResult XRAPI_CALL StubEnumerateSwapchainFormats(XrSession, uint32_t, uint32_t* count, int64_t*) {
   if (count != nullptr) *count = 0;
@@ -140,6 +142,8 @@ XrResult XRAPI_CALL StubGetInstanceProcAddr(
     {"xrDestroySession", reinterpret_cast<PFN_xrVoidFunction>(StubDestroySession)},
     {"xrEnumerateReferenceSpaces", reinterpret_cast<PFN_xrVoidFunction>(StubEnumerateReferenceSpaces)},
     {"xrCreateReferenceSpace", reinterpret_cast<PFN_xrVoidFunction>(StubCreateReferenceSpace)},
+      {"xrLocateSpace", reinterpret_cast<PFN_xrVoidFunction>(StubLocateSpace)},
+      {"xrPollEvent", reinterpret_cast<PFN_xrVoidFunction>(StubPollEvent)},
     {"xrDestroySpace", reinterpret_cast<PFN_xrVoidFunction>(StubDestroySpace)},
     {"xrEnumerateSwapchainFormats", reinterpret_cast<PFN_xrVoidFunction>(StubEnumerateSwapchainFormats)},
     {"xrCreateSwapchain", reinterpret_cast<PFN_xrVoidFunction>(StubCreateSwapchain)},

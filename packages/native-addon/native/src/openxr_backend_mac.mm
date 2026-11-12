@@ -114,6 +114,7 @@ XrSpace LayerSpace() {
   if (g_state.placement.mode == OverlayPlacementMode::kHead) {
     return g_state.view_space;
   }
+  if (g_state.placement.mode == OverlayPlacementMode::kSeated) return g_state.local_space;
   return g_state.stage_space != XR_NULL_HANDLE ? g_state.stage_space : g_state.local_space;
 }
 

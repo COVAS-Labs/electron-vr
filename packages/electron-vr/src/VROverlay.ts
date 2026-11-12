@@ -28,7 +28,7 @@ export interface VROverlayOptions {
   curvature?: number;
   visible?: boolean;
   placement?: {
-    mode: "head" | "world";
+    mode: "head" | "world" | "seated";
     position?: Vec3;
     rotation?: Quat;
   };

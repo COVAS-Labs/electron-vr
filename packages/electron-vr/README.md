@@ -125,3 +125,34 @@ console.log(report.launch.verdict, report.launch.requiredActions);
 `report.launch.wouldWorkNow` answers whether launching a browser overlay now is expected to produce real VR output. Otherwise, the verdict distinguishes an actionable setup/runtime/host requirement from a fundamental incompatibility. The report also exposes detailed readiness states, actionable issues, and per-feature support. See `PRODUCT_INTEGRATION.md` in the repository for the recommended consent, IPC, restart, recovery, diagnostics, and production UI flow.
 
 `getRuntimeInfo()` also includes `openvrRuntimeInstalled`, `openvrRuntimePath`, `openxrMode`, API-layer installation state, `openxrHostDetected`, companion connection state, protocol version, and OpenXR host metadata. `openxrHostDetected` can become true before the overlay companion connects. Linux frame acknowledgments expose submitted/consumed sequence numbers; `openvrTextureSubmissionCount` counts actual Vulkan texture submissions to SteamVR rather than received IPC frames. None of these counters establishes that nontransparent content is visible in a physical headset. `probeMode` includes the backend-selection decision.
+
+## Seated Placement
+
+`placement.mode: "seated"` keeps an overlay relative to a seated origin without
+following head movement. Positions are eye-relative offsets in metres; yaw and
+translation establish the anchor, while headset pitch and roll do not tilt it.
+The existing `head` and `world` modes are unchanged.
+
+- OpenVR uses `TrackingUniverseSeated`, so runtime seated-origin resets move the
+  overlay with the seated coordinate system.
+- OpenXR API-layer presentation captures the headset pose once in LOCAL space
+  (or STAGE if LOCAL is unavailable). It recaptures on application projection-space
+  replacement and on a reference-space change, at or after the event's `changeTime`.
+  Ordinary head movement and placement adjustments do not recapture the anchor.
+  Missing/invalid initial tracking suppresses the overlay until capture succeeds.
+- Direct OpenXR presentation uses the runtime's LOCAL reference origin.
+
+This is independent of application names, input bindings, and screen capture.
+An application that recenters only its internal camera without changing an
+observable reference space cannot be synchronized automatically. Applications
+that continuously replace projection spaces can cause recaptures; physical
+headset testing is required for the intended application and runtime combination.
+
+Use matching JavaScript, native-addon, and OpenXR-layer builds. Older layers do
+not implement the new placement value. Seated anchoring must be released in the
+bridge and prebuilt packages before downstream applications enable it.
+
+Native tests: run `electron_vr_seated_anchor_test` and
+`electron_vr_openxr_layer_test` from the native build's Release directory.
+The first checks capture, stability, yaw, recenter timing and tracking recovery;
+the second checks API-layer negotiation and pass-through behavior.

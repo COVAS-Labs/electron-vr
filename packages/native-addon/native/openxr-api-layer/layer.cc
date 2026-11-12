@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "../openxr_api_layer_protocol.h"
+#include "../seated_anchor.h"
 
 namespace {
 
@@ -76,6 +77,8 @@ struct DispatchTable {
   PFN_xrWaitSwapchainImage WaitSwapchainImage = nullptr;
   PFN_xrReleaseSwapchainImage ReleaseSwapchainImage = nullptr;
   PFN_xrEndFrame EndFrame = nullptr;
+  PFN_xrLocateSpace LocateSpace = nullptr;
+  PFN_xrPollEvent PollEvent = nullptr;
 };
 
 struct InstanceState {
@@ -119,6 +122,7 @@ struct SessionState {
   XrSpace view_space = XR_NULL_HANDLE;
   XrSpace local_space = XR_NULL_HANDLE;
   XrSpace stage_space = XR_NULL_HANDLE;
+  electron_vr::SeatedAnchor seated_anchor;
   XrSwapchain swapchain = XR_NULL_HANDLE;
   std::vector<XrSwapchainImageD3D11KHR> images11;
   std::vector<XrSwapchainImageD3D12KHR> images12;
@@ -332,7 +336,9 @@ bool PopulateDispatch(const std::shared_ptr<InstanceState>& state) {
          LoadFunction(state, "xrAcquireSwapchainImage", &state->dispatch.AcquireSwapchainImage) &&
          LoadFunction(state, "xrWaitSwapchainImage", &state->dispatch.WaitSwapchainImage) &&
          LoadFunction(state, "xrReleaseSwapchainImage", &state->dispatch.ReleaseSwapchainImage) &&
-         LoadFunction(state, "xrEndFrame", &state->dispatch.EndFrame);
+         LoadFunction(state, "xrEndFrame", &state->dispatch.EndFrame) &&
+         LoadFunction(state, "xrLocateSpace", &state->dispatch.LocateSpace) &&
+         LoadFunction(state, "xrPollEvent", &state->dispatch.PollEvent);
 }
 
 std::shared_ptr<InstanceState> FindInstance(XrInstance instance) {
@@ -849,6 +855,7 @@ bool IsFinitePose(const OverlaySnapshot& snapshot) {
 
 XrSpace SelectSpace(const SessionState& state, PlacementMode mode) {
   if (mode == PlacementMode::kHead) return state.view_space;
+  if (mode == PlacementMode::kSeated) return state.local_space != XR_NULL_HANDLE ? state.local_space : state.stage_space;
   return state.stage_space != XR_NULL_HANDLE ? state.stage_space : state.local_space;
 }
 
@@ -1016,6 +1023,18 @@ XrResult XRAPI_CALL LayerDestroySession(XrSession session) {
   }
 }
 
+XrResult XRAPI_CALL LayerPollEvent(XrInstance instance, XrEventDataBuffer* event) {
+  const auto state = FindInstance(instance);
+  if (!state) return XR_ERROR_HANDLE_INVALID;
+  const XrResult result = state->dispatch.PollEvent(instance, event);
+  if (result == XR_SUCCESS && event && event->type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
+    const auto& change = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(event);
+    const auto session = FindSession(change.session);
+    if (session) session->seated_anchor.ReferenceChanged(change.changeTime);
+  }
+  return result;
+}
+
 XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* frame_end_info) {
   try {
     const auto state = FindSession(session);
@@ -1030,6 +1049,7 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* frame
     }
 
     const OverlaySnapshot snapshot = g_pipe_client->Snapshot();
+    if (snapshot.placement_mode != PlacementMode::kSeated) state->seated_anchor.Reset();
     if (!snapshot.visible || !IsFinitePose(snapshot) || !EnsureOverlayResources(*state, snapshot)) {
       return forward_original();
     }
@@ -1055,6 +1075,10 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* frame
       snapshot.rotation[2] / quaternion_length,
       snapshot.rotation[3] / quaternion_length};
     quad.pose.position = {snapshot.position[0], snapshot.position[1], snapshot.position[2]};
+    if (snapshot.placement_mode == PlacementMode::kSeated) {
+      if (!state->seated_anchor.Apply(state->view_space, space, electron_vr::ProjectionSpace(*frame_end_info),
+          frame_end_info->displayTime, state->instance->dispatch.LocateSpace, &quad.pose)) return forward_original();
+    }
     quad.size.width = snapshot.size_meters;
     quad.size.height = snapshot.size_meters * static_cast<float>(state->height) / static_cast<float>(state->width);
 
@@ -1105,6 +1129,10 @@ XrResult XRAPI_CALL LayerGetInstanceProcAddr(XrInstance instance, const char* na
     }
     if (std::strcmp(name, "xrEndFrame") == 0) {
       *function = reinterpret_cast<PFN_xrVoidFunction>(LayerEndFrame);
+      return XR_SUCCESS;
+    }
+    if (std::strcmp(name, "xrPollEvent") == 0) {
+      *function = reinterpret_cast<PFN_xrVoidFunction>(LayerPollEvent);
       return XR_SUCCESS;
     }
     return state->next_get_instance_proc_addr(instance, name, function);

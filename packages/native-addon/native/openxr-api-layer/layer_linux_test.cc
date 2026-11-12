@@ -28,6 +28,8 @@ STUB(DestroySession, (XrSession))
 STUB(DestroySpace, (XrSpace))
 STUB(DestroySwapchain, (XrSwapchain))
 STUB(CreateReferenceSpace, (XrSession, const XrReferenceSpaceCreateInfo*, XrSpace*))
+STUB(LocateSpace, (XrSpace, XrSpace, XrTime, XrSpaceLocation*))
+STUB(PollEvent, (XrInstance, XrEventDataBuffer*))
 STUB(CreateSwapchain, (XrSession, const XrSwapchainCreateInfo*, XrSwapchain*))
 STUB(AcquireImage, (XrSwapchain, const XrSwapchainImageAcquireInfo*, uint32_t*))
 STUB(WaitImage, (XrSwapchain, const XrSwapchainImageWaitInfo*))
@@ -56,6 +58,8 @@ XrResult XRAPI_CALL Gipa(XrInstance, const char* name, PFN_xrVoidFunction* outpu
     {"xrCreateSwapchain", reinterpret_cast<PFN_xrVoidFunction>(CreateSwapchain)}, {"xrDestroySwapchain", reinterpret_cast<PFN_xrVoidFunction>(DestroySwapchain)},
     {"xrEnumerateSwapchainImages", reinterpret_cast<PFN_xrVoidFunction>(EnumerateImages)}, {"xrAcquireSwapchainImage", reinterpret_cast<PFN_xrVoidFunction>(AcquireImage)},
     {"xrWaitSwapchainImage", reinterpret_cast<PFN_xrVoidFunction>(WaitImage)}, {"xrReleaseSwapchainImage", reinterpret_cast<PFN_xrVoidFunction>(ReleaseImage)},
+    {"xrLocateSpace", reinterpret_cast<PFN_xrVoidFunction>(LocateSpace)},
+    {"xrPollEvent", reinterpret_cast<PFN_xrVoidFunction>(PollEvent)},
     {"xrEndFrame", reinterpret_cast<PFN_xrVoidFunction>(EndFrame)}};
   for (const auto& entry : entries) if (!std::strcmp(name, entry.name)) { *output = entry.function; return XR_SUCCESS; }
   return XR_ERROR_FUNCTION_UNSUPPORTED;

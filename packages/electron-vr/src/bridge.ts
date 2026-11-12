@@ -73,7 +73,7 @@ export interface Quat {
   w: number;
 }
 
-export type PlacementMode = "head" | "world";
+export type PlacementMode = "head" | "world" | "seated";
 
 export interface OverlayPlacement {
   mode: PlacementMode;
