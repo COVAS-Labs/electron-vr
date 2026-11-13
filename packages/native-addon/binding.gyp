@@ -244,18 +244,6 @@
                 "AdditionalOptions": ["/std:c++17", "/W4", "/permissive-"]
               }
             }
-          },
-          {
-            "target_name": "electron_vr_seated_anchor_test",
-            "type": "executable",
-            "sources": ["native/openxr-api-layer/seated_anchor_test.cc"],
-            "include_dirs": ["<(openxr_sdk_dir)/include"],
-            "msvs_settings": {
-              "VCCLCompilerTool": {
-                "ExceptionHandling": 1,
-                "AdditionalOptions": ["/std:c++17", "/W4", "/permissive-"]
-              }
-            }
           }
         ]
       }

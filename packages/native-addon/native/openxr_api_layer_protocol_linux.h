@@ -70,7 +70,6 @@ enum class MessageType : uint16_t {
 enum class PlacementMode : uint32_t {
   kHead = 0,
   kWorld = 1,
-  kSeated = 2,
 };
 
 struct MessageHeader {

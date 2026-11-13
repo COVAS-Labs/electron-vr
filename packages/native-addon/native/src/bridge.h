@@ -12,7 +12,7 @@ namespace vrbridge {
 enum class OverlayPlacementMode {
   kHead = 0,
   kWorld,
-  kSeated
+  kSeat
 };
 
 struct Vector3 {
@@ -32,6 +32,12 @@ struct OverlayPlacement {
   OverlayPlacementMode mode = OverlayPlacementMode::kHead;
   Vector3 position;
   Quaternion rotation;
+};
+
+enum class TrackingOrigin { kSeated, kStanding };
+
+struct TrackingOriginTransform {
+  float matrix[3][4] = {};
 };
 
 struct InitializeOptions {
@@ -81,6 +87,7 @@ struct SoftwareFrameInfo {
 class BridgeState {
  public:
   RuntimeInfo GetRuntimeInfo();
+  bool GetTrackingOriginTransform(TrackingOrigin from, TrackingOrigin to, TrackingOriginTransform* result) const;
   bool Initialize(const InitializeOptions& options);
   bool SubmitSharedTexture(const SharedTextureSubmission& texture_submission);
   bool SubmitSoftwareFrame(const SoftwareFrameInfo& frame_info);

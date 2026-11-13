@@ -32,3 +32,4 @@ export {
   type OpenXRApiLayerStatus
 } from "./openxrApiLayer.js";
 export { VROverlay, type ExistingWindowVROverlayOptions, type VROverlayOptions } from "./VROverlay.js";
+export type { TrackingOrigin, TrackingOriginTransform, Matrix34 } from "./trackingOrigins.js";

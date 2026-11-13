@@ -628,7 +628,7 @@ void ApplyOptionsLocked(const InitializeOptions& options) {
   g_state.snapshot.size_meters = options.size_meters;
   g_state.snapshot.curvature = options.curvature;
   g_state.snapshot.placement_mode = options.placement.mode == OverlayPlacementMode::kHead
-    ? PlacementMode::kHead : options.placement.mode == OverlayPlacementMode::kSeated ? PlacementMode::kSeated : PlacementMode::kWorld;
+    ? PlacementMode::kHead : PlacementMode::kWorld;
   g_state.snapshot.position[0] = options.placement.position.x;
   g_state.snapshot.position[1] = options.placement.position.y;
   g_state.snapshot.position[2] = options.placement.position.z;
@@ -873,8 +873,7 @@ bool SubmitOpenXRCompanionFrame(uint64_t shared_handle, std::string* error_messa
 bool SetOpenXRCompanionPlacement(const OverlayPlacement& placement, std::string* error_message) {
 #if defined(_WIN32)
   std::lock_guard<std::mutex> lock(g_state.mutex);
-  g_state.snapshot.placement_mode = placement.mode == OverlayPlacementMode::kHead ? PlacementMode::kHead :
-    placement.mode == OverlayPlacementMode::kSeated ? PlacementMode::kSeated : PlacementMode::kWorld;
+  g_state.snapshot.placement_mode = placement.mode == OverlayPlacementMode::kHead ? PlacementMode::kHead : PlacementMode::kWorld;
   g_state.snapshot.position[0] = placement.position.x;
   g_state.snapshot.position[1] = placement.position.y;
   g_state.snapshot.position[2] = placement.position.z;

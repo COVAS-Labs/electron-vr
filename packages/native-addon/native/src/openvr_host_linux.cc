@@ -93,8 +93,7 @@ bool ReceiveSnapshot(int socket, OverlaySnapshot* snapshot, int* fd) {
 
 bool ApplySnapshot(const OverlaySnapshot& s, int fd, OverlaySnapshot* previous, bool* controls_applied, std::string* error) {
   OverlayPlacement placement;
-  placement.mode = s.placement_mode == PlacementMode::kHead ? OverlayPlacementMode::kHead :
-    s.placement_mode == PlacementMode::kSeated ? OverlayPlacementMode::kSeated : OverlayPlacementMode::kWorld;
+  placement.mode = s.placement_mode == PlacementMode::kHead ? OverlayPlacementMode::kHead : OverlayPlacementMode::kWorld;
   placement.position = {s.position[0], s.position[1], s.position[2]};
   placement.rotation = {s.rotation[0], s.rotation[1], s.rotation[2], s.rotation[3]};
   if ((!*controls_applied || s.placement_mode != previous->placement_mode ||

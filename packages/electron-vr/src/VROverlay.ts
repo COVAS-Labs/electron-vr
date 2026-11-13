@@ -12,6 +12,7 @@ import {
 } from "./openxrApiLayer.js";
 import { assertCurvature, assertSizeMeters, normalizePlacement } from "./overlayOptions.js";
 import { getVRCompatibilityReport, type VRCompatibilityReport } from "./compatibility.js";
+import type { TrackingOrigin, TrackingOriginTransform } from "./trackingOrigins.js";
 
 type OverlayWindowOptions = Omit<BrowserWindowConstructorOptions, "width" | "height" | "webPreferences"> & {
   webPreferences?: BrowserWindowConstructorOptions["webPreferences"];
@@ -28,7 +29,7 @@ export interface VROverlayOptions {
   curvature?: number;
   visible?: boolean;
   placement?: {
-    mode: "head" | "world" | "seated";
+    mode: "head" | "world" | "seat";
     position?: Vec3;
     rotation?: Quat;
   };
@@ -114,6 +115,10 @@ export class VROverlay {
 
   static getRuntimeInfo(): RuntimeInfo {
     return createVrBridge().getRuntimeInfo();
+  }
+
+  getTrackingOriginTransform(from: TrackingOrigin, to: TrackingOrigin): TrackingOriginTransform | null {
+    return this.vrBridge.getTrackingOriginTransform(from, to);
   }
 
   static isAvailable(runtimeInfo: RuntimeInfo = VROverlay.getRuntimeInfo()): boolean {

@@ -1,7 +1,7 @@
 import type { Quat, OverlayPlacement, Vec3 } from "./bridge.js";
 
 export interface OverlayPlacementInput {
-  mode: "head" | "world" | "seated";
+  mode: "head" | "world" | "seat";
   position?: Vec3;
   rotation?: Quat;
 }
@@ -36,8 +36,8 @@ export function assertCurvature(curvature: number): void {
 
 export function normalizePlacement(placement?: OverlayPlacementInput): OverlayPlacement {
   const mode = placement?.mode ?? "head";
-  if (mode !== "head" && mode !== "world" && mode !== "seated") {
-    throw new RangeError("placement.mode must be 'head', 'world', or 'seated'.");
+  if (mode !== "head" && mode !== "world" && mode !== "seat") {
+    throw new RangeError("placement.mode must be 'head', 'world', or 'seat'.");
   }
 
   const position = {

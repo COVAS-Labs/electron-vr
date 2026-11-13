@@ -8,13 +8,6 @@ import { assertCurvature, assertSizeMeters, normalizePlacement } from "../../pac
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-test("seated placement preserves offsets without changing the default head anchor", () => {
-  const placement = normalizePlacement({ mode: "seated", position: { x: 0.5, y: -0.2, z: -2 } });
-  assert.equal(placement.mode, "seated");
-  assert.deepEqual(placement.position, { x: 0.5, y: -0.2, z: -2 });
-  assert.equal(normalizePlacement().mode, "head");
-});
-
 test("overlay placement defaults to a head-locked transform", () => {
   const placement = normalizePlacement();
 

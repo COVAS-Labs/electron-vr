@@ -55,10 +55,10 @@ OverlayPlacement ReadOverlayPlacement(const Napi::Value& value) {
     placement.mode = OverlayPlacementMode::kHead;
   } else if (mode == "world") {
     placement.mode = OverlayPlacementMode::kWorld;
-  } else if (mode == "seated") {
-    placement.mode = OverlayPlacementMode::kSeated;
+  } else if (mode == "seat") {
+    placement.mode = OverlayPlacementMode::kSeat;
   } else {
-    throw Napi::RangeError::New(value.Env(), "placement.mode must be 'head', 'world', or 'seated'.");
+    throw Napi::RangeError::New(value.Env(), "placement.mode must be 'head', 'world', or 'seat'.");
   }
 
   placement.position = ReadVector3(object.Get("position"), "placement.position");
@@ -322,6 +322,27 @@ Napi::Value GetRuntimeInfoWrapped(const Napi::CallbackInfo& info) {
   return RuntimeInfoToObject(info.Env(), GetBridgeState().GetRuntimeInfo());
 }
 
+Napi::Value GetTrackingOriginTransformWrapped(const Napi::CallbackInfo& info) {
+  if (info.Length() != 2 || !info[0].IsString() || !info[1].IsString()) {
+    throw Napi::TypeError::New(info.Env(), "getTrackingOriginTransform expects source and target origin strings.");
+  }
+  const auto from = info[0].As<Napi::String>().Utf8Value();
+  const auto to = info[1].As<Napi::String>().Utf8Value();
+  if ((from != "seated" && from != "standing") || (to != "seated" && to != "standing")) {
+    throw Napi::RangeError::New(info.Env(), "Tracking origins must be 'seated' or 'standing'.");
+  }
+  TrackingOriginTransform transform;
+  if (!GetBridgeState().GetTrackingOriginTransform(
+      from == "seated" ? TrackingOrigin::kSeated : TrackingOrigin::kStanding,
+      to == "seated" ? TrackingOrigin::kSeated : TrackingOrigin::kStanding, &transform)) return info.Env().Null();
+  auto result = Napi::Object::New(info.Env());
+  result.Set("from", from); result.Set("to", to);
+  auto matrix = Napi::Array::New(info.Env(), 12);
+  for (uint32_t r = 0; r < 3; ++r) for (uint32_t c = 0; c < 4; ++c) matrix.Set(r * 4 + c, transform.matrix[r][c]);
+  result.Set("matrix", matrix);
+  return result;
+}
+
 Napi::Value InitializeVRWrapped(const Napi::CallbackInfo& info) {
   if (info.Length() != 1 || !info[0].IsObject()) {
     throw Napi::TypeError::New(info.Env(), "initializeVR expects an options object.");
@@ -476,6 +497,7 @@ Napi::Value UninstallOpenXRApiLayerWrapped(const Napi::CallbackInfo& info) {
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("getRuntimeInfo", Napi::Function::New(env, GetRuntimeInfoWrapped));
+  exports.Set("getTrackingOriginTransform", Napi::Function::New(env, GetTrackingOriginTransformWrapped));
   exports.Set("initializeVR", Napi::Function::New(env, InitializeVRWrapped));
   exports.Set("submitSharedTexture", Napi::Function::New(env, SubmitSharedTextureWrapped));
   exports.Set("submitSoftwareFrame", Napi::Function::New(env, SubmitSoftwareFrameWrapped));

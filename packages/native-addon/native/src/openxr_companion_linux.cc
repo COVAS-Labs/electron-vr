@@ -182,7 +182,7 @@ bool ReadHostPresence(const std::string& name, HostPresence* presence, pid_t* pe
 
 void ApplyPlacement(const OverlayPlacement& placement) {
   g_state.snapshot.placement_mode = placement.mode == OverlayPlacementMode::kHead
-    ? PlacementMode::kHead : placement.mode == OverlayPlacementMode::kSeated ? PlacementMode::kSeated : PlacementMode::kWorld;
+    ? PlacementMode::kHead : PlacementMode::kWorld;
   g_state.snapshot.position[0] = placement.position.x;
   g_state.snapshot.position[1] = placement.position.y;
   g_state.snapshot.position[2] = placement.position.z;

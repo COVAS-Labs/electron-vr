@@ -41,7 +41,6 @@
 #include <vector>
 
 #include "../openxr_api_layer_protocol_linux.h"
-#include "../seated_anchor.h"
 
 namespace {
 using namespace electron_vr::openxr_layer_linux;
@@ -66,8 +65,6 @@ struct Dispatch {
   PFN_xrWaitSwapchainImage WaitSwapchainImage = nullptr;
   PFN_xrReleaseSwapchainImage ReleaseSwapchainImage = nullptr;
   PFN_xrEndFrame EndFrame = nullptr;
-  PFN_xrLocateSpace LocateSpace = nullptr;
-  PFN_xrPollEvent PollEvent = nullptr;
   PFN_xrCreateVulkanDeviceKHR CreateVulkanDeviceKHR = nullptr;
   PFN_xrGetVulkanDeviceExtensionsKHR GetVulkanDeviceExtensionsKHR = nullptr;
 };
@@ -82,7 +79,6 @@ struct InstanceState {
 };
 
 struct SessionState {
-  electron_vr::SeatedAnchor seated_anchor;
   enum class GraphicsApi { kNone, kOpenGL, kVulkan } graphics_api = GraphicsApi::kNone;
   XrSession session = XR_NULL_HANDLE;
   std::shared_ptr<InstanceState> instance;
@@ -388,8 +384,6 @@ bool LoadDispatch(const std::shared_ptr<InstanceState>& state) {
     Load(state, "xrDestroySession", &state->dispatch.DestroySession) &&
     Load(state, "xrEnumerateReferenceSpaces", &state->dispatch.EnumerateReferenceSpaces) &&
     Load(state, "xrCreateReferenceSpace", &state->dispatch.CreateReferenceSpace) &&
-    Load(state, "xrLocateSpace", &state->dispatch.LocateSpace) &&
-    Load(state, "xrPollEvent", &state->dispatch.PollEvent) &&
     Load(state, "xrDestroySpace", &state->dispatch.DestroySpace) &&
     Load(state, "xrEnumerateSwapchainFormats", &state->dispatch.EnumerateSwapchainFormats) &&
     Load(state, "xrCreateSwapchain", &state->dispatch.CreateSwapchain) &&
@@ -1116,9 +1110,7 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* info)
       state->rendered_generation = snapshot.generation;
     }
     const XrSpace space = snapshot.placement_mode == PlacementMode::kHead ? state->view_space :
-      snapshot.placement_mode == PlacementMode::kSeated ? (state->local_space ? state->local_space : state->stage_space) :
       (state->stage_space ? state->stage_space : state->local_space);
-    if (snapshot.placement_mode != PlacementMode::kSeated) state->seated_anchor.Reset();
     if (!snapshot.visible || state->rendered_generation == 0 || state->swapchain == XR_NULL_HANDLE ||
         space == XR_NULL_HANDLE) return forward();
     float length = 0; for (float value : snapshot.rotation) length += value * value; length = std::sqrt(length);
@@ -1128,9 +1120,6 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* info)
     quad.subImage.swapchain = state->swapchain; quad.subImage.imageRect.extent = {static_cast<int32_t>(snapshot.width), static_cast<int32_t>(snapshot.height)};
     quad.pose.orientation = {snapshot.rotation[0]/length, snapshot.rotation[1]/length, snapshot.rotation[2]/length, snapshot.rotation[3]/length};
     quad.pose.position = {snapshot.position[0], snapshot.position[1], snapshot.position[2]};
-    if (snapshot.placement_mode == PlacementMode::kSeated &&
-        !state->seated_anchor.Apply(state->view_space, space, electron_vr::ProjectionSpace(*info),
-          info->displayTime, state->instance->dispatch.LocateSpace, &quad.pose)) return forward();
     quad.size = {snapshot.size_meters, snapshot.size_meters * snapshot.height / snapshot.width};
     std::vector<const XrCompositionLayerBaseHeader*> layers;
     if (info->layerCount > 0) layers.assign(info->layers, info->layers + info->layerCount);
@@ -1138,18 +1127,6 @@ XrResult XRAPI_CALL LayerEndFrame(XrSession session, const XrFrameEndInfo* info)
     XrFrameEndInfo modified = *info; modified.layerCount = layers.size(); modified.layers = layers.data();
     return state->instance->dispatch.EndFrame(session, &modified);
   } catch (...) { auto state = Session(session); return state ? state->instance->dispatch.EndFrame(session, info) : XR_ERROR_RUNTIME_FAILURE; }
-}
-
-XrResult XRAPI_CALL LayerPollEvent(XrInstance instance, XrEventDataBuffer* event) {
-  auto state = Instance(instance);
-  if (!state) return XR_ERROR_HANDLE_INVALID;
-  const XrResult result = state->dispatch.PollEvent(instance, event);
-  if (result == XR_SUCCESS && event && event->type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
-    const auto& change = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(event);
-    auto session = Session(change.session);
-    if (session) session->seated_anchor.ReferenceChanged(change.changeTime);
-  }
-  return result;
 }
 
 XrResult XRAPI_CALL LayerDestroyInstance(XrInstance instance) {
@@ -1166,7 +1143,6 @@ XrResult XRAPI_CALL LayerGetInstanceProcAddr(XrInstance instance, const char* na
   else if (!std::strcmp(name, "xrDestroySession")) *function = reinterpret_cast<PFN_xrVoidFunction>(LayerDestroySession);
   else if (!std::strcmp(name, "xrDestroyInstance")) *function = reinterpret_cast<PFN_xrVoidFunction>(LayerDestroyInstance);
   else if (!std::strcmp(name, "xrEndFrame")) *function = reinterpret_cast<PFN_xrVoidFunction>(LayerEndFrame);
-  else if (!std::strcmp(name, "xrPollEvent")) *function = reinterpret_cast<PFN_xrVoidFunction>(LayerPollEvent);
   else if (!std::strcmp(name, "xrCreateVulkanDeviceKHR") && state->dispatch.CreateVulkanDeviceKHR)
     *function = reinterpret_cast<PFN_xrVoidFunction>(LayerCreateVulkanDeviceKHR);
   else if (!std::strcmp(name, "xrGetVulkanDeviceExtensionsKHR") && state->dispatch.GetVulkanDeviceExtensionsKHR)

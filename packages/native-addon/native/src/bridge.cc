@@ -99,6 +99,15 @@ RuntimeInfo BridgeState::GetRuntimeInfo() {
   return GetLiveRuntimeInfo();
 }
 
+bool BridgeState::GetTrackingOriginTransform(TrackingOrigin from, TrackingOrigin to, TrackingOriginTransform* result) const {
+  if (!initialized_ || runtime_info_.selected_backend != BackendKind::kOpenVR) return false;
+  // A Linux host relay does not expose its IVRSystem to this process.
+#if defined(__linux__)
+  if (runtime_info_.openvr_host_relay_available) return false;
+#endif
+  return GetOpenVRTrackingOriginTransform(from, to, result);
+}
+
 void BridgeState::RefreshLinuxBackend() {
 #if defined(__linux__)
   if (!initialized_) return;
@@ -208,6 +217,16 @@ bool BridgeState::InitializeWithRuntime(const InitializeOptions& options, const 
     return false;
   }
 
+  if (options.placement.mode == OverlayPlacementMode::kSeat &&
+      (runtime_info_.selected_backend != BackendKind::kOpenVR
+#if defined(__linux__)
+       || runtime_info_.openvr_host_relay_available
+#endif
+      )) {
+    SetLastError("Seat-relative placement requires a directly initialized OpenVR backend.");
+    initialized_ = false;
+    return false;
+  }
   bool success = false;
   switch (runtime_info_.selected_backend) {
     case BackendKind::kOpenXR:
@@ -341,6 +360,15 @@ bool BridgeState::SetOverlayPlacement(const OverlayPlacement& placement) {
     return false;
   }
 
+  if (placement.mode == OverlayPlacementMode::kSeat &&
+      (runtime_info_.selected_backend != BackendKind::kOpenVR
+#if defined(__linux__)
+       || runtime_info_.openvr_host_relay_available
+#endif
+      )) {
+    SetLastError("Seat-relative placement requires a directly initialized OpenVR backend.");
+    return false;
+  }
   bool success = false;
   switch (runtime_info_.selected_backend) {
     case BackendKind::kOpenXR:
