@@ -78,8 +78,13 @@ This isolates the necessary signal from EDVR: stock Elite exposes runtime seated
 origin changes already. A game that only changes its private internal camera is
 not guaranteed to expose that signal; this is not universal camera tracking.
 
-The simplified `seat` implementation needs its own live headset regression test;
-the successful prototype establishes the origin signal, not this exact refactor.
+The tester subsequently confirmed the simplified standalone recenters in stock
+Elite. With EDVR restored, it does not follow recentering: a controlled test on
+2026-11-13 showed EDVR moving its private OpenXR origin by 6.8 cm and 22.2 degrees,
+while all twelve elements of SteamVR's seated-origin matrix stayed unchanged.
+This generic mode follows the runtime origin it is given; it cannot observe a
+different application's private space. EDVR compatibility requires a separate
+optional application-origin signal/adapter, not a change to raw `seat` semantics.
 Test static images, ordinary head motion, recenter, curvature, offset edits, mode
 changes, overlay restart, and game/session restart.
 
