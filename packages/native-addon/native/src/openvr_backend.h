@@ -15,6 +15,7 @@ bool SetOpenVRPlacement(const OverlayPlacement& placement, std::string* error_me
 bool SetOpenVRVisible(bool visible, std::string* error_message);
 bool SetOpenVRSizeMeters(float size_meters, std::string* error_message);
 bool SetOpenVRCurvature(float curvature, std::string* error_message);
+bool GetOpenVRTrackingOriginTransform(TrackingOrigin from, TrackingOrigin to, TrackingOriginTransform* result);
 void PopulateOpenVRRuntimeInfo(RuntimeInfo* runtime_info);
 void ShutdownOpenVRBackend();
 

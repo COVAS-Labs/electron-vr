@@ -697,7 +697,7 @@ bool ApplyPlacement(const OverlayPlacement& placement, std::string* error_messag
   return CheckOverlayError(
     g_state.overlay->SetOverlayTransformAbsolute(
       g_state.overlay_handle,
-      vr::TrackingUniverseStanding,
+      placement.mode == OverlayPlacementMode::kSeat ? vr::TrackingUniverseSeated : vr::TrackingUniverseStanding,
       &matrix),
     "Failed to set world-locked overlay transform",
     error_message);
@@ -2425,6 +2425,34 @@ void PopulateOpenVRRuntimeInfo(RuntimeInfo* runtime_info) {
 #if defined(__linux__)
   if (runtime_info) runtime_info->openvr_texture_submission_count = g_state.vulkan_frame_count;
 #endif
+}
+
+bool GetOpenVRTrackingOriginTransform(TrackingOrigin from, TrackingOrigin to, TrackingOriginTransform* result) {
+  if (!g_state.initialized || !g_state.system || !result) return false;
+  if (from == to) {
+    *result = {};
+    for (int i = 0; i < 3; ++i) result->matrix[i][i] = 1;
+    return true;
+  }
+  const auto native = g_state.system->GetSeatedZeroPoseToStandingAbsoluteTrackingPose();
+  for (const auto& row : native.m) for (float value : row) if (!std::isfinite(value)) return false;
+  for (int r = 0; r < 3; ++r) for (int s = 0; s < 3; ++s) {
+    float dot = 0;
+    for (int c = 0; c < 3; ++c) dot += native.m[r][c] * native.m[s][c];
+    if (std::fabs(dot - (r == s ? 1.f : 0.f)) > 0.005f) return false;
+  }
+  if (from == TrackingOrigin::kSeated) {
+    std::memcpy(result->matrix, native.m, sizeof(result->matrix));
+  } else {
+    for (int r = 0; r < 3; ++r) {
+      result->matrix[r][3] = 0;
+      for (int c = 0; c < 3; ++c) {
+        result->matrix[r][c] = native.m[c][r];
+        result->matrix[r][3] -= native.m[c][r] * native.m[c][3];
+      }
+    }
+  }
+  return true;
 }
 
 void ShutdownOpenVRBackend() {

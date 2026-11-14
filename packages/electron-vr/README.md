@@ -4,6 +4,37 @@ Electron-facing VR overlay bridge package for OpenXR or OpenVR overlays, with na
 
 Published Windows and Linux packages bundle the OpenVR runtime library they need, so consumers do not need to configure `OPENVR_SDK_DIR` for normal usage.
 
+## Seat Coordinates (Feature Branch)
+
+Placement accepts `head`, `world`, and `seat`. On direct OpenVR, `world` uses
+`TrackingUniverseStanding`; `seat` uses `TrackingUniverseSeated`. Both take raw
+origin-local coordinates in metres. Native curvature is unchanged.
+
+```ts
+overlay.setPlacement({
+  mode: 'seat',
+  position: { x: 0.4, y: -0.2, z: -1.5 },
+  rotation: { x: 0, y: 0, z: 0, w: 1 }
+});
+const basis = overlay.getTrackingOriginTransform('seated', 'standing');
+```
+
+The initialized instance's getter returns null when unavailable, otherwise
+`{ from, to, matrix }`: a copied row-major rigid 3x4 matrix converting source
+points into target coordinates. Translation is metres. `seated` and `standing`
+are supported in either direction, including same-origin identity on a supported
+initialized backend. Reading never resets the runtime or moves the overlay.
+
+Seat placement follows runtime recentering directly, without JS polling or image
+paints. Apps preserving an existing world pose must convert it themselves using
+the origin transform; the library does not establish an application anchor.
+`seated` was an obsolete experimental placement spelling; use `seat` instead.
+
+OpenXR rendering, macOS backends, and Linux OpenVR host relay do not implement
+this mode: placement fails explicitly and the getter returns null. Direct native
+Linux OpenVR is implemented but needs physical testing. Ship matching JS/native
+binaries. See the repository's `SEATED_ANCHOR_HANDOFF.md` for evidence and limits.
+
 ## Install
 
 This package is published on GitHub Packages.

@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readTrackingOriginTransform, type TrackingOrigin, type TrackingOriginTransform } from "./trackingOrigins.js";
 
 export type BackendKind = "none" | "openxr" | "openvr" | "mock";
 export type OpenXRMode = "none" | "overlay-session" | "api-layer" | "standard-test-session";
@@ -73,7 +74,7 @@ export interface Quat {
   w: number;
 }
 
-export type PlacementMode = "head" | "world";
+export type PlacementMode = "head" | "world" | "seat";
 
 export interface OverlayPlacement {
   mode: PlacementMode;
@@ -146,6 +147,7 @@ interface OffscreenWebContents {
 
 interface VrBridgeAddon {
   getRuntimeInfo(): RuntimeInfo;
+  getTrackingOriginTransform?(from: TrackingOrigin, to: TrackingOrigin): TrackingOriginTransform | null;
   initializeVR(options: InitializeVROptions): boolean;
   submitSharedTexture(texture: Buffer | bigint | LinuxTextureInfo | number): boolean;
   submitSoftwareFrame(frameInfo: SoftwareFrameInfo): boolean;
@@ -485,6 +487,10 @@ export class VrBridge {
 
   getRuntimeInfo(): RuntimeInfo {
     return sanitizeRuntimeInfo(this.addon.getRuntimeInfo());
+  }
+
+  getTrackingOriginTransform(from: TrackingOrigin, to: TrackingOrigin): TrackingOriginTransform | null {
+    return readTrackingOriginTransform(this.addon.getTrackingOriginTransform?.bind(this.addon), from, to);
   }
 
   getSelectedBackend(): BackendKind {

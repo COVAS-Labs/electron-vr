@@ -1,5 +1,9 @@
 # electron-vr
 
+Branch review notes: [Seated Anchor maintainer handoff](SEATED_ANCHOR_HANDOFF.md).
+This branch adds a generic OpenVR `seat` coordinate mode and a read-only
+tracking-origin transform getter. No application observer or extra IPC is required.
+
 Electron VR overlay workspace built around one public package: `@covas-labs/electron-vr`.
 
 ## Installation
